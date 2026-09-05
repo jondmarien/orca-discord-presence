@@ -19,6 +19,7 @@ From `DEFAULT_SETTINGS` in [`src/presence/settings.ts`](../src/presence/settings
 - `debugLogging` **on** (local `orca.log` + state-dir file; not sent to Discord).
 - Discord activity button **off** (`showOpenButton: false`, empty `openUrl`).
 - Agent-count prefix **off**.
+- Focused surface, agent type / model / profile **off**.
 
 `generic` never includes a workspace display name, git branch, or machine name — even if `showBranch` or `showMachine` were flipped on. Those toggles only take effect at higher detail levels (machine also requires detail ≠ `generic`; branch requires `full`).
 
@@ -26,7 +27,7 @@ From `DEFAULT_SETTINGS` in [`src/presence/settings.ts`](../src/presence/settings
 
 When an activity is produced, Discord’s servers render it on your profile. That path is:
 
-1. Plugin worker → local Discord desktop IPC socket (`SET_ACTIVITY`), **or** (only if you enable the bridge and local IPC is down) plugin worker → `POST /activity` on the companion you configured → that machine’s Discord IPC.
+1. Plugin worker → local Discord desktop IPC socket (`SET_ACTIVITY`), **or** (when local IPC is down) a fork sidecar mailbox frame and/or (only if you enable the bridge) `POST /activity` on the companion you configured → that machine’s Discord IPC. The sidecar mailbox is not Discord until a UI executor exists.
 2. Discord desktop → Discord’s presence service.
 
 There is no analytics host and no Discord bot. The HTTP client exists **only** for the opt-in companion. Browser Discord is not used and cannot receive these writes (no IPC).
@@ -44,14 +45,16 @@ The bridge token is a shared secret between the Orca host and the companion. It 
 | `N agent(s)` | `showAgentCount` and the live agent table is non-empty |
 | One activity button (`Open Orca` + your HTTPS URL) | `showOpenButton` and a normalized `https:` `openUrl` |
 | `N terminal(s)` | `showTerminals` and `terminalCount` is a number |
-| Machine name or `machineLabel` | `showMachine` **and** `detailLevel !== 'generic'` |
+| Machine name, `machineLabel`, or `executionHost.label` | `showMachine` **and** `detailLevel !== 'generic'` |
+| Focused-surface kind (and optional title) | `showFocusedSurface` **and** detail ≠ `generic`. Title only at `full` + `kind+title` |
+| Agent type / model / profile | matching toggle **and** `detailLevel === 'full'` |
 | Start timestamp (Unix seconds) | `showElapsed` and `stateStartedAtMs` is a number |
 | Asset keys `orca`, `state-*` | Any non-null activity |
 
 | Never transmitted |
 |---|
 | Discord bot token / client secret (this plugin has none) |
-| File paths, file names, or editor cursors (host API exposes none) |
+| File paths, file names, or editor cursors (focus titles are host-truncated; unknown kinds are dropped) |
 | Raw unrecognized agent states (aliased, then mapped to idle) |
 | Secrets in `openUrl` (operator responsibility; credentials-in-URL are rejected) |
 | SSH remote hostnames (`os.hostname()` is the Orca **client**) |
@@ -88,11 +91,11 @@ Host strings are canonicalized first (`running` / `active` → working, `error` 
 - `openUrl` must be `https:` with no URL credentials, max 512 characters. Otherwise it becomes `""`.
 - `openButtonLabel` is trimmed and capped at 32 characters; empty becomes `Open Orca`.
 
-Commands persist the full normalized object via `settings.set` (one key per field). **Configure** fail-fast rejects a junk Application ID or `openUrl` instead of storing them. The diagnostics panel displays a redacted snapshot; it cannot call `settings.set`. The panel never includes `applicationId`, `bridgeToken`, `bridgeUrl`, or `openUrl`.
+Commands persist the full normalized object via `settings.set` (one key per field). **Configure** fail-fast rejects a junk Application ID or `openUrl` instead of storing them. On the fork, the diagnostics panel can call `settings.set` for toggles only — never `applicationId`, `bridgeToken`, `bridgeUrl`, `openUrl`, or `machineLabel`. The embedded / stored snapshot never includes those secrets.
 
 ## Capabilities
 
-The consent dialog lists `workspace:read`, `events:subscribe`, `storage`, `settings:own`, and `notifications:show`. There is no `secrets` capability. The sidebar panel only uses `workspace:read` and `notifications:show`.
+The consent dialog lists `workspace:read`, `events:subscribe`, `storage`, `settings:own`, `notifications:show`, `ui:focus`, and `sidecar`. There is no `secrets` capability. `ui:focus` is focused UI surface (kind + truncated title). `sidecar` publishes frames a paired UI client can apply. Stock `stablyai/orca` rejects those extra kinds.
 
 ## Operator advice
 

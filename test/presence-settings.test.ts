@@ -27,6 +27,11 @@ test('defaults are privacy-preserving', () => {
   expect(DEFAULT_SETTINGS.showOpenButton).toBe(false)
   expect(DEFAULT_SETTINGS.openButtonLabel).toBe(DEFAULT_OPEN_BUTTON_LABEL)
   expect(DEFAULT_SETTINGS.showAgentCount).toBe(false)
+  expect(DEFAULT_SETTINGS.showFocusedSurface).toBe(false)
+  expect(DEFAULT_SETTINGS.focusedSurfaceDetail).toBe('kind')
+  expect(DEFAULT_SETTINGS.showAgentType).toBe(false)
+  expect(DEFAULT_SETTINGS.showAgentModel).toBe(false)
+  expect(DEFAULT_SETTINGS.showAgentProfile).toBe(false)
 })
 
 test('normalize fills gaps and drops unknown keys', () => {
@@ -131,4 +136,27 @@ test('normalizeSettings accepts openUrl and drops an invalid one', () => {
     'https://example.com/x'
   )
   expect(normalizeSettings({ openUrl: 'http://example.com' }).openUrl).toBe('')
+})
+
+test('normalize accepts fork-host toggles and rejects a junk focusedSurfaceDetail', () => {
+  const settings = normalizeSettings({
+    showFocusedSurface: true,
+    focusedSurfaceDetail: 'kind+title',
+    showAgentType: true,
+    showAgentModel: true,
+    showAgentProfile: true
+  })
+  expect(settings.showFocusedSurface).toBe(true)
+  expect(settings.focusedSurfaceDetail).toBe('kind+title')
+  expect(settings.showAgentType).toBe(true)
+  expect(settings.showAgentModel).toBe(true)
+  expect(settings.showAgentProfile).toBe(true)
+  expect(normalizeSettings({ focusedSurfaceDetail: 'everything' }).focusedSurfaceDetail).toBe('kind')
+})
+
+test('toggleField flips the new privacy-gated host fields', () => {
+  expect(toggleField({ ...DEFAULT_SETTINGS }, 'showFocusedSurface').showFocusedSurface).toBe(true)
+  expect(toggleField({ ...DEFAULT_SETTINGS }, 'showAgentType').showAgentType).toBe(true)
+  expect(toggleField({ ...DEFAULT_SETTINGS }, 'showAgentModel').showAgentModel).toBe(true)
+  expect(toggleField({ ...DEFAULT_SETTINGS }, 'showAgentProfile').showAgentProfile).toBe(true)
 })

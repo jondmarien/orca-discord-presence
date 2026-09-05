@@ -11,6 +11,7 @@
  */
 
 import { canonicalizeAgentState } from './agent-state'
+import { formatFocusedSurface } from './focus'
 import type { PresenceSettings } from './settings'
 
 /**
@@ -45,6 +46,18 @@ export type PresenceSnapshot = {
    * `showAgentCount` is on.
    */
   agentCount?: number
+  /** Orca-3 agent type label (gated by `showAgentType` + `full`). */
+  agentType?: string
+  /** Orca-3 model label (gated by `showAgentModel` + `full`). */
+  agentModel?: string
+  /** Orca-3 profile label (gated by `showAgentProfile` + `full`). */
+  agentProfile?: string
+  /** Orca-4 focused surface kind. */
+  focusedSurfaceKind?: string
+  /** Host-truncated title; only at `full` + `kind+title`. */
+  focusedSurfaceTitle?: string | null
+  /** Host timestamp for focus expiry. */
+  focusedSurfaceAtMs?: number
 }
 
 /**
@@ -131,8 +144,23 @@ function buildDetails(snapshot: PresenceSnapshot, settings: PresenceSettings): s
  * Machine identity is workspace-level information: never at `generic`,
  * even if `showMachine` is true.
  */
-function buildState(snapshot: PresenceSnapshot, settings: PresenceSettings): string {
+function buildState(snapshot: PresenceSnapshot, settings: PresenceSettings, nowMs: number): string {
   const parts: string[] = []
+  const focus = formatFocusedSurface(snapshot, settings, nowMs)
+  if (focus) {
+    parts.push(focus)
+  }
+  if (settings.detailLevel === 'full') {
+    if (settings.showAgentType && snapshot.agentType) {
+      parts.push(snapshot.agentType)
+    }
+    if (settings.showAgentModel && snapshot.agentModel) {
+      parts.push(snapshot.agentModel)
+    }
+    if (settings.showAgentProfile && snapshot.agentProfile) {
+      parts.push(snapshot.agentProfile)
+    }
+  }
   if (settings.showAgentCount && typeof snapshot.agentCount === 'number' && snapshot.agentCount > 0) {
     parts.push(`${snapshot.agentCount} agent${snapshot.agentCount === 1 ? '' : 's'}`)
   }
@@ -183,7 +211,7 @@ export function buildActivity(
       small_text: small.label
     }
   }
-  const state = buildState(snapshot, settings)
+  const state = buildState(snapshot, settings, nowMs)
   if (state) {
     activity.state = clamp(state)
   }

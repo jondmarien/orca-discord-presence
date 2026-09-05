@@ -82,6 +82,9 @@
       .is-bridge .dot {
         background: #42a5f5;
       }
+      .is-sidecar .dot {
+        background: #ab47bc;
+      }
       .is-down .dot {
         background: #ef5350;
       }
@@ -162,6 +165,10 @@
         align-items: center;
         gap: 8px;
       }
+      .toggles select {
+        margin-left: 4px;
+        font: inherit;
+      }
       .hint,
       .note {
         color: var(--muted-foreground, #9a9a9a);
@@ -219,7 +226,7 @@
   </head>
   <body>
     <script id="presence-snapshot" type="application/json">null</script>
-    <script id="plugin-version" type="application/json">"0.5.0"</script>
+    <script id="plugin-version" type="application/json">"0.6.0"</script>
 
     <header class="status-bar" id="status-bar">
       <div class="status-row">
@@ -227,7 +234,7 @@
           <span class="dot" aria-hidden="true"></span>
           <span id="indicator-label">Waiting for worker snapshot</span>
         </div>
-        <span class="badge" id="version-badge">v0.5.0</span>
+        <span class="badge" id="version-badge">v0.6.0</span>
       </div>
       <div class="actions">
         <button type="button" id="btn-refresh">Refresh</button>
@@ -253,6 +260,12 @@
           <dd id="ws-branch">—</dd>
           <dt>Terminals</dt>
           <dd id="ws-terminals">—</dd>
+          <dt>Host</dt>
+          <dd id="ws-host">—</dd>
+          <dt>Agent</dt>
+          <dd id="ws-agent">—</dd>
+          <dt>Focus</dt>
+          <dd id="ws-focus">—</dd>
         </dl>
         <p class="hint" id="ws-hint">Calls workspace.readContext over the panel bridge.</p>
       </div>
@@ -270,6 +283,8 @@
           <dd id="st-detail">—</dd>
           <dt>Bridge</dt>
           <dd id="st-bridge">—</dd>
+          <dt>Sidecar</dt>
+          <dd id="st-sidecar">—</dd>
           <dt>Activity</dt>
           <dd id="st-activity">—</dd>
           <dt>Log file</dt>
@@ -280,20 +295,31 @@
 
       <div class="card">
         <h2>Field toggles</h2>
-        <p class="note">Read-only. Panels cannot call settings.set yet (host B4 / issue #10). Use the command palette.</p>
+        <p class="note" id="toggle-note">Probing settings.get / storage.get. On stock Orca these stay read-only — use the command palette.</p>
         <div class="toggles">
-          <label><input type="checkbox" disabled id="f-enabled" /> Enabled</label>
-          <label><input type="checkbox" disabled id="f-branch" /> Branch</label>
-          <label><input type="checkbox" disabled id="f-agent" /> Agent state</label>
-          <label><input type="checkbox" disabled id="f-terminals" /> Terminal count</label>
-          <label><input type="checkbox" disabled id="f-machine" /> Machine name</label>
-          <label><input type="checkbox" disabled id="f-elapsed" /> Elapsed timer</label>
-          <label><input type="checkbox" disabled id="f-bridge" /> Companion bridge</label>
-          <label><input type="checkbox" disabled id="f-debug" /> Debug logging</label>
-          <label><input type="checkbox" disabled id="f-open-button" /> Open button</label>
-          <label><input type="checkbox" disabled id="f-agent-count" /> Agent count</label>
+          <label><input type="checkbox" disabled id="f-enabled" data-setting="enabled" /> Enabled</label>
+          <label><input type="checkbox" disabled id="f-branch" data-setting="showBranch" /> Branch</label>
+          <label><input type="checkbox" disabled id="f-agent" data-setting="showAgentState" /> Agent state</label>
+          <label><input type="checkbox" disabled id="f-terminals" data-setting="showTerminals" /> Terminal count</label>
+          <label><input type="checkbox" disabled id="f-machine" data-setting="showMachine" /> Machine name</label>
+          <label><input type="checkbox" disabled id="f-elapsed" data-setting="showElapsed" /> Elapsed timer</label>
+          <label><input type="checkbox" disabled id="f-bridge" data-setting="bridgeEnabled" /> Companion bridge</label>
+          <label><input type="checkbox" disabled id="f-debug" data-setting="debugLogging" /> Debug logging</label>
+          <label><input type="checkbox" disabled id="f-open-button" data-setting="showOpenButton" /> Open button</label>
+          <label><input type="checkbox" disabled id="f-agent-count" data-setting="showAgentCount" /> Agent count</label>
+          <label><input type="checkbox" disabled id="f-focus" data-setting="showFocusedSurface" /> Focused surface</label>
+          <label>
+            Focus detail
+            <select disabled id="f-focus-detail" data-setting="focusedSurfaceDetail">
+              <option value="kind">kind</option>
+              <option value="kind+title">kind+title</option>
+            </select>
+          </label>
+          <label><input type="checkbox" disabled id="f-agent-type" data-setting="showAgentType" /> Agent type</label>
+          <label><input type="checkbox" disabled id="f-agent-model" data-setting="showAgentModel" /> Agent model</label>
+          <label><input type="checkbox" disabled id="f-agent-profile" data-setting="showAgentProfile" /> Agent profile</label>
         </div>
-        <p class="hint">Palette commands</p>
+        <p class="hint">Palette commands (still work on stock Orca)</p>
         <ul class="palette note">
           <li>Discord Presence: Enable/Disable</li>
           <li>Discord Presence: Cycle Detail Level</li>
@@ -322,13 +348,13 @@
           <dt>Plugin</dt>
           <dd>chron0.discord-presence</dd>
           <dt>Version</dt>
-          <dd id="about-version">0.5.0</dd>
+          <dd id="about-version">0.6.0</dd>
           <dt>Author</dt>
           <dd>Jonathan Marien</dd>
         </dl>
         <p class="hint">Source (plain text — panel CSP blocks navigation):</p>
         <p>https://github.com/jondmarien/orca-discord-presence</p>
-        <p class="hint">Host settings/storage/log APIs: issue #10 · PLAN.md Task B4</p>
+        <p class="hint">Fork Orca-1…5: panel settings/storage, execution host, focus, sidecar mailbox. Stock stablyai/orca rejects this 0.6.0 manifest (ui:focus / sidecar). v0.5.0 stays the stock-loadable line.</p>
       </div>
     </section>
 
@@ -346,7 +372,8 @@
         <p>Reload RPC: command palette only — panels cannot invoke commands or reconnect the worker socket.</p>
         <p>Competing RPC: another IDE or overlay can overwrite activity. Reload RPC or wait for the 90s heartbeat.</p>
         <p>Logs: ~/.local/state/chron0-discord-presence/plugin.log (Windows: %LOCALAPPDATA%\chron0-discord-presence\plugin.log)</p>
-        <p>Toggles do not persist from this panel until the host flips settings.* to panel-callable. Tracked in issue #10.</p>
+        <p>On jondmarien/orca (pnpm dev + devPluginPaths) this panel persists toggles via settings.set and polls diagnostics.snapshot. Stock Orca stays read-only — use the command palette.</p>
+        <p>Smoke-test from the develop branch. main stays on the current release until Jon promotes.</p>
         <p class="hint">https://github.com/jondmarien/orca-discord-presence/issues/10</p>
       </div>
     </section>
@@ -359,6 +386,11 @@
       var PANEL_PONG = 'orca-panel-pong'
       var seq = 0
       var pending = {}
+      var settingsWritable = false
+      var storageReadable = false
+      var storagePoll = null
+      var lastStorageJson = ''
+      var FORBIDDEN_SETTING_KEYS = ['applicationId', 'bridge' + 'Token', 'bridgeUrl', 'openUrl', 'machineLabel']
       window.__PRESENCE_PANEL__ = null
 
       function $(id) {
@@ -449,6 +481,7 @@
         if (!snapshot.fields || snapshot.fields.enabled === false) return 'is-disabled'
         if (snapshot.status.connected) return 'is-connected'
         if (snapshot.status.sink === 'bridge') return 'is-bridge'
+        if (snapshot.status.sink === 'sidecar') return 'is-sidecar'
         if (snapshot.status.enabled) return 'is-down'
         return 'is-disabled'
       }
@@ -458,6 +491,7 @@
         if (snapshot.fields && snapshot.fields.enabled === false) return 'Disabled'
         if (snapshot.status.connected) return 'Connected · local'
         if (snapshot.status.sink === 'bridge') return 'Publishing · bridge'
+        if (snapshot.status.sink === 'sidecar') return 'Mailbox · sidecar'
         if (snapshot.status.enabled) return 'Disconnected'
         return 'Disabled'
       }
@@ -482,6 +516,7 @@
           setText('st-sink', '—')
           setText('st-detail', '—')
           setText('st-bridge', '—')
+          setText('st-sidecar', '—')
           setText('st-activity', '—')
           setText('st-logfile', '~/.local/state/chron0-discord-presence/plugin.log')
           setText(
@@ -497,6 +532,7 @@
         setText('st-sink', status.sink == null ? 'null' : String(status.sink))
         setText('st-detail', status.detailLevel)
         setText('st-bridge', status.bridgeEnabled ? 'on' : 'off')
+        setText('st-sidecar', status.sidecarMailbox ? 'mailbox' : 'off')
         setText('st-activity', formatActivity(status.lastActivity))
         setText('st-logfile', snapshot.logHint || status.logFile)
         setText(
@@ -513,6 +549,12 @@
         setChecked('f-debug', fields.debugLogging)
         setChecked('f-open-button', fields.showOpenButton)
         setChecked('f-agent-count', fields.showAgentCount)
+        setChecked('f-focus', fields.showFocusedSurface)
+        setChecked('f-agent-type', fields.showAgentType)
+        setChecked('f-agent-model', fields.showAgentModel)
+        setChecked('f-agent-profile', fields.showAgentProfile)
+        var detail = $('f-focus-detail')
+        if (detail && fields.focusedSurfaceDetail) detail.value = fields.focusedSurfaceDetail
         var logView = $('log-view')
         if (snapshot.logs && snapshot.logs.length) {
           logView.textContent = snapshot.logs.join('\n')
@@ -525,6 +567,9 @@
           setText('ws-name', '—')
           setText('ws-branch', '—')
           setText('ws-terminals', '—')
+          setText('ws-host', '—')
+          setText('ws-agent', '—')
+          setText('ws-focus', '—')
           setText('ws-hint', 'No focused worktree.')
           return
         }
@@ -532,7 +577,136 @@
         setText('ws-branch', value.branch)
         var count = value.terminals && value.terminals.length ? value.terminals.length : 0
         setText('ws-terminals', String(count))
+        var host = value.executionHost
+        setText(
+          'ws-host',
+          host && host.kind ? host.kind + (host.label ? ' · ' + host.label : '') : '—'
+        )
+        var agent = value.agent
+        setText(
+          'ws-agent',
+          agent
+            ? [agent.type, agent.model, agent.profile].filter(Boolean).join(' · ') || '—'
+            : '—'
+        )
+        var focus = value.focusedSurface
+        setText(
+          'ws-focus',
+          focus === null
+            ? 'unfocused'
+            : focus && focus.kind
+              ? focus.kind + (focus.title ? ' · ' + focus.title : '')
+              : '—'
+        )
         setText('ws-hint', 'Live via workspace.readContext.')
+      }
+
+      function setTogglesEnabled(on) {
+        document.querySelectorAll('.toggles [data-setting]').forEach(function (el) {
+          el.disabled = !on
+        })
+      }
+
+      function applySettingsRecord(record) {
+        if (!record || typeof record !== 'object') return
+        setChecked('f-enabled', record.enabled)
+        setChecked('f-branch', record.showBranch)
+        setChecked('f-agent', record.showAgentState)
+        setChecked('f-terminals', record.showTerminals)
+        setChecked('f-machine', record.showMachine)
+        setChecked('f-elapsed', record.showElapsed)
+        setChecked('f-bridge', record.bridgeEnabled)
+        setChecked('f-debug', record.debugLogging)
+        setChecked('f-open-button', record.showOpenButton)
+        setChecked('f-agent-count', record.showAgentCount)
+        setChecked('f-focus', record.showFocusedSurface)
+        setChecked('f-agent-type', record.showAgentType)
+        setChecked('f-agent-model', record.showAgentModel)
+        setChecked('f-agent-profile', record.showAgentProfile)
+        var detail = $('f-focus-detail')
+        if (detail && (record.focusedSurfaceDetail === 'kind' || record.focusedSurfaceDetail === 'kind+title')) {
+          detail.value = record.focusedSurfaceDetail
+        }
+      }
+
+      function persistSetting(key, value) {
+        if (!settingsWritable || FORBIDDEN_SETTING_KEYS.indexOf(key) !== -1) return Promise.resolve()
+        return call('settings.set', { key: key, value: value }).then(function (result) {
+          flash(
+            result.ok
+              ? 'Saved ' + key
+              : 'settings.set failed: ' + (result.error || result.errorCode || 'error')
+          )
+          return result
+        })
+      }
+
+      function applyStorageSnapshot(envelope) {
+        var value = envelope && envelope.value !== undefined ? envelope.value : envelope
+        if (!value || typeof value !== 'object') return
+        var json = JSON.stringify(value)
+        if (json === lastStorageJson) return
+        lastStorageJson = json
+        renderSnapshot(value)
+      }
+
+      function pollStorage() {
+        return call('storage.get', { key: 'diagnostics.snapshot' }).then(function (result) {
+          if (!result.ok) {
+            storageReadable = false
+            return result
+          }
+          storageReadable = true
+          applyStorageSnapshot(result.value)
+          return result
+        })
+      }
+
+      function startStoragePoll() {
+        if (storagePoll) return
+        storagePoll = setInterval(function () {
+          pollStorage()
+        }, 2000)
+      }
+
+      function updateToggleNote() {
+        var note = $('toggle-note')
+        if (!note) return
+        if (settingsWritable && storageReadable) {
+          note.textContent =
+            'Writable on this host. Toggles persist via settings.set. Logs refresh from diagnostics.snapshot every 2s.'
+        } else if (settingsWritable) {
+          note.textContent =
+            'settings.set is available. Live logs still need storage.get (or a writable HTML rewrite).'
+        } else {
+          note.textContent =
+            'This host does not expose panel settings/storage (stock Orca). Toggles stay read-only — use the command palette.'
+        }
+      }
+
+      function probeHost() {
+        return Promise.all([call('settings.get'), call('storage.get', { key: 'diagnostics.snapshot' })]).then(
+          function (results) {
+            var settingsResult = results[0]
+            var storageResult = results[1]
+            settingsWritable = !!(
+              settingsResult &&
+              settingsResult.ok &&
+              settingsResult.value &&
+              settingsResult.value.settings
+            )
+            if (settingsWritable) {
+              setTogglesEnabled(true)
+              applySettingsRecord(settingsResult.value.settings)
+            }
+            if (storageResult && storageResult.ok) {
+              storageReadable = true
+              applyStorageSnapshot(storageResult.value)
+              startStoragePoll()
+            }
+            updateToggleNote()
+          }
+        )
       }
 
       function refreshWorkspace() {
@@ -581,11 +755,26 @@
         })
       })
 
+      document.querySelectorAll('.toggles [data-setting]').forEach(function (el) {
+        el.addEventListener('change', function () {
+          var key = el.getAttribute('data-setting')
+          if (!key) return
+          var value = el.tagName === 'SELECT' ? el.value : !!el.checked
+          persistSetting(key, value)
+        })
+      })
+
       $('btn-refresh').addEventListener('click', function () {
         renderSnapshot(readSnapshot())
-        refreshWorkspace().then(function () {
-          flash('Refreshed workspace + snapshot view.')
-        })
+        Promise.all([refreshWorkspace(), settingsWritable ? call('settings.get') : Promise.resolve(null), pollStorage()]).then(
+          function (results) {
+            var settingsResult = results[1]
+            if (settingsResult && settingsResult.ok && settingsResult.value && settingsResult.value.settings) {
+              applySettingsRecord(settingsResult.value.settings)
+            }
+            flash('Refreshed workspace + snapshot view.')
+          }
+        )
       })
 
       $('btn-status').addEventListener('click', function () {
@@ -635,6 +824,7 @@
         flash('Open this panel in Orca (right sidebar). File preview cannot call the host bridge.')
       } else {
         refreshWorkspace()
+        probeHost()
       }
     </script>
   </body>

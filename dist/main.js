@@ -454,6 +454,10 @@ function canonicalizeAgentState(raw) {
 }
 
 // src/presence/expiry.ts
+var ACTIVITY_EXPIRY_MS = {
+  short: 30000,
+  long: 60000
+};
 var AGENT_RETENTION_MS = {
   stale: 1800000,
   done: 60000
@@ -466,6 +470,162 @@ function isActivityFresh(lastSeenAtMs, nowMs, windowMs) {
     return false;
   }
   return nowMs - lastSeenAtMs < windowMs;
+}
+
+// src/presence/focus.ts
+var FOCUSED_SURFACE_KINDS = [
+  "terminal",
+  "agent",
+  "browser",
+  "editor",
+  "simulator",
+  "command-palette"
+];
+var FOCUSED_SURFACE_LABELS = {
+  terminal: "Terminal",
+  agent: "Agent",
+  browser: "Browser",
+  editor: "Editor",
+  simulator: "Simulator",
+  "command-palette": "Command palette"
+};
+function isFocusedSurfaceKind(value) {
+  return typeof value === "string" && FOCUSED_SURFACE_KINDS.includes(value);
+}
+function parseUiFocusChanged(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const source = raw;
+  if (typeof source.receivedAt !== "number" || !Number.isFinite(source.receivedAt)) {
+    return null;
+  }
+  if (source.focusedSurface === null) {
+    return { focusedSurface: null, receivedAt: source.receivedAt };
+  }
+  if (!source.focusedSurface || typeof source.focusedSurface !== "object") {
+    return null;
+  }
+  const surface = source.focusedSurface;
+  if (!isFocusedSurfaceKind(surface.kind)) {
+    return null;
+  }
+  const title = surface.title === null ? null : typeof surface.title === "string" && surface.title.trim() ? surface.title.trim().slice(0, 80) : null;
+  return { focusedSurface: { kind: surface.kind, title }, receivedAt: source.receivedAt };
+}
+function formatFocusedSurface(snapshot, settings, nowMs) {
+  if (!settings.showFocusedSurface) {
+    return null;
+  }
+  if (settings.detailLevel === "off" || settings.detailLevel === "generic") {
+    return null;
+  }
+  if (!isFocusedSurfaceKind(snapshot.focusedSurfaceKind)) {
+    return null;
+  }
+  if (typeof snapshot.focusedSurfaceAtMs !== "number" || !isActivityFresh(snapshot.focusedSurfaceAtMs, nowMs, ACTIVITY_EXPIRY_MS.long)) {
+    return null;
+  }
+  const label = FOCUSED_SURFACE_LABELS[snapshot.focusedSurfaceKind];
+  if (settings.detailLevel === "full" && settings.focusedSurfaceDetail === "kind+title" && typeof snapshot.focusedSurfaceTitle === "string" && snapshot.focusedSurfaceTitle.trim()) {
+    return `${label} · ${snapshot.focusedSurfaceTitle.trim()}`;
+  }
+  return label;
+}
+
+// src/presence/host-context.ts
+var EXECUTION_HOST_KINDS = ["local", "ssh", "runtime"];
+var AGENT_TYPE_MAX = 40;
+var AGENT_MODEL_MAX = 120;
+var AGENT_PROFILE_MAX = 80;
+var HOST_LABEL_MAX = 512;
+function optionalBoundedString(value, max) {
+  if (typeof value !== "string") {
+    return;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > max) {
+    return;
+  }
+  return trimmed;
+}
+function isExecutionHostKind(value) {
+  return typeof value === "string" && EXECUTION_HOST_KINDS.includes(value);
+}
+function isFocusedSurfaceKind2(value) {
+  return typeof value === "string" && FOCUSED_SURFACE_KINDS.includes(value);
+}
+function parseWorkspaceContext(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const source = raw;
+  const identity = parseAgentIdentity(source);
+  const focusedSurfacePresent = Object.prototype.hasOwnProperty.call(source, "focusedSurface");
+  let focusedSurface;
+  if (focusedSurfacePresent) {
+    focusedSurface = parseFocusedSurfaceValue(source.focusedSurface);
+  }
+  let executionHostKind;
+  let executionHostLabel;
+  if (source.executionHost && typeof source.executionHost === "object") {
+    const host = source.executionHost;
+    if (isExecutionHostKind(host.kind)) {
+      executionHostKind = host.kind;
+      executionHostLabel = optionalBoundedString(host.label, HOST_LABEL_MAX);
+    }
+  }
+  return {
+    displayName: typeof source.displayName === "string" ? source.displayName : undefined,
+    branch: typeof source.branch === "string" ? source.branch : undefined,
+    terminalCount: Array.isArray(source.terminals) ? source.terminals.length : undefined,
+    executionHostKind,
+    executionHostLabel,
+    agentType: identity.type,
+    agentModel: identity.model,
+    agentProfile: identity.profile,
+    focusedSurface,
+    focusedSurfacePresent
+  };
+}
+function parseAgentIdentity(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { type: undefined, model: undefined, profile: undefined };
+  }
+  const source = raw;
+  const agent = source.agent;
+  if (!agent || typeof agent !== "object") {
+    return { type: undefined, model: undefined, profile: undefined };
+  }
+  const fields = agent;
+  return {
+    type: optionalBoundedString(fields.type, AGENT_TYPE_MAX),
+    model: optionalBoundedString(fields.model, AGENT_MODEL_MAX),
+    profile: optionalBoundedString(fields.profile, AGENT_PROFILE_MAX)
+  };
+}
+function parseFocusedSurfaceValue(raw) {
+  if (raw === null) {
+    return null;
+  }
+  if (!raw || typeof raw !== "object") {
+    return;
+  }
+  const source = raw;
+  if (!isFocusedSurfaceKind2(source.kind)) {
+    return;
+  }
+  const title = source.title === null ? null : optionalBoundedString(source.title, 80) ?? null;
+  return { kind: source.kind, title };
+}
+function resolveMachineName(input) {
+  if (input.machineLabel && input.machineLabel.trim()) {
+    return input.machineLabel.trim();
+  }
+  if (input.executionHostLabel && input.executionHostLabel.trim()) {
+    return input.executionHostLabel.trim();
+  }
+  return input.hostname;
 }
 
 // src/presence/agents.ts
@@ -487,12 +647,17 @@ function parseAgentStatusPayload(payload, nowMs) {
     return null;
   }
   const receivedAt = typeof source.receivedAt === "number" && Number.isFinite(source.receivedAt) ? source.receivedAt : nowMs;
-  return {
+  const identity = parseAgentIdentity(source);
+  const event = {
     worktreeId: typeof source.worktreeId === "string" ? source.worktreeId : "",
     paneKey: typeof source.paneKey === "string" ? source.paneKey : "",
     state: source.state,
     receivedAt
   };
+  if (identity.type || identity.model || identity.profile) {
+    event.agent = identity;
+  }
+  return event;
 }
 function parseWorktreeRemovedId(payload) {
   if (typeof payload === "string" && payload.trim().length > 0) {
@@ -518,15 +683,24 @@ function isAgentSlotFresh(slot, nowMs) {
 }
 function summarizeSlots(slots) {
   if (slots.length === 0) {
-    return { agentCount: 0, agentState: undefined, stateStartedAtMs: undefined };
+    return {
+      agentCount: 0,
+      agentState: undefined,
+      stateStartedAtMs: undefined,
+      agentType: undefined,
+      agentModel: undefined,
+      agentProfile: undefined
+    };
   }
   let winner = "done";
   let winnerPriority = -1;
+  let winnerSlot;
   for (const slot of slots) {
     const priority = PRIORITY[slot.canonicalState];
     if (priority > winnerPriority) {
       winner = slot.canonicalState;
       winnerPriority = priority;
+      winnerSlot = slot;
     }
   }
   let started = Number.POSITIVE_INFINITY;
@@ -538,7 +712,10 @@ function summarizeSlots(slots) {
   return {
     agentCount: slots.length,
     agentState: winner,
-    stateStartedAtMs: Number.isFinite(started) ? started : undefined
+    stateStartedAtMs: Number.isFinite(started) ? started : undefined,
+    agentType: winnerSlot?.agent?.type,
+    agentModel: winnerSlot?.agent?.model,
+    agentProfile: winnerSlot?.agent?.profile
   };
 }
 function createAgentTable({
@@ -596,7 +773,8 @@ function createAgentTable({
         paneKey: event.paneKey,
         rawState: event.state,
         canonicalState,
-        receivedAt: event.receivedAt
+        receivedAt: event.receivedAt,
+        agent: event.agent
       });
       prune();
       schedulePrune();
@@ -775,6 +953,7 @@ function createBridgeTransport({
 
 // src/presence/settings.ts
 var DETAIL_LEVELS = ["off", "generic", "workspace", "full"];
+var FOCUSED_SURFACE_DETAILS = ["kind", "kind+title"];
 var SHIPPED_APPLICATION_ID = "1545653843239374848";
 var DEFAULT_OPEN_BUTTON_LABEL = "Open Orca";
 var DISCORD_BUTTON_URL_MAX = 512;
@@ -796,11 +975,19 @@ var DEFAULT_SETTINGS = Object.freeze({
   openUrl: "",
   showOpenButton: false,
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
-  showAgentCount: false
+  showAgentCount: false,
+  showFocusedSurface: false,
+  focusedSurfaceDetail: "kind",
+  showAgentType: false,
+  showAgentModel: false,
+  showAgentProfile: false
 });
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
 function isDetailLevel(value) {
   return typeof value === "string" && DETAIL_LEVELS.includes(value);
+}
+function isFocusedSurfaceDetail(value) {
+  return typeof value === "string" && FOCUSED_SURFACE_DETAILS.includes(value);
 }
 function normalizeLabel(value) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().slice(0, 64) : null;
@@ -847,6 +1034,9 @@ function normalizeSettings(raw) {
   }
   if (isDetailLevel(source.detailLevel)) {
     settings.detailLevel = source.detailLevel;
+  }
+  if (isFocusedSurfaceDetail(source.focusedSurfaceDetail)) {
+    settings.focusedSurfaceDetail = source.focusedSurfaceDetail;
   }
   settings.applicationId = inspectApplicationId(source.applicationId, SHIPPED_APPLICATION_ID).applicationId;
   settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel;
@@ -919,15 +1109,6 @@ function applyConfigure(current, args) {
       }
     }
   }
-  if ("showOpenButton" in source) {
-    if (typeof source.showOpenButton !== "boolean") {
-      return { ok: false, error: "showOpenButton must be a boolean" };
-    }
-    if (source.showOpenButton !== current.showOpenButton) {
-      next.showOpenButton = source.showOpenButton;
-      changed.push("showOpenButton");
-    }
-  }
   if ("openButtonLabel" in source) {
     if (typeof source.openButtonLabel !== "string") {
       return { ok: false, error: "openButtonLabel must be a string" };
@@ -938,13 +1119,34 @@ function applyConfigure(current, args) {
       changed.push("openButtonLabel");
     }
   }
-  if ("showAgentCount" in source) {
-    if (typeof source.showAgentCount !== "boolean") {
-      return { ok: false, error: "showAgentCount must be a boolean" };
+  if ("focusedSurfaceDetail" in source) {
+    if (typeof source.focusedSurfaceDetail !== "string" || !FOCUSED_SURFACE_DETAILS.includes(source.focusedSurfaceDetail)) {
+      return { ok: false, error: 'focusedSurfaceDetail must be "kind" or "kind+title"' };
     }
-    if (source.showAgentCount !== current.showAgentCount) {
-      next.showAgentCount = source.showAgentCount;
-      changed.push("showAgentCount");
+    const focusedSurfaceDetail = source.focusedSurfaceDetail;
+    if (focusedSurfaceDetail !== current.focusedSurfaceDetail) {
+      next.focusedSurfaceDetail = focusedSurfaceDetail;
+      changed.push("focusedSurfaceDetail");
+    }
+  }
+  const booleanArgs = [
+    "showOpenButton",
+    "showAgentCount",
+    "showFocusedSurface",
+    "showAgentType",
+    "showAgentModel",
+    "showAgentProfile"
+  ];
+  for (const field of booleanArgs) {
+    if (!(field in source)) {
+      continue;
+    }
+    if (typeof source[field] !== "boolean") {
+      return { ok: false, error: `${field} must be a boolean` };
+    }
+    if (source[field] !== current[field]) {
+      next[field] = source[field];
+      changed.push(field);
     }
   }
   return { ok: true, settings: next, changed };
@@ -975,8 +1177,23 @@ function buildDetails(snapshot, settings) {
   }
   return `${name} — ${snapshot.branch}`;
 }
-function buildState(snapshot, settings) {
+function buildState(snapshot, settings, nowMs) {
   const parts = [];
+  const focus = formatFocusedSurface(snapshot, settings, nowMs);
+  if (focus) {
+    parts.push(focus);
+  }
+  if (settings.detailLevel === "full") {
+    if (settings.showAgentType && snapshot.agentType) {
+      parts.push(snapshot.agentType);
+    }
+    if (settings.showAgentModel && snapshot.agentModel) {
+      parts.push(snapshot.agentModel);
+    }
+    if (settings.showAgentProfile && snapshot.agentProfile) {
+      parts.push(snapshot.agentProfile);
+    }
+  }
   if (settings.showAgentCount && typeof snapshot.agentCount === "number" && snapshot.agentCount > 0) {
     parts.push(`${snapshot.agentCount} agent${snapshot.agentCount === 1 ? "" : "s"}`);
   }
@@ -1008,7 +1225,7 @@ function buildActivity(snapshot, settings, nowMs) {
       small_text: small.label
     }
   };
-  const state = buildState(snapshot, settings);
+  const state = buildState(snapshot, settings, nowMs);
   if (state) {
     activity.state = clamp(state);
   }
@@ -1118,6 +1335,7 @@ function createPresenceController({
   client,
   settings,
   bridge,
+  sidecar,
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer),
@@ -1134,6 +1352,7 @@ function createPresenceController({
   let lastSink = null;
   let lastBridgeUrl = null;
   let lastBridgeToken = null;
+  let lastSidecarMailbox = false;
   let stopped = false;
   let holdClear = false;
   function emit(level, event, detail) {
@@ -1176,6 +1395,39 @@ function createPresenceController({
       emit("error", "bridge.clear_failed", { url: bridgeOrigin(url), reason: message });
     }
   }
+  async function tryClearSidecar() {
+    if (!sidecar || !lastSidecarMailbox) {
+      return;
+    }
+    lastSidecarMailbox = false;
+    try {
+      emit("info", "sidecar.clear");
+      await sidecar.publish("clear");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit("error", "sidecar.clear_failed", { reason: message });
+    }
+  }
+  async function tryPublishSidecar(activity) {
+    if (!sidecar) {
+      return false;
+    }
+    try {
+      const placement = await sidecar.resolvePlacement();
+      if (!placement?.mailboxAvailable) {
+        return false;
+      }
+      const accepted = await sidecar.publish("set", activity);
+      if (accepted) {
+        emit("info", "sidecar.publish", { channel: "presence" });
+      }
+      return accepted;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit("error", "sidecar.publish_failed", { reason: message });
+      return false;
+    }
+  }
   async function forgetBridge(clearRemote) {
     const url = lastBridgeUrl;
     const token = lastBridgeToken ?? "";
@@ -1206,6 +1458,9 @@ function createPresenceController({
         if (lastSink === "bridge") {
           await forgetBridge(true);
         }
+        if (lastSidecarMailbox) {
+          await tryClearSidecar();
+        }
         lastSentSerialized = serialized;
         lastActivity = activity;
         lastSentAt = now();
@@ -1218,33 +1473,49 @@ function createPresenceController({
       }
       return;
     }
+    const sidecarOk = await tryPublishSidecar(activity);
+    lastSidecarMailbox = sidecarOk;
     const target = resolveBridgeTarget(currentSettings);
-    if (!target) {
-      if (currentSettings.bridgeEnabled) {
-        emit("warn", "bridge.skipped", { reason: "url/token is not usable" });
+    if (target && bridge) {
+      try {
+        emit("info", "bridge.publish", { url: bridgeOrigin(target.url) });
+        await bridge.publish(target.url, target.token, activity);
+        emit("info", "discord.set_activity", { sink: "bridge", details: activity.details });
+        lastSentSerialized = serialized;
+        lastActivity = activity;
+        lastSentAt = now();
+        lastSink = "bridge";
+        lastBridgeUrl = target.url;
+        lastBridgeToken = target.token;
+        cleared = false;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        emit("error", "bridge.publish_failed", { url: bridgeOrigin(target.url), reason: message });
+        lastSentSerialized = null;
+        if (sidecarOk) {
+          lastSentSerialized = serialized;
+          lastActivity = activity;
+          lastSentAt = now();
+          lastSink = "sidecar";
+          cleared = false;
+        }
       }
       return;
     }
-    if (!bridge) {
-      emit("warn", "bridge.skipped", { reason: "no transport is configured" });
+    if (currentSettings.bridgeEnabled) {
+      emit("warn", "bridge.skipped", {
+        reason: target ? "no transport is configured" : "url/token is not usable"
+      });
+    }
+    if (!sidecarOk) {
       return;
     }
-    try {
-      emit("info", "bridge.publish", { url: bridgeOrigin(target.url) });
-      await bridge.publish(target.url, target.token, activity);
-      emit("info", "discord.set_activity", { sink: "bridge", details: activity.details });
-      lastSentSerialized = serialized;
-      lastActivity = activity;
-      lastSentAt = now();
-      lastSink = "bridge";
-      lastBridgeUrl = target.url;
-      lastBridgeToken = target.token;
-      cleared = false;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      emit("error", "bridge.publish_failed", { url: bridgeOrigin(target.url), reason: message });
-      lastSentSerialized = null;
-    }
+    lastSentSerialized = serialized;
+    lastActivity = activity;
+    lastSentAt = now();
+    lastSink = "sidecar";
+    cleared = false;
+    emit("info", "discord.set_activity", { sink: "sidecar", details: activity.details });
   }
   async function clearPresence() {
     if (cleared) {
@@ -1269,6 +1540,7 @@ function createPresenceController({
     } else {
       await forgetBridge(false);
     }
+    await tryClearSidecar();
   }
   async function schedule() {
     if (pendingTimer) {
@@ -1372,7 +1644,7 @@ function createPresenceController({
         emit("error", "discord.reload_close_failed", { reason: message });
       }
       await transmit(true);
-      if (!client.isConnected() && lastSink !== "bridge") {
+      if (!client.isConnected() && lastSink !== "bridge" && lastSink !== "sidecar") {
         emit("error", "discord.reload_failed", {
           reason: "reconnect did not complete; see discord.connect_failed"
         });
@@ -1387,6 +1659,7 @@ function createPresenceController({
       detailLevel: currentSettings.detailLevel,
       lastActivity,
       logFile: diagnostics?.filePath ?? null,
+      sidecarMailbox: lastSidecarMailbox,
       heldClear: holdClear
     }),
     async stop() {
@@ -1402,6 +1675,48 @@ function createPresenceController({
       await client.close();
     }
   };
+}
+
+// src/presence/diagnostics-store.ts
+var DIAGNOSTICS_STORAGE_KEY = "diagnostics.snapshot";
+var MAX_PANEL_STORAGE_JSON_BYTES = 60 * 1024;
+function jsonBytes(value) {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+function capPanelSnapshotForStorage(snapshot) {
+  if (jsonBytes(snapshot) <= MAX_PANEL_STORAGE_JSON_BYTES) {
+    return snapshot;
+  }
+  let next = {
+    ...snapshot,
+    logs: snapshot.logs.slice(-5)
+  };
+  if (jsonBytes(next) <= MAX_PANEL_STORAGE_JSON_BYTES) {
+    return next;
+  }
+  const activity = next.status.lastActivity;
+  return {
+    ...next,
+    logs: [],
+    status: {
+      ...next.status,
+      lastActivity: activity ? {
+        details: activity.details.slice(0, 80),
+        state: activity.state ? activity.state.slice(0, 80) : activity.state
+      } : null
+    }
+  };
+}
+async function writeDiagnosticsSnapshot(call, snapshot) {
+  try {
+    const result = await call("storage.set", {
+      key: DIAGNOSTICS_STORAGE_KEY,
+      value: capPanelSnapshotForStorage(snapshot)
+    });
+    return Boolean(result && typeof result === "object" && result.ok);
+  } catch {
+    return false;
+  }
 }
 
 // src/presence/log-ring.ts
@@ -1431,7 +1746,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // src/version.ts
-var PLUGIN_VERSION = "0.5.0";
+var PLUGIN_VERSION = "0.6.0";
 
 // src/presence/panel-html.ts
 var PANEL_HTML_ENV = "ORCA_PRESENCE_PANEL_HTML";
@@ -1520,7 +1835,7 @@ function summarizePanelActivity(activity) {
   };
 }
 function buildPresencePanelSnapshot(input) {
-  const { version, status, settings, logs, now = new Date } = input;
+  const { version, status, settings, logs, now = new Date, host } = input;
   return {
     version,
     generatedAt: now.toISOString(),
@@ -1532,7 +1847,9 @@ function buildPresencePanelSnapshot(input) {
       bridgeEnabled: status.bridgeEnabled,
       debugLogging: settings.debugLogging,
       lastActivity: summarizePanelActivity(status.lastActivity),
-      logFile: status.logFile
+      logFile: status.logFile,
+      sidecarMailbox: status.sidecarMailbox,
+      heldClear: status.heldClear
     },
     fields: {
       enabled: settings.enabled,
@@ -1544,15 +1861,79 @@ function buildPresencePanelSnapshot(input) {
       bridgeEnabled: settings.bridgeEnabled,
       debugLogging: settings.debugLogging,
       showOpenButton: settings.showOpenButton,
-      showAgentCount: settings.showAgentCount
+      showAgentCount: settings.showAgentCount,
+      showFocusedSurface: settings.showFocusedSurface,
+      focusedSurfaceDetail: settings.focusedSurfaceDetail,
+      showAgentType: settings.showAgentType,
+      showAgentModel: settings.showAgentModel,
+      showAgentProfile: settings.showAgentProfile
+    },
+    host: {
+      sidecar: Boolean(host?.sidecar),
+      focus: Boolean(host?.focus),
+      executionHost: Boolean(host?.executionHost)
     },
     logs: logs.map(redactPanelLogLine),
     logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT
   };
 }
 
+// src/presence/sidecar.ts
+var SIDECAR_PAYLOAD_MAX_BYTES = 8 * 1024;
+function parseSidecarPlacement(raw) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const source = raw;
+  if (source.mailboxAvailable !== true) {
+    return null;
+  }
+  if (source.companionStillValid !== true) {
+    return null;
+  }
+  const lastPublishedAt = source.lastPublishedAt === null ? null : typeof source.lastPublishedAt === "number" && Number.isFinite(source.lastPublishedAt) ? source.lastPublishedAt : null;
+  return {
+    mailboxAvailable: true,
+    companionStillValid: true,
+    lastPublishedAt
+  };
+}
+function sidecarSetParams(activity) {
+  return { channel: "presence", op: "set", payload: activity };
+}
+function payloadFits(activity) {
+  return Buffer.byteLength(JSON.stringify(activity), "utf8") <= SIDECAR_PAYLOAD_MAX_BYTES;
+}
+function createSidecarTransport(call) {
+  return {
+    async resolvePlacement() {
+      try {
+        return parseSidecarPlacement(await call("sidecar.resolvePlacement", {}));
+      } catch {
+        return null;
+      }
+    },
+    async publish(op, payload) {
+      try {
+        if (op === "clear") {
+          const result = await call("sidecar.publish", { channel: "presence", op: "clear" });
+          return Boolean(result && typeof result === "object" && result.accepted);
+        }
+        if (!payload || !payloadFits(payload)) {
+          return false;
+        }
+        const result = await call("sidecar.publish", sidecarSetParams(payload));
+        return Boolean(result && typeof result === "object" && result.accepted);
+      } catch {
+        return false;
+      }
+    }
+  };
+}
+
 // src/main.ts
 var HEARTBEAT_MS = 90000;
+var SETTINGS_POLL_MS = 5000;
 var PANEL_WRITE_DEBOUNCE_MS = 2000;
 var TRANSMITTING_TOAST_MAX = 180;
 function formatStatusTransmitting(activity) {
@@ -1576,6 +1957,7 @@ var TOGGLE_COMMANDS = {
 var controller = null;
 var agentTable = null;
 var heartbeat = null;
+var settingsPoll = null;
 var diagnostics = null;
 var logRing = null;
 var panelWriteTimer = null;
@@ -1588,54 +1970,16 @@ function publicConfigureView(settings) {
     openUrl: settings.openUrl,
     showOpenButton: settings.showOpenButton,
     openButtonLabel: settings.openButtonLabel,
-    showAgentCount: settings.showAgentCount
+    showAgentCount: settings.showAgentCount,
+    showFocusedSurface: settings.showFocusedSurface,
+    focusedSurfaceDetail: settings.focusedSurfaceDetail,
+    showAgentType: settings.showAgentType,
+    showAgentModel: settings.showAgentModel,
+    showAgentProfile: settings.showAgentProfile
   };
 }
-function publishPanelSnapshot(mode) {
-  const flush = () => {
-    panelWriteTimer = null;
-    if (!controller || !logRing) {
-      return;
-    }
-    const snapshot = buildPresencePanelSnapshot({
-      version: PLUGIN_VERSION,
-      status: controller.status(),
-      settings: controller.settings(),
-      logs: logRing.lines()
-    });
-    const target = resolvePanelHtmlPath(process.env, import.meta.url);
-    if (!target) {
-      return;
-    }
-    const result = writePanelSnapshot(target, snapshot);
-    if (result.ok) {
-      diagnostics?.line("debug", "panel.snapshot_written", { lines: snapshot.logs.length });
-      return;
-    }
-    if (!panelWriteNoted) {
-      panelWriteNoted = true;
-      diagnostics?.line("debug", "panel.snapshot_skipped", { reason: result.reason });
-    }
-  };
-  if (mode === "immediate") {
-    if (panelWriteTimer) {
-      clearTimeout(panelWriteTimer);
-      panelWriteTimer = null;
-    }
-    try {
-      flush();
-    } catch {}
-    return;
-  }
-  if (panelWriteTimer) {
-    return;
-  }
-  panelWriteTimer = setTimeout(() => {
-    try {
-      flush();
-    } catch {}
-  }, PANEL_WRITE_DEBOUNCE_MS);
-  panelWriteTimer.unref?.();
+function emptyHostCaps() {
+  return { sidecar: false, focus: false, executionHost: false };
 }
 async function activate(orca) {
   deactivated = false;
@@ -1643,6 +1987,8 @@ async function activate(orca) {
   const rawSettings = stored?.settings && typeof stored.settings === "object" ? stored.settings : {};
   const appId = inspectApplicationId(rawSettings.applicationId, SHIPPED_APPLICATION_ID);
   let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env);
+  const hostCaps = emptyHostCaps();
+  let lastFocus = null;
   const logFile = resolveLogFilePath(process.env, {
     homedir: os2.homedir(),
     tmpdir: os2.tmpdir(),
@@ -1675,6 +2021,10 @@ async function activate(orca) {
       body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ""}. Using shipped id. ${appId.reason ?? ""}`
     });
   }
+  const sidecar = createSidecarTransport((method, args) => orca.host.call(method, args));
+  sidecar.resolvePlacement().then((placement) => {
+    hostCaps.sidecar = Boolean(placement?.mailboxAvailable);
+  });
   function createController(nextSettings) {
     return createPresenceController({
       client: createDiscordClient({
@@ -1684,10 +2034,57 @@ async function activate(orca) {
       bridge: createBridgeTransport({
         log: (message) => diagnostics?.line("error", "bridge.transport", { reason: message })
       }),
+      sidecar,
       settings: nextSettings,
       diagnostics: diagnostics ?? undefined,
       log: (message) => orca.log(message)
     });
+  }
+  async function publishPanelSnapshot(mode) {
+    const flush = async () => {
+      panelWriteTimer = null;
+      if (!controller || !logRing) {
+        return;
+      }
+      const snapshot = buildPresencePanelSnapshot({
+        version: PLUGIN_VERSION,
+        status: controller.status(),
+        settings: controller.settings(),
+        logs: logRing.lines(),
+        host: { ...hostCaps }
+      });
+      await writeDiagnosticsSnapshot((method, args) => orca.host.call(method, args), snapshot);
+      const target = resolvePanelHtmlPath(process.env, import.meta.url);
+      if (!target) {
+        return;
+      }
+      const result = writePanelSnapshot(target, snapshot);
+      if (result.ok) {
+        diagnostics?.line("debug", "panel.snapshot_written", { lines: snapshot.logs.length });
+        return;
+      }
+      if (!panelWriteNoted) {
+        panelWriteNoted = true;
+        diagnostics?.line("debug", "panel.snapshot_skipped", { reason: result.reason });
+      }
+    };
+    if (mode === "immediate") {
+      if (panelWriteTimer) {
+        clearTimeout(panelWriteTimer);
+        panelWriteTimer = null;
+      }
+      try {
+        await flush();
+      } catch {}
+      return;
+    }
+    if (panelWriteTimer) {
+      return;
+    }
+    panelWriteTimer = setTimeout(() => {
+      flush().catch(() => {});
+    }, PANEL_WRITE_DEBOUNCE_MS);
+    panelWriteTimer.unref?.();
   }
   let pushAgentRefresh = () => {};
   agentTable = createAgentTable({
@@ -1702,6 +2099,17 @@ async function activate(orca) {
     }
   });
   controller = createController(settings);
+  async function readHostSettings() {
+    try {
+      const next = await orca.host.call("settings.get");
+      if (!next || typeof next !== "object") {
+        return null;
+      }
+      return applyBridgeEnvOverrides(normalizeSettings(next.settings), process.env);
+    } catch {
+      return null;
+    }
+  }
   async function persist(nextSettings) {
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId;
     settings = nextSettings;
@@ -1719,22 +2127,33 @@ async function activate(orca) {
     } else {
       await controller?.setSettings(nextSettings);
     }
-    publishPanelSnapshot("immediate");
+    await publishPanelSnapshot("immediate");
+  }
+  async function applyHostSettingsIfChanged() {
+    const next = await readHostSettings();
+    if (!next) {
+      return;
+    }
+    if (JSON.stringify(next) === JSON.stringify(settings)) {
+      return;
+    }
+    await persist(next);
   }
   async function refresh(agentEvent, options = {}) {
+    await applyHostSettingsIfChanged();
     if (agentEvent) {
-      const parsed = parseAgentStatusPayload(agentEvent, Date.now());
-      if (parsed) {
-        agentTable?.upsert(parsed);
-      }
+      agentTable?.upsert(agentEvent);
     }
     const summary = agentTable?.summarize() ?? {
       agentCount: 0,
       agentState: undefined,
-      stateStartedAtMs: undefined
+      stateStartedAtMs: undefined,
+      agentType: undefined,
+      agentModel: undefined,
+      agentProfile: undefined
     };
-    const context = await orca.host.call("workspace.readContext").catch(() => null);
-    if (!context) {
+    const parsed = parseWorkspaceContext(await orca.host.call("workspace.readContext").catch(() => null));
+    if (!parsed) {
       diagnostics?.line("debug", "refresh.minimal", { reason: "no workspace context" });
     } else if (agentEvent) {
       diagnostics?.line("debug", "refresh", {
@@ -1743,17 +2162,31 @@ async function activate(orca) {
         agents: summary.agentCount
       });
     }
+    if (parsed?.executionHostKind) {
+      hostCaps.executionHost = true;
+    }
+    if (parsed?.focusedSurfacePresent) {
+      hostCaps.focus = true;
+    }
     const resume = Boolean(options.resume || agentEvent);
     await controller?.update({
-      machineName: os2.hostname(),
-      ...context ? {
-        displayName: context.displayName,
-        branch: context.branch,
-        terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
+      machineName: resolveMachineName({
+        machineLabel: settings.machineLabel,
+        executionHostLabel: parsed?.executionHostLabel,
+        hostname: os2.hostname()
+      }),
+      ...parsed ? {
+        displayName: parsed.displayName,
+        branch: parsed.branch,
+        terminalCount: parsed.terminalCount
       } : {},
       agentState: summary.agentState,
       stateStartedAtMs: summary.stateStartedAtMs,
-      agentCount: summary.agentCount
+      agentCount: summary.agentCount,
+      agentType: summary.agentType ?? parsed?.agentType,
+      agentModel: summary.agentModel ?? parsed?.agentModel,
+      agentProfile: summary.agentProfile ?? parsed?.agentProfile,
+      ...focusSnapshotFields(parsed, lastFocus)
     }, resume ? { resume: true } : undefined);
     if (options.force) {
       await controller?.forceTransmit(resume);
@@ -1785,11 +2218,12 @@ async function activate(orca) {
     const status = controller?.status();
     const file = status?.logFile ?? diagnostics?.filePath ?? "";
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel} debug=${settings.debugLogging}`;
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} sidecarMailbox=${status?.sidecarMailbox} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel} debug=${settings.debugLogging}`;
     diagnostics?.line("info", "status", {
       enabled: status?.enabled,
       connected: status?.connected,
       sink: status?.sink,
+      sidecarMailbox: status?.sidecarMailbox,
       bridge: status?.bridgeEnabled,
       detail: status?.detailLevel,
       debug: settings.debugLogging,
@@ -1800,7 +2234,7 @@ async function activate(orca) {
       title: "Discord Rich Presence",
       body: `${summary} ${transmitting}`
     });
-    publishPanelSnapshot("immediate");
+    await publishPanelSnapshot("immediate");
     return status;
   });
   orca.commands.register("presence.reload", async () => {
@@ -1809,34 +2243,36 @@ async function activate(orca) {
     await controller?.reload();
     const status = controller?.status();
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
-    const summary = `reloaded connected=${status?.connected} sink=${status?.sink} ${transmitting}`;
+    const summary = `reloaded connected=${status?.connected} sink=${status?.sink} sidecarMailbox=${status?.sidecarMailbox} ${transmitting}`;
     diagnostics?.line("info", "discord.reload_done", {
       connected: status?.connected,
       sink: status?.sink,
+      sidecarMailbox: status?.sidecarMailbox,
       transmitting: JSON.stringify(status?.lastActivity)
     });
     await orca.host.call("notifications.show", {
       title: "Discord Rich Presence",
       body: summary
     });
-    publishPanelSnapshot("immediate");
+    await publishPanelSnapshot("immediate");
     return status;
   });
   orca.commands.register("presence.clear", async () => {
     diagnostics?.line("info", "discord.clear_command");
     await controller?.clear();
     const status = controller?.status();
-    const summary = `cleared enabled=${status?.enabled} heldClear=${status?.heldClear} sink=${status?.sink}`;
+    const summary = `cleared enabled=${status?.enabled} heldClear=${status?.heldClear} sink=${status?.sink} sidecarMailbox=${status?.sidecarMailbox}`;
     diagnostics?.line("info", "discord.clear_done", {
       enabled: status?.enabled,
       heldClear: status?.heldClear,
-      sink: status?.sink
+      sink: status?.sink,
+      sidecarMailbox: status?.sidecarMailbox
     });
     await orca.host.call("notifications.show", {
       title: "Discord Rich Presence",
       body: `${summary} Presence is cleared until the next agent event, Show Status, Reload RPC, or a settings change. enabled stays on.`
     });
-    publishPanelSnapshot("immediate");
+    await publishPanelSnapshot("immediate");
     return status;
   });
   orca.commands.register("presence.configure", async (args) => {
@@ -1851,8 +2287,8 @@ async function activate(orca) {
     }
     if (result.changed.length === 0) {
       const view = publicConfigureView(settings);
-      const hint = "Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.";
-      const body = `applicationId=${view.shippedApplicationId ? "shipped" : view.applicationId} openUrl=${view.openUrl || "(empty)"} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} label=${view.openButtonLabel}`;
+      const hint = "Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount, showFocusedSurface, focusedSurfaceDetail, showAgentType, showAgentModel, showAgentProfile }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.";
+      const body = `applicationId=${view.shippedApplicationId ? "shipped" : view.applicationId} openUrl=${view.openUrl || "(empty)"} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} focus=${view.showFocusedSurface} label=${view.openButtonLabel}`;
       await orca.host.call("notifications.show", {
         title: "Discord Rich Presence",
         body: `${body} ${hint}`
@@ -1883,13 +2319,65 @@ async function activate(orca) {
     }
     await refresh();
   });
+  orca.events.on("ui.focus.changed", async (payload) => {
+    const parsed = parseUiFocusChanged(payload);
+    if (!parsed) {
+      return;
+    }
+    lastFocus = parsed;
+    hostCaps.focus = true;
+    await refresh();
+  });
   heartbeat = setInterval(() => {
     refresh(undefined, { force: true });
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
-  refresh().then(() => {
-    publishPanelSnapshot("immediate");
-  });
+  settingsPoll = setInterval(() => {
+    (async () => {
+      const next = await readHostSettings();
+      if (!next || JSON.stringify(next) === JSON.stringify(settings)) {
+        return;
+      }
+      await persist(next);
+      await refresh();
+    })();
+  }, SETTINGS_POLL_MS);
+  settingsPoll.unref?.();
+  refresh().then(() => publishPanelSnapshot("immediate"));
+}
+function focusSnapshotFields(context, lastFocus) {
+  if (context?.focusedSurfacePresent) {
+    if (context.focusedSurface === null) {
+      return {
+        focusedSurfaceKind: undefined,
+        focusedSurfaceTitle: undefined,
+        focusedSurfaceAtMs: undefined
+      };
+    }
+    if (context.focusedSurface) {
+      return {
+        focusedSurfaceKind: context.focusedSurface.kind,
+        focusedSurfaceTitle: context.focusedSurface.title,
+        focusedSurfaceAtMs: Date.now()
+      };
+    }
+    return {};
+  }
+  if (!lastFocus) {
+    return {};
+  }
+  if (lastFocus.focusedSurface === null) {
+    return {
+      focusedSurfaceKind: undefined,
+      focusedSurfaceTitle: undefined,
+      focusedSurfaceAtMs: undefined
+    };
+  }
+  return {
+    focusedSurfaceKind: lastFocus.focusedSurface.kind,
+    focusedSurfaceTitle: lastFocus.focusedSurface.title,
+    focusedSurfaceAtMs: lastFocus.receivedAt
+  };
 }
 async function deactivate() {
   if (deactivated) {
@@ -1899,6 +2387,10 @@ async function deactivate() {
   if (heartbeat) {
     clearInterval(heartbeat);
     heartbeat = null;
+  }
+  if (settingsPoll) {
+    clearInterval(settingsPoll);
+    settingsPoll = null;
   }
   if (panelWriteTimer) {
     clearTimeout(panelWriteTimer);

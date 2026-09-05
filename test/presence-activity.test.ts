@@ -255,3 +255,89 @@ test('an empty state string is omitted rather than sent blank', () => {
   )
   expect(activity && 'state' in activity).toBe(false)
 })
+
+test('generic never leaks execution host, agent identity, or focus title', () => {
+  const activity = buildActivity(
+    {
+      ...SNAPSHOT,
+      machineName: 'ssh-box',
+      agentType: 'claude',
+      agentModel: 'opus',
+      agentProfile: 'review',
+      focusedSurfaceKind: 'editor',
+      focusedSurfaceTitle: 'secrets.ts',
+      focusedSurfaceAtMs: NOW_MS
+    },
+    settingsWith({
+      detailLevel: 'generic',
+      showMachine: true,
+      showAgentType: true,
+      showAgentModel: true,
+      showAgentProfile: true,
+      showFocusedSurface: true,
+      focusedSurfaceDetail: 'kind+title'
+    }),
+    NOW_MS
+  )
+  const serialized = JSON.stringify(activity)
+  expect(activity?.details).toBe('Working in Orca')
+  expect(serialized.includes('ssh-box')).toBe(false)
+  expect(serialized.includes('claude')).toBe(false)
+  expect(serialized.includes('opus')).toBe(false)
+  expect(serialized.includes('review')).toBe(false)
+  expect(serialized.includes('secrets.ts')).toBe(false)
+  expect(serialized.includes('Editor')).toBe(false)
+})
+
+test('full detail can include focus, agent identity, and execution-host machine', () => {
+  const activity = buildActivity(
+    {
+      ...SNAPSHOT,
+      machineName: 'omarchy-box',
+      agentType: 'claude',
+      agentModel: 'opus',
+      agentProfile: 'review',
+      focusedSurfaceKind: 'terminal',
+      focusedSurfaceTitle: 'zsh',
+      focusedSurfaceAtMs: NOW_MS,
+      agentState: 'working'
+    },
+    settingsWith({
+      detailLevel: 'full',
+      showAgentState: true,
+      showAgentType: true,
+      showAgentModel: true,
+      showAgentProfile: true,
+      showFocusedSurface: true,
+      focusedSurfaceDetail: 'kind+title',
+      showMachine: true,
+      showTerminals: false
+    }),
+    NOW_MS
+  )
+  expect(activity?.state).toBe('Terminal · zsh · claude · opus · review · working · omarchy-box')
+})
+
+test('workspace detail shows focus kind only and never agent identity', () => {
+  const activity = buildActivity(
+    {
+      ...SNAPSHOT,
+      agentType: 'claude',
+      focusedSurfaceKind: 'agent',
+      focusedSurfaceTitle: 'Claude',
+      focusedSurfaceAtMs: NOW_MS
+    },
+    settingsWith({
+      detailLevel: 'workspace',
+      showAgentState: false,
+      showAgentType: true,
+      showFocusedSurface: true,
+      focusedSurfaceDetail: 'kind+title',
+      showTerminals: false,
+      showMachine: false
+    }),
+    NOW_MS
+  )
+  expect(activity?.state).toBe('Agent')
+  expect(JSON.stringify(activity).includes('claude')).toBe(false)
+})

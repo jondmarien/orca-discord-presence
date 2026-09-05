@@ -78,6 +78,20 @@ test('parseAgentStatusPayload ignores a payload without a state string', () => {
   expect(parseAgentStatusPayload('working', 2)).toBeNull()
 })
 
+test('parseAgentStatusPayload reads nested Orca-3 agent identity', () => {
+  const parsed = parseAgentStatusPayload(
+    {
+      worktreeId: 'wt',
+      paneKey: 'p',
+      state: 'working',
+      receivedAt: 7,
+      agent: { type: 'claude', model: 'opus', profile: 'review' }
+    },
+    9
+  )
+  expect(parsed?.agent).toEqual({ type: 'claude', model: 'opus', profile: 'review' })
+})
+
 test('two paneKeys stay distinct and summarize with agentCount', () => {
   const { table } = tableHarness()
   table.upsert({
@@ -114,7 +128,34 @@ test('an empty table has no agent state', () => {
   expect(table.summarize()).toEqual({
     agentCount: 0,
     agentState: undefined,
-    stateStartedAtMs: undefined
+    stateStartedAtMs: undefined,
+    agentType: undefined,
+    agentModel: undefined,
+    agentProfile: undefined
+  })
+})
+
+test('summarize copies identity from the winning slot', () => {
+  const { table } = tableHarness()
+  table.upsert({
+    worktreeId: 'w',
+    paneKey: 'idle',
+    state: 'done',
+    receivedAt: 1,
+    agent: { type: 'other', model: 'small' }
+  })
+  table.upsert({
+    worktreeId: 'w',
+    paneKey: 'hot',
+    state: 'blocked',
+    receivedAt: 2,
+    agent: { type: 'claude', model: 'opus', profile: 'review' }
+  })
+  expect(table.summarize()).toMatchObject({
+    agentState: 'blocked',
+    agentType: 'claude',
+    agentModel: 'opus',
+    agentProfile: 'review'
   })
 })
 

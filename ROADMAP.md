@@ -48,7 +48,9 @@ The same design applies to any pair: host on Linux/macOS/Windows, companion on L
 - Publish policy: **prefer local IPC if connected, else bridge**. No dual-publish. Disable/stop clears remote activity.
 - Token required for non-loopback bind/URL. Tailscale and SSH-tunnel documented in the README.
 
-**Still future (Orca-native):** a host-mediated remote capability so this does not require a sidecar process or operator-set URL/token. Tracked in [#10](https://github.com/jondmarien/orca-discord-presence/issues/10); implement as PRs on `stablyai/orca` (fork-first on `jondmarien/orca`).
+**Fork sidecar mailbox (0.6.0):** when local IPC fails, the plugin try-calls `sidecar.resolvePlacement` / `sidecar.publish` and stores a presence frame. The UI Discord IPC executor may still be `not-implemented`, so the HTTP companion remains the Discord-visible fallback. That is not dual Discord.
+
+**Still future (Orca-native Discord apply):** a UI client that actually applies sidecar frames. Do not PR `stablyai/orca` from this plugin repo.
 
 ---
 
@@ -70,7 +72,7 @@ Controlling Orca from another machine does **not** require installing this plugi
 
 ## What we do not detect
 
-No focused Orca window/tab (terminal vs agent UI). Inputs are `agent.status.changed` + `workspace.readContext` only. Subscribe to host focus/tab events **if Orca adds them** — do not invent. See [#7](https://github.com/jondmarien/orca-discord-presence/issues/7).
+No file-level presence. On the fork, focused surface is opt-in (`ui.focus.changed` + `readContext.focusedSurface`). Stock `stablyai/orca` cannot load the 0.6.0 manifest. See [#7](https://github.com/jondmarien/orca-discord-presence/issues/7).
 
 ---
 
@@ -78,11 +80,9 @@ No focused Orca window/tab (terminal vs agent UI). Inputs are `agent.status.chan
 
 Burpcord-inspired sidebar IA (status bar, Settings / About / Help, read-only field toggles, collapsible Extension Logs) under `contributes.panels` → `plugin:chron0.discord-presence/presence`.
 
-**Works on today’s host:** `workspace.readContext`, `notifications.show`, optional worker rewrite of `panel/index.html` with a redacted snapshot + log ring.
+**Works on the fork (`jondmarien/orca`):** panel `settings.get` / `settings.set`, `storage.get` of `diagnostics.snapshot`, live workspace extras, writable toggles.
 
-**Still blocked (PLAN.md Task B4 / [#10](https://github.com/jondmarien/orca-discord-presence/issues/10)):** panel-callable `settings.get` / `settings.set` / `storage.*`, command invoke, or a diagnostics log-tail action. Until those land, toggles stay on the command palette and marketplace installs keep the static shell.
-
-Do not invent panel APIs.
+**Stock `stablyai/orca`:** `workspace.readContext`, `notifications.show`, optional worker rewrite of `panel/index.html`. Toggles stay on the command palette. The 0.6.0 manifest is rejected.
 
 ---
 
@@ -94,11 +94,10 @@ Closed [#3](https://github.com/jondmarien/orca-discord-presence/issues/3) was th
 - [x] Optional OS-agnostic companion + plugin HTTP bridge (privacy-first, default off) — [#6](https://github.com/jondmarien/orca-discord-presence/pull/6)
 - [x] Diagnostics panel MVP within today’s panel actions (v0.4)
 - [x] Clear, opt-in presence button, configure, multi-agent summary, retention, richer aliases — [#15](https://github.com/jondmarien/orca-discord-presence/issues/15) (v0.5)
-- [ ] Full Orca-native remote capability / host-mediated presence (PRs on `stablyai/orca`)
-- [ ] Richer host capability APIs (projections for where the worker runs, which machine owns Discord, optional off-box sink) — Track B in `PLAN.md`
-- [ ] Active-tab / focus events if the host ever exposes them (activity expiry helper is already in `src/presence/expiry.ts`; do not invent a second window) — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7)
-- [ ] Provider priority + rotation once multiple surfaces exist (#7 / #8 deferred)
-- [ ] Panel-callable `settings.*` / `storage.*` (B4) so the diagnostics panel can become a real settings + live log UI
-- [ ] Feature additions that still need host APIs — file-level presence; writable settings panel; SSH/runtime host labels instead of `os.hostname()`. Application ID override is command-first as of v0.5 ([#15](https://github.com/jondmarien/orca-discord-presence/issues/15)); a panel form still needs [#10](https://github.com/jondmarien/orca-discord-presence/issues/10).
+- [x] Consume fork Orca-1…5 (panel settings/storage, execution host + agent labels, focus, sidecar mailbox) — [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) (v0.6 on `develop`)
+- [ ] Full Orca-native remote capability / UI Discord IPC executor (not this plugin repo)
+- [ ] Provider priority + rotation once multiple surfaces exist (#8 deferred)
+- [ ] File-level presence (host still does not expose the active file)
+- [ ] Upstream `stablyai/orca` gaining the same APIs so 0.6.0 can load on stock
 
 None of the remaining items is required for the companion MVP.

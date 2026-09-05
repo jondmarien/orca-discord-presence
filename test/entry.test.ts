@@ -14,9 +14,11 @@ test('manifest identity is chron0.discord-presence', () => {
     id: string
     publisher: string
     version: string
+    engines: { orca: string }
     contributes: {
       panels: Array<{ id: string; title: string; icon?: string; entry: string }>
       commands: Array<{ id: string }>
+      events: Array<{ on: string }>
     }
     capabilities: Array<{ kind: string }>
   }
@@ -32,6 +34,10 @@ test('manifest identity is chron0.discord-presence', () => {
   ])
   expect(manifest.contributes.commands.some((command) => command.id === 'presence.reload')).toBe(true)
   expect(manifest.capabilities.some((cap) => cap.kind === 'terminal:send')).toBe(false)
+  expect(manifest.capabilities.some((cap) => cap.kind === 'ui:focus')).toBe(true)
+  expect(manifest.capabilities.some((cap) => cap.kind === 'sidecar')).toBe(true)
+  expect(manifest.contributes.events.some((event) => event.on === 'ui.focus.changed')).toBe(true)
+  expect(manifest.engines).toEqual({ orca: '>=1.4.0' })
   expect(readFileSync(join(root, manifest.contributes.panels[0]!.entry), 'utf8').includes('orca-panel-action')).toBe(
     true
   )
@@ -58,6 +64,7 @@ test('activate registers commands and events; deactivate is safe to call', async
   const hostLines: string[] = []
   const notifications: string[] = []
   const handlers = new Map<string, () => Promise<unknown>>()
+  const storageKeys: string[] = []
   const orca: OrcaHost = {
     log: (message) => {
       hostLines.push(message)
@@ -82,6 +89,17 @@ test('activate registers commands and events; deactivate is safe to call', async
           notifications.push(String(args?.body ?? ''))
           return null
         }
+        if (method === 'storage.set') {
+          storageKeys.push(String(args?.key ?? ''))
+          return { ok: true }
+        }
+        if (method === 'sidecar.resolvePlacement') {
+          return {
+            mailboxAvailable: true,
+            companionStillValid: true,
+            lastPublishedAt: null
+          }
+        }
         // Missing workspace context: refresh still applies a minimal snapshot.
         return null
       }
@@ -105,7 +123,12 @@ test('activate registers commands and events; deactivate is safe to call', async
     'presence.clear',
     'presence.configure'
   ])
-  expect(events).toEqual(['agent.status.changed', 'worktree.created', 'worktree.removed'])
+  expect(events).toEqual([
+    'agent.status.changed',
+    'worktree.created',
+    'worktree.removed',
+    'ui.focus.changed'
+  ])
   expect(hostLines.some((line) => line.includes('activate') && line.includes('chron0.discord-presence'))).toBe(
     true
   )
@@ -125,6 +148,7 @@ test('activate registers commands and events; deactivate is safe to call', async
   expect(embedded.status.detailLevel).toBe('generic')
   expect(embedded.logs.some((line) => line.includes('activate'))).toBe(true)
   expect(JSON.stringify(embedded).includes('bridgeToken')).toBe(false)
+  expect(storageKeys.includes('diagnostics.snapshot')).toBe(true)
   await deactivate()
   await deactivate()
   if (previous === undefined) {

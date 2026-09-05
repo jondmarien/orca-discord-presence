@@ -1,9 +1,9 @@
 /**
- * Privacy-safe diagnostics snapshot embedded in the Orca panel HTML.
+ * Privacy-safe diagnostics snapshot for the Orca panel.
  *
- * Panels cannot call `settings.*` or `storage.*` today (PLAN.md Task B4 /
- * issue #10). The worker therefore serializes a redacted view of status,
- * field toggles, and recent log lines into `panel/index.html` when the
+ * On the fork, the worker also writes this blob to `storage.set`
+ * (`diagnostics.snapshot`) so the sidebar can poll live logs. On stock
+ * Orca the same JSON is still embedded in `panel/index.html` when the
  * install is writable. The Discord Application ID and bridge token are
  * never included.
  *
@@ -15,7 +15,7 @@
 import type { DiscordActivity } from './activity'
 import type { PresenceStatus } from './controller'
 import { LOG_DIR_NAME, LOG_FILE_NAME } from './log'
-import type { PresenceSettings } from './settings'
+import type { FocusedSurfaceDetail, PresenceSettings } from './settings'
 
 /**
  * Conventional POSIX log path shown when the worker has not supplied one.
@@ -31,8 +31,8 @@ export type PresencePanelActivitySummary = {
 }
 
 /**
- * Read-only field toggles. Changing them still requires the command palette
- * until the host makes `settings.set` panel-callable.
+ * Field toggles shown in the sidebar. On the fork they are writable via
+ * panel `settings.set`. On stock Orca they stay read-only.
  */
 export type PresencePanelFields = {
   enabled: boolean
@@ -45,6 +45,20 @@ export type PresencePanelFields = {
   debugLogging: boolean
   showOpenButton: boolean
   showAgentCount: boolean
+  showFocusedSurface: boolean
+  focusedSurfaceDetail: FocusedSurfaceDetail
+  showAgentType: boolean
+  showAgentModel: boolean
+  showAgentProfile: boolean
+}
+
+/**
+ * Worker-detected fork host surfaces for the panel hint line.
+ */
+export type PresencePanelHost = {
+  sidecar: boolean
+  focus: boolean
+  executionHost: boolean
 }
 
 /**
@@ -62,8 +76,11 @@ export type PresencePanelSnapshot = {
     debugLogging: boolean
     lastActivity: PresencePanelActivitySummary | null
     logFile: string | null
+    sidecarMailbox: boolean
+    heldClear: boolean
   }
   fields: PresencePanelFields
+  host: PresencePanelHost
   logs: string[]
   logHint: string
 }
@@ -78,6 +95,8 @@ export type PresencePanelSnapshotInput = {
   logs: readonly string[]
   /** Clock for `generatedAt`. Defaults to `new Date()`. */
   now?: Date
+  /** Fork probe flags. Defaults to all false. */
+  host?: PresencePanelHost
 }
 
 /**
@@ -127,7 +146,7 @@ export function formatPanelStatusToast(snapshot: PresencePanelSnapshot): string 
  * `machineLabel`, and `openUrl` are intentionally omitted.
  */
 export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): PresencePanelSnapshot {
-  const { version, status, settings, logs, now = new Date() } = input
+  const { version, status, settings, logs, now = new Date(), host } = input
   return {
     version,
     generatedAt: now.toISOString(),
@@ -139,7 +158,9 @@ export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): P
       bridgeEnabled: status.bridgeEnabled,
       debugLogging: settings.debugLogging,
       lastActivity: summarizePanelActivity(status.lastActivity),
-      logFile: status.logFile
+      logFile: status.logFile,
+      sidecarMailbox: status.sidecarMailbox,
+      heldClear: status.heldClear
     },
     fields: {
       enabled: settings.enabled,
@@ -151,7 +172,17 @@ export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): P
       bridgeEnabled: settings.bridgeEnabled,
       debugLogging: settings.debugLogging,
       showOpenButton: settings.showOpenButton,
-      showAgentCount: settings.showAgentCount
+      showAgentCount: settings.showAgentCount,
+      showFocusedSurface: settings.showFocusedSurface,
+      focusedSurfaceDetail: settings.focusedSurfaceDetail,
+      showAgentType: settings.showAgentType,
+      showAgentModel: settings.showAgentModel,
+      showAgentProfile: settings.showAgentProfile
+    },
+    host: {
+      sidecar: Boolean(host?.sidecar),
+      focus: Boolean(host?.focus),
+      executionHost: Boolean(host?.executionHost)
     },
     logs: logs.map(redactPanelLogLine),
     logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT

@@ -13,7 +13,7 @@ Orca starts a trusted plugin worker and calls `export default function activate(
 
 The worker is **idle-reaped after 5 minutes** of no host calls. An open Discord socket does not count as activity. A 90 s `workspace.readContext` heartbeat (`HEARTBEAT_MS` in `src/main.ts`) both keeps the worker alive and picks up branch changes, which emit no event.
 
-Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`) also wake a sleeping worker. Dynamic-only subscriptions would not. There is **no** focused-window or active-tab event in the host API this plugin uses.
+Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`, `ui.focus.changed`) also wake a sleeping worker. Dynamic-only subscriptions would not. Stock `stablyai/orca` rejects `ui.focus.changed` / `ui:focus` / `sidecar`; this 0.6.0 line targets [`jondmarien/orca`](https://github.com/jondmarien/orca).
 
 ## Module map
 
@@ -23,15 +23,17 @@ activate (src/main.ts)
   ├─ createDiagnosticSink (orca.log + state-dir file)
   ├─ createDiscordClient({ clientId: applicationId })
   ├─ createBridgeTransport()
-  ├─ createPresenceController({ client, bridge, settings, diagnostics })
+  ├─ createPresenceController({ client, bridge, sidecar, settings, diagnostics })
   ├─ commands → persist (settings.set) → controller.setSettings → refresh
+  ├─ 5 s settings.get poll so panel writes apply
   ├─ presence.configure → applyConfigure (fail-fast) → persist; App ID change recreates the IPC client
   ├─ presence.clear → controller.clear (hold; heartbeat does not republish)
   ├─ presence.reload → refresh → controller.reload (close + reconnect + SET_ACTIVITY)
-  ├─ agent.status.changed → agent table (worktreeId + paneKey) → aggregate → update
-  ├─ events / heartbeat → workspace.readContext (or minimal snapshot) → update + forceTransmit on heartbeat/status (heartbeat does not lift Clear)
-  ├─ panel snapshot → log ring + redacted JSON embedded in panel/index.html (writable installs)
-  └─ deactivate → controller.stop → clear local + remote + close socket (idempotent)
+  ├─ agent.status.changed → agent table (worktreeId + paneKey + optional identity) → aggregate → update
+  ├─ ui.focus.changed → validate kind → merge focus fields (null clears focus only)
+  ├─ events / heartbeat → workspace.readContext (execution host / agent / focus) → update + forceTransmit on heartbeat/status (heartbeat does not lift Clear)
+  ├─ panel snapshot → log ring + redacted JSON in storage (`diagnostics.snapshot`) and panel/index.html
+  └─ deactivate → controller.stop → clear local + sidecar + remote + close socket (idempotent)
 ```
 
 | Path | Role |
@@ -43,7 +45,11 @@ activate (src/main.ts)
 | [`src/discord/app-id.ts`](../src/discord/app-id.ts) | Fail-fast snowflake validation; shipped id always accepted. |
 | [`src/presence/settings.ts`](../src/presence/settings.ts) | Defaults, coerce-from-storage, cycle/toggle helpers. |
 | [`src/presence/activity.ts`](../src/presence/activity.ts) | **Privacy boundary.** Snapshot + settings → activity or `null`. |
-| [`src/presence/controller.ts`](../src/presence/controller.ts) | Snapshot merge, 15 s debounce, reconnect, **local-then-bridge** publish, **Reload RPC**. |
+| [`src/presence/controller.ts`](../src/presence/controller.ts) | Snapshot merge, 15 s debounce, reconnect, **local → sidecar mailbox → bridge** publish, **Reload RPC**. |
+| [`src/presence/host-context.ts`](../src/presence/host-context.ts) | Parse `executionHost` / `agent` / `focusedSurface` from `readContext`. |
+| [`src/presence/focus.ts`](../src/presence/focus.ts) | `ui.focus.changed` parse + privacy-gated labels. |
+| [`src/presence/sidecar.ts`](../src/presence/sidecar.ts) | Try-call `sidecar.resolvePlacement` / `sidecar.publish`. |
+| [`src/presence/diagnostics-store.ts`](../src/presence/diagnostics-store.ts) | Cap + write `diagnostics.snapshot`. |
 | [`src/presence/expiry.ts`](../src/presence/expiry.ts) | `AGENT_RETENTION_MS` (30m stale / 60s done) plus older 30s/60s helpers for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). |
 | [`src/presence/agent-state.ts`](../src/presence/agent-state.ts) | Alias table → `working` / `blocked` / `waiting` / `done`. |
 | [`src/presence/agents.ts`](../src/presence/agents.ts) | Multi-agent table keyed by `worktreeId` + `paneKey`. |
@@ -95,7 +101,7 @@ If the rendered activity JSON equals the last successful send, `update()` skips 
 
 A missing `workspace.readContext` still applies a minimal snapshot so `detailLevel: generic` can publish `Working in Orca`.
 
-Connect failures (Discord not running) are logged and swallowed. The next `update` or heartbeat retries. If local IPC is down and `resolveBridgeTarget` is set, the controller POSTs to the companion instead of giving up. It does **not** write both sinks. A successful later local handshake clears the remote activity.
+Connect failures (Discord not running) are logged and swallowed. The next `update` or heartbeat retries. If local IPC is down, the controller try-calls `sidecar.resolvePlacement` and may store a mailbox frame. If `resolveBridgeTarget` is set, it also POSTs to the companion (UI Discord IPC may still be `not-implemented` — that is not dual Discord). It does **not** write local IPC and companion together. A successful later local handshake clears the remote activity and any stored sidecar frame.
 
 A user command that changes settings bypasses the debounce so the palette feels immediate.
 
@@ -107,15 +113,15 @@ A user command that changes settings bypasses the debounce so the palette feels 
 
 The panel talks to the host only through `postMessage`:
 
-- `{ type: 'orca-panel-action', requestId, action, params }` → `workspace.readContext` or `notifications.show`
+- `{ type: 'orca-panel-action', requestId, action, params }` → `workspace.readContext`, `notifications.show`, and on the fork `settings.get` / `settings.set` / `storage.get`
 - `{ type: 'orca-panel-action-result', requestId, ok, value?, error? }`
 - Watchdog: `orca-panel-ping` / `orca-panel-pong`
 
-It cannot persist settings or read the log file. The worker optionally rewrites `#presence-snapshot` in `panel/index.html` (activate, Show Status, Reload RPC, debounced heartbeat) when the install directory is writable. The same rewrite stamps `#plugin-version`, `#version-badge`, and About from `PLUGIN_VERSION` (or the snapshot’s `version`) so the shell cannot drift from `package.json` / `orca-plugin.json`. Immutable marketplace copies keep the committed `null` snapshot — the shipped `#plugin-version` JSON still paints the current badge / About — and still get live workspace via the bridge.
+The worker writes a redacted snapshot to `storage.set` (`diagnostics.snapshot`) and optionally rewrites `#presence-snapshot` in `panel/index.html` when the install is writable. The same rewrite stamps `#plugin-version`, `#version-badge`, and About from `PLUGIN_VERSION`. Stock hosts that forbid panel settings/storage keep the v0.5 read-only fallback.
 
 ## Activity expiry (future providers)
 
-[`src/presence/expiry.ts`](../src/presence/expiry.ts) exports `AGENT_RETENTION_MS` (`stale` 30 minutes, `done` 60 seconds) for the live agent table, plus `ACTIVITY_EXPIRY_MS` (`short` 30s, `long` 60s) and `isActivityFresh()` for a future focus/tool path. This plugin does **not** rotate providers yet. When [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) (focused window/tab) lands, providers should reuse `isActivityFresh` instead of inventing a new clock.
+[`src/presence/expiry.ts`](../src/presence/expiry.ts) exports `AGENT_RETENTION_MS` (`stale` 30 minutes, `done` 60 seconds) for the live agent table. Focused-surface samples use `ACTIVITY_EXPIRY_MS.long` (60 s).
 
 **Clear:** `presence.clear` sends `SET_ACTIVITY` null (and companion `DELETE` when that was the last sink) without flipping `enabled`. Automatic republish is held. The heartbeat does not lift the hold. The next `agent.status.changed`, Show Status, Reload RPC, or settings write does.
 
@@ -126,7 +132,7 @@ Produced by `buildActivity` in `src/presence/activity.ts`:
 | JSON field | Source |
 |---|---|
 | `details` | `"Working in Orca"`, workspace name, or `name — branch` |
-| `state` | `N agent(s) · label · N terminals · machine` (omitted if empty) |
+| `state` | `focus · agent type/model/profile · N agent(s) · label · N terminals · machine` (omitted if empty) |
 | `timestamps.start` | `min(stateStartedAtMs, now)` as Unix **seconds** |
 | `assets.large_image` | always `orca` when an activity exists |
 | `assets.small_image` | `state-working` / `state-blocked` / `state-waiting` / `state-idle` |
@@ -139,6 +145,6 @@ Text fields are clamped to 128 characters. See [privacy.md](privacy.md) for whic
 - **Authoring / CI:** Bun (`bun install`, `bun test`, `bun run typecheck`, `bun run build`).
 - **Runtime:** Node/Electron plugin worker. `dist/main.js` must stay free of `Bun.file` / `Bun.spawn`.
 - **Identity:** `orca-plugin.json` `publisher` + `id` → `chron0.discord-presence`. Do not rename.
-- **Panel:** `contributes.panels[0]` id `presence`, sidebar key `plugin:chron0.discord-presence/presence`. The iframe may call only `workspace.readContext` and `notifications.show`. It replies to `orca-panel-ping` with `orca-panel-pong`. Settings writes and live file logs wait on host B4.
+- **Panel:** `contributes.panels[0]` id `presence`, sidebar key `plugin:chron0.discord-presence/presence`. The iframe replies to `orca-panel-ping` with `orca-panel-pong`. On the fork it also calls `settings.*` and `storage.get`.
 - **Companion:** `bun run companion` / `bun run start` in `companion/`. Runs on Linux, macOS, or Windows. Optional `bun build companion/main.ts --compile`. Zero extra production dependencies; Node `http` + shared IPC modules.
-- **Focus:** the worker does not subscribe to UI focus/tab events (none are exposed). Snapshot sources are `agent.status.changed` and `workspace.readContext` only.
+- **Focus:** subscribe to `ui.focus.changed` (requires `ui:focus`). Unknown kinds are dropped. Explicit `null` clears focus fields only.
