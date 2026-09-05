@@ -13,11 +13,18 @@
  */
 
 import os from 'node:os'
+import { inspectApplicationId } from './discord/app-id'
 import { createDiscordClient } from './discord/client'
 import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
 import { createPresenceController, type PresenceController } from './presence/controller'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
-import { normalizeSettings, nextDetailLevel, toggleField, type PresenceSettings } from './presence/settings'
+import {
+  normalizeSettings,
+  nextDetailLevel,
+  SHIPPED_APPLICATION_ID,
+  toggleField,
+  type PresenceSettings
+} from './presence/settings'
 
 /**
  * Interval for the `workspace.readContext` heartbeat.
@@ -135,6 +142,7 @@ export type OrcaHost = {
 let controller: PresenceController | null = null
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
+let deactivated = false
 
 /**
  * Plugin entry. Loads persisted settings, constructs the Discord client and
@@ -146,9 +154,15 @@ let diagnostics: DiagnosticSink | null = null
  * @author Jonathan Marien
  */
 export default async function activate(orca: OrcaHost) {
+  deactivated = false
   const stored = (await orca.host.call('settings.get').catch(() => ({ settings: {} }))) as {
     settings?: unknown
   }
+  const rawSettings =
+    stored?.settings && typeof stored.settings === 'object'
+      ? (stored.settings as Record<string, unknown>)
+      : {}
+  const appId = inspectApplicationId(rawSettings.applicationId, SHIPPED_APPLICATION_ID)
   let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env)
 
   const logFile = resolveLogFilePath(process.env, {
@@ -167,11 +181,22 @@ export default async function activate(orca: OrcaHost) {
     file: logFile,
     bridge: settings.bridgeEnabled
   })
+  if (appId.usedFallback) {
+    diagnostics.line('error', 'discord.app_id_invalid', {
+      reason: appId.reason,
+      rejected: appId.rejectedRaw || '(empty)',
+      fallback: SHIPPED_APPLICATION_ID
+    })
+    void orca.host.call('notifications.show', {
+      title: 'Discord Rich Presence',
+      body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ''}. Using shipped id. ${appId.reason ?? ''}`
+    })
+  }
 
   controller = createPresenceController({
     client: createDiscordClient({
       clientId: settings.applicationId,
-      log: (message) => diagnostics?.line('error', 'discord.client', { reason: message })
+      log: (message, level = 'error') => diagnostics?.line(level, 'discord.client', { reason: message })
     }),
     bridge: createBridgeTransport({
       log: (message) => diagnostics?.line('error', 'bridge.transport', { reason: message })
@@ -280,6 +305,25 @@ export default async function activate(orca: OrcaHost) {
     return status
   })
 
+  orca.commands.register('presence.reload', async () => {
+    await refresh()
+    diagnostics?.line('info', 'discord.reload_command')
+    await controller?.reload()
+    const status = controller?.status()
+    const transmitting = formatStatusTransmitting(status?.lastActivity ?? null)
+    const summary = `reloaded connected=${status?.connected} sink=${status?.sink} ${transmitting}`
+    diagnostics?.line('info', 'discord.reload_done', {
+      connected: status?.connected,
+      sink: status?.sink,
+      transmitting: JSON.stringify(status?.lastActivity)
+    })
+    await orca.host.call('notifications.show', {
+      title: 'Discord Rich Presence',
+      body: summary
+    })
+    return status
+  })
+
   orca.events.on('agent.status.changed', async (payload) => {
     await refresh(payload as AgentStatusPayload)
   })
@@ -303,11 +347,16 @@ export default async function activate(orca: OrcaHost) {
 
 /**
  * Plugin shutdown. Stops the heartbeat, clears Discord activity, and
- * closes the IPC socket. Safe to call when activate never finished wiring.
+ * closes the IPC socket. Idempotent — safe if called twice or when
+ * activate never finished wiring.
  *
  * @author Jonathan Marien
  */
 export async function deactivate() {
+  if (deactivated) {
+    return
+  }
+  deactivated = true
   if (heartbeat) {
     clearInterval(heartbeat)
     heartbeat = null

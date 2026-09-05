@@ -126,11 +126,19 @@ export type PresenceController = {
    * this so a later client does not leave a stale “already sent” skip.
    */
   forceTransmit: () => Promise<void>
+  /**
+   * Close the IPC socket (clears activity first), reconnect, and
+   * re-`SET_ACTIVITY`. Palette: **Discord Presence: Reload RPC**.
+   */
+  reload: () => Promise<void>
   /** Current settings object (same reference the controller holds). */
   settings: () => PresenceSettings
   /** Connection + last transmitted activity + log path for the status command. */
   status: () => PresenceStatus
-  /** Cancel a pending timer, clear activity, close the client. */
+  /**
+   * Cancel a pending timer, clear activity, close the client.
+   * Idempotent — a second call is a no-op.
+   */
   stop: () => Promise<void>
 }
 
@@ -161,6 +169,7 @@ export function createPresenceController({
   let lastSink: PresenceSink | null = null
   let lastBridgeUrl: string | null = null
   let lastBridgeToken: string | null = null
+  let stopped = false
 
   function emit(
     level: 'debug' | 'info' | 'warn' | 'error',
@@ -379,6 +388,27 @@ export function createPresenceController({
       emit('info', 'discord.force_transmit')
       await transmit(true)
     },
+    async reload() {
+      if (pendingTimer) {
+        clearTimer(pendingTimer)
+        pendingTimer = null
+      }
+      lastSentSerialized = null
+      stopped = false
+      emit('info', 'discord.reload')
+      try {
+        await client.close()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        emit('error', 'discord.reload_close_failed', { reason: message })
+      }
+      await transmit(true)
+      if (!client.isConnected() && lastSink !== 'bridge') {
+        emit('error', 'discord.reload_failed', {
+          reason: 'reconnect did not complete; see discord.connect_failed'
+        })
+      }
+    },
     settings: () => currentSettings,
     status: () => ({
       enabled: currentSettings.enabled && currentSettings.detailLevel !== 'off',
@@ -390,6 +420,10 @@ export function createPresenceController({
       logFile: diagnostics?.filePath ?? null
     }),
     async stop() {
+      if (stopped) {
+        return
+      }
+      stopped = true
       if (pendingTimer) {
         clearTimer(pendingTimer)
         pendingTimer = null
