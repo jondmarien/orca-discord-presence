@@ -1,14 +1,38 @@
-// Discord IPC: socket path discovery + wire framing.
-//
-// Candidate paths are most-likely first. Platform, env, and uid are injected
-// so the table is testable off-platform.
-//
-// Wire format: [int32LE opcode][int32LE byteLength][utf8 JSON].
+/**
+ * Discord IPC: socket path discovery and wire framing.
+ *
+ * Candidate paths are most-likely first. Platform, env, and uid are injected
+ * so the table is testable off-platform.
+ *
+ * Wire format (little-endian): `[int32 opcode][int32 byteLength][utf8 JSON]`.
+ * Opcodes: HANDSHAKE 0, FRAME 1, CLOSE 2, PING 3, PONG 4.
+ *
+ * @module discord/ipc
+ * @author Jonathan Marien
+ * @date 2026-09-05
+ */
 
+/**
+ * Discord exposes `discord-ipc-0` through `discord-ipc-9` per install prefix.
+ *
+ * @author Jonathan Marien
+ */
 const SOCKET_INDEX_LIMIT = 10
-// Flatpak and Snap sandbox Discord's runtime dir one level down.
+
+/**
+ * Extra path segments for sandboxed Discord installs. Empty string is the
+ * unsandboxed runtime dir. Flatpak and Snap nest one level down.
+ *
+ * @author Jonathan Marien
+ */
 const SANDBOX_SUBDIRS = ['', 'app/com.discordapp.Discord', 'snap.discord'] as const
 
+/**
+ * Discord IPC opcodes. Handshake uses 0; RPC commands and READY/ERROR
+ * dispatches use FRAME (1).
+ *
+ * @author Jonathan Marien
+ */
 export const OPCODE = {
   HANDSHAKE: 0,
   FRAME: 1,
@@ -17,21 +41,59 @@ export const OPCODE = {
   PONG: 4
 } as const
 
+/**
+ * Numeric opcode union (`0` | `1` | `2` | `3` | `4`).
+ *
+ * @author Jonathan Marien
+ */
 export type Opcode = (typeof OPCODE)[keyof typeof OPCODE]
 
-// Why: a hostile or desynced stream must not let us buffer unbounded memory.
+/**
+ * Maximum JSON body size the decoder will accept.
+ *
+ * Why: a hostile or desynced stream must not let us buffer unbounded memory.
+ *
+ * @author Jonathan Marien
+ */
 const MAX_FRAME_BYTES = 1024 * 1024
 
+/**
+ * Inputs for {@link discordIpcCandidates}. Injected so tests can simulate
+ * Windows pipes and Linux XDG reconstruction without running on those OSes.
+ *
+ * @author Jonathan Marien
+ */
 export type IpcPathInput = {
+  /** `process.platform` value (`win32`, `linux`, `darwin`, …). */
   platform: string
+  /** Environment map; Linux reads `XDG_RUNTIME_DIR`, `TMPDIR`, `TMP`, `TEMP`. */
   env: NodeJS.ProcessEnv | Record<string, string | undefined>
+  /**
+   * Numeric user id used to rebuild `/run/user/<uid>` when the worker env
+   * allowlist has dropped `XDG_RUNTIME_DIR`.
+   */
   uid?: number
 }
 
+/**
+ * Strip trailing `/` or `\` so prefix concatenation does not double separators.
+ */
 function trimTrailingSeparator(value: string): string {
   return value.replace(/[\\/]+$/, '')
 }
 
+/**
+ * Build the ordered list of Discord IPC socket / named-pipe paths.
+ *
+ * Windows: `\\?\pipe\discord-ipc-0` … `discord-ipc-9`.
+ * POSIX: for each prefix (`XDG_RUNTIME_DIR`, `/run/user/<uid>`, temp dirs,
+ * `/tmp`) and each {@link SANDBOX_SUBDIRS} entry, emit `discord-ipc-0`…`9`.
+ * Duplicates are dropped; first occurrence wins.
+ *
+ * @param input - Platform, env, and optional uid.
+ * @returns Deduplicated candidate paths, most-likely first.
+ * @author Jonathan Marien
+ */
 export function discordIpcCandidates({ platform, env, uid }: IpcPathInput): string[] {
   if (platform === 'win32') {
     return Array.from(
@@ -69,6 +131,17 @@ export function discordIpcCandidates({ platform, env, uid }: IpcPathInput): stri
   return candidates
 }
 
+/**
+ * Encode one Discord IPC frame: 8-byte header plus UTF-8 JSON body.
+ *
+ * Length is **byte** length of the JSON, not JavaScript string length
+ * (multi-byte characters must not be under-counted).
+ *
+ * @param opcode - {@link OPCODE} value.
+ * @param payload - JSON-serializable body (handshake `{ v, client_id }`, RPC command, etc.).
+ * @returns A Node `Buffer` ready to `socket.write`.
+ * @author Jonathan Marien
+ */
 export function encodeFrame(opcode: number, payload: unknown): Buffer {
   const body = Buffer.from(JSON.stringify(payload), 'utf8')
   const frame = Buffer.allocUnsafe(8 + body.length)
@@ -78,6 +151,19 @@ export function encodeFrame(opcode: number, payload: unknown): Buffer {
   return frame
 }
 
+/**
+ * Incremental decoder for a Discord IPC byte stream.
+ *
+ * Call `push` with each socket chunk. Complete frames invoke `onFrame`;
+ * malformed JSON or a declared length outside `0…MAX_FRAME_BYTES` invoke
+ * `onError` and freeze the decoder (further `push` is ignored). Frames may
+ * be split across chunks or packed into one chunk.
+ *
+ * @param onFrame - Receives opcode and parsed JSON for each complete frame.
+ * @param onError - Receives decode errors; default is a no-op.
+ * @returns An object with `push(chunk)`.
+ * @author Jonathan Marien
+ */
 export function createFrameDecoder(
   onFrame: (opcode: number, data: unknown) => void,
   onError: (error: unknown) => void = () => {}
@@ -85,6 +171,11 @@ export function createFrameDecoder(
   let buffered = Buffer.alloc(0)
   let broken = false
   return {
+    /**
+     * Append bytes and emit any complete frames.
+     *
+     * @param chunk - Socket data (`Buffer`, `Uint8Array`, or string).
+     */
     push(chunk: Buffer | Uint8Array | string) {
       if (broken) {
         return
