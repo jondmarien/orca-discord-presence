@@ -55,6 +55,7 @@ The bridge token is a shared secret between the Orca host and the companion. It 
 |---|
 | Discord bot token / client secret (this plugin has none) |
 | File paths, file names, or editor cursors (focus titles are host-truncated; unknown kinds are dropped) |
+| Focus join keys `worktreeId` / `agentId` (opaque; may look like paths). Never sent to Discord, never shown in the panel, never stored in `diagnostics.snapshot` |
 | Raw unrecognized agent states (aliased, then mapped to idle) |
 | Secrets in `openUrl` (operator responsibility; credentials-in-URL are rejected) |
 | SSH remote hostnames (`os.hostname()` is the Orca **client**) |
@@ -95,7 +96,7 @@ Commands persist the full normalized object via `settings.set` (one key per fiel
 
 ## Capabilities
 
-The consent dialog lists `workspace:read`, `events:subscribe`, `storage`, `settings:own`, `notifications:show`, `ui:focus`, and `sidecar`. There is no `secrets` capability. `ui:focus` is focused UI surface (kind + truncated title). `sidecar` publishes frames a paired UI client can apply. Stock `stablyai/orca` rejects those extra kinds.
+The consent dialog lists `workspace:read`, `events:subscribe`, `storage`, `settings:own`, `notifications:show`, `ui:focus`, and `sidecar`. There is no `secrets` capability. `ui:focus` is focused UI surface (kind + truncated title). Optional host join keys stay in-process for agent-table correlation. `sidecar` publishes frames a paired UI client can apply. Stock `stablyai/orca` rejects those extra kinds.
 
 ## Operator advice
 

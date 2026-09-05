@@ -473,6 +473,7 @@ function isActivityFresh(lastSeenAtMs, nowMs, windowMs) {
 }
 
 // src/presence/focus.ts
+var FOCUS_JOIN_KEY_MAX = 2048;
 var FOCUSED_SURFACE_KINDS = [
   "terminal",
   "agent",
@@ -492,6 +493,34 @@ var FOCUSED_SURFACE_LABELS = {
 function isFocusedSurfaceKind(value) {
   return typeof value === "string" && FOCUSED_SURFACE_KINDS.includes(value);
 }
+function parseOptionalHostJoinKey(raw) {
+  if (typeof raw !== "string") {
+    return;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > FOCUS_JOIN_KEY_MAX) {
+    return;
+  }
+  return trimmed;
+}
+function parseFocusedSurfaceObject(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return;
+  }
+  const source = raw;
+  if (!isFocusedSurfaceKind(source.kind)) {
+    return;
+  }
+  const title = source.title === null ? null : typeof source.title === "string" && source.title.trim() ? source.title.trim().slice(0, 80) : null;
+  const worktreeId = parseOptionalHostJoinKey(source.worktreeId);
+  const agentId = parseOptionalHostJoinKey(source.agentId);
+  return {
+    kind: source.kind,
+    title,
+    ...worktreeId ? { worktreeId } : {},
+    ...agentId ? { agentId } : {}
+  };
+}
 function parseUiFocusChanged(raw) {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -503,15 +532,67 @@ function parseUiFocusChanged(raw) {
   if (source.focusedSurface === null) {
     return { focusedSurface: null, receivedAt: source.receivedAt };
   }
-  if (!source.focusedSurface || typeof source.focusedSurface !== "object") {
+  const surface = parseFocusedSurfaceObject(source.focusedSurface);
+  if (!surface) {
     return null;
   }
-  const surface = source.focusedSurface;
-  if (!isFocusedSurfaceKind(surface.kind)) {
-    return null;
+  return { focusedSurface: surface, receivedAt: source.receivedAt };
+}
+function parseUiReadFocus(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return;
   }
-  const title = surface.title === null ? null : typeof surface.title === "string" && surface.title.trim() ? surface.title.trim().slice(0, 80) : null;
-  return { focusedSurface: { kind: surface.kind, title }, receivedAt: source.receivedAt };
+  const source = raw;
+  if (!Object.prototype.hasOwnProperty.call(source, "focusedSurface")) {
+    return;
+  }
+  if (source.focusedSurface === null) {
+    return { focusedSurface: null };
+  }
+  const surface = parseFocusedSurfaceObject(source.focusedSurface);
+  if (!surface) {
+    return;
+  }
+  return { focusedSurface: surface };
+}
+async function probeUiReadFocus(call, cache) {
+  if (cache.missing) {
+    return;
+  }
+  try {
+    return parseUiReadFocus(await call("ui.readFocus"));
+  } catch {
+    cache.missing = true;
+    return;
+  }
+}
+function pickFocusedSurface(input) {
+  if (input.context?.focusedSurfacePresent) {
+    const surface = input.context.focusedSurface;
+    return {
+      surface,
+      atMs: surface ? input.nowMs : undefined,
+      source: "readContext"
+    };
+  }
+  if (input.readFocus) {
+    return {
+      surface: input.readFocus.focusedSurface,
+      atMs: input.readFocus.focusedSurface ? input.nowMs : undefined,
+      source: "readFocus"
+    };
+  }
+  if (input.lastEvent) {
+    return {
+      surface: input.lastEvent.focusedSurface,
+      atMs: input.lastEvent.focusedSurface ? input.lastEvent.receivedAt : undefined,
+      source: "event"
+    };
+  }
+  return { surface: undefined, source: "none" };
+}
+function focusedJoinKeysPresent(surface) {
+  return Boolean(surface && (surface.worktreeId || surface.agentId));
 }
 function formatFocusedSurface(snapshot, settings, nowMs) {
   if (!settings.showFocusedSurface) {
@@ -551,9 +632,6 @@ function optionalBoundedString(value, max) {
 }
 function isExecutionHostKind(value) {
   return typeof value === "string" && EXECUTION_HOST_KINDS.includes(value);
-}
-function isFocusedSurfaceKind2(value) {
-  return typeof value === "string" && FOCUSED_SURFACE_KINDS.includes(value);
 }
 function parseWorkspaceContext(raw) {
   if (!raw || typeof raw !== "object") {
@@ -608,15 +686,7 @@ function parseFocusedSurfaceValue(raw) {
   if (raw === null) {
     return null;
   }
-  if (!raw || typeof raw !== "object") {
-    return;
-  }
-  const source = raw;
-  if (!isFocusedSurfaceKind2(source.kind)) {
-    return;
-  }
-  const title = source.title === null ? null : optionalBoundedString(source.title, 80) ?? null;
-  return { kind: source.kind, title };
+  return parseFocusedSurfaceObject(raw);
 }
 function resolveMachineName(input) {
   if (input.machineLabel && input.machineLabel.trim()) {
@@ -637,6 +707,14 @@ var PRIORITY = {
 };
 function agentSlotKey(worktreeId, paneKey) {
   return `${worktreeId}\x1F${paneKey}`;
+}
+function paneKeyMatchesAgentId(paneKey, agentId) {
+  const pane = paneKey.trim();
+  const id = agentId.trim();
+  if (!id) {
+    return false;
+  }
+  return pane === id || pane.startsWith(`${id}:`);
 }
 function parseAgentStatusPayload(payload, nowMs) {
   if (!payload || typeof payload !== "object") {
@@ -681,7 +759,42 @@ function retentionWindow(state) {
 function isAgentSlotFresh(slot, nowMs) {
   return isActivityFresh(slot.receivedAt, nowMs, retentionWindow(slot.canonicalState));
 }
-function summarizeSlots(slots) {
+function normalizeJoinKey(value) {
+  if (typeof value !== "string") {
+    return;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+function filterSlotsByFocus(slots, focus) {
+  const worktreeId = normalizeJoinKey(focus?.worktreeId);
+  const agentId = normalizeJoinKey(focus?.agentId);
+  if (!worktreeId && !agentId) {
+    return [...slots];
+  }
+  return slots.filter((slot) => {
+    if (worktreeId && slot.worktreeId.trim() !== worktreeId) {
+      return false;
+    }
+    if (agentId && !paneKeyMatchesAgentId(slot.paneKey, agentId)) {
+      return false;
+    }
+    return true;
+  });
+}
+function pickIdentityWinner(slots) {
+  let winnerSlot;
+  let winnerPriority = -1;
+  for (const slot of slots) {
+    const priority = PRIORITY[slot.canonicalState];
+    if (priority > winnerPriority) {
+      winnerPriority = priority;
+      winnerSlot = slot;
+    }
+  }
+  return winnerSlot;
+}
+function summarizeSlots(slots, focus) {
   if (slots.length === 0) {
     return {
       agentCount: 0,
@@ -694,13 +807,11 @@ function summarizeSlots(slots) {
   }
   let winner = "done";
   let winnerPriority = -1;
-  let winnerSlot;
   for (const slot of slots) {
     const priority = PRIORITY[slot.canonicalState];
     if (priority > winnerPriority) {
       winner = slot.canonicalState;
       winnerPriority = priority;
-      winnerSlot = slot;
     }
   }
   let started = Number.POSITIVE_INFINITY;
@@ -709,13 +820,16 @@ function summarizeSlots(slots) {
       started = slot.receivedAt;
     }
   }
+  const filtered = filterSlotsByFocus(slots, focus);
+  const identitySource = filtered.length > 0 ? filtered : slots;
+  const identitySlot = pickIdentityWinner(identitySource);
   return {
     agentCount: slots.length,
     agentState: winner,
     stateStartedAtMs: Number.isFinite(started) ? started : undefined,
-    agentType: winnerSlot?.agent?.type,
-    agentModel: winnerSlot?.agent?.model,
-    agentProfile: winnerSlot?.agent?.profile
+    agentType: identitySlot?.agent?.type,
+    agentModel: identitySlot?.agent?.model,
+    agentProfile: identitySlot?.agent?.profile
   };
 }
 function createAgentTable({
@@ -793,9 +907,9 @@ function createAgentTable({
       return changed;
     },
     prune,
-    summarize() {
+    summarize(focus) {
       prune();
-      return summarizeSlots([...map.values()]);
+      return summarizeSlots([...map.values()], focus);
     },
     slots: () => [...map.values()],
     clear() {
@@ -1746,7 +1860,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // src/version.ts
-var PLUGIN_VERSION = "0.6.0";
+var PLUGIN_VERSION = "0.6.1";
 
 // src/presence/panel-html.ts
 var PANEL_HTML_ENV = "ORCA_PRESENCE_PANEL_HTML";
@@ -1989,6 +2103,7 @@ async function activate(orca) {
   let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env);
   const hostCaps = emptyHostCaps();
   let lastFocus = null;
+  const uiReadFocusCache = { missing: false };
   const logFile = resolveLogFilePath(process.env, {
     homedir: os2.homedir(),
     tmpdir: os2.tmpdir(),
@@ -2144,7 +2259,24 @@ async function activate(orca) {
     if (agentEvent) {
       agentTable?.upsert(agentEvent);
     }
-    const summary = agentTable?.summarize() ?? {
+    const parsed = parseWorkspaceContext(await orca.host.call("workspace.readContext").catch(() => null));
+    const readFocus = parsed?.focusedSurfacePresent ? undefined : await probeUiReadFocus((method, args) => orca.host.call(method, args), uiReadFocusCache);
+    const resolved = pickFocusedSurface({
+      context: parsed,
+      readFocus,
+      lastEvent: lastFocus,
+      nowMs: Date.now()
+    });
+    if (parsed?.executionHostKind) {
+      hostCaps.executionHost = true;
+    }
+    if (parsed?.focusedSurfacePresent || readFocus || lastFocus) {
+      hostCaps.focus = true;
+    }
+    const summary = agentTable?.summarize({
+      worktreeId: resolved.surface?.worktreeId,
+      agentId: resolved.surface?.agentId
+    }) ?? {
       agentCount: 0,
       agentState: undefined,
       stateStartedAtMs: undefined,
@@ -2152,21 +2284,15 @@ async function activate(orca) {
       agentModel: undefined,
       agentProfile: undefined
     };
-    const parsed = parseWorkspaceContext(await orca.host.call("workspace.readContext").catch(() => null));
     if (!parsed) {
       diagnostics?.line("debug", "refresh.minimal", { reason: "no workspace context" });
     } else if (agentEvent) {
       diagnostics?.line("debug", "refresh", {
         source: "agent.status.changed",
         agentState: summary.agentState ?? "idle",
-        agents: summary.agentCount
+        agents: summary.agentCount,
+        focusJoinKeys: focusedJoinKeysPresent(resolved.surface)
       });
-    }
-    if (parsed?.executionHostKind) {
-      hostCaps.executionHost = true;
-    }
-    if (parsed?.focusedSurfacePresent) {
-      hostCaps.focus = true;
     }
     const resume = Boolean(options.resume || agentEvent);
     await controller?.update({
@@ -2186,7 +2312,7 @@ async function activate(orca) {
       agentType: summary.agentType ?? parsed?.agentType,
       agentModel: summary.agentModel ?? parsed?.agentModel,
       agentProfile: summary.agentProfile ?? parsed?.agentProfile,
-      ...focusSnapshotFields(parsed, lastFocus)
+      ...focusSnapshotFields(resolved.surface, resolved.atMs)
     }, resume ? { resume: true } : undefined);
     if (options.force) {
       await controller?.forceTransmit(resume);
@@ -2345,38 +2471,21 @@ async function activate(orca) {
   settingsPoll.unref?.();
   refresh().then(() => publishPanelSnapshot("immediate"));
 }
-function focusSnapshotFields(context, lastFocus) {
-  if (context?.focusedSurfacePresent) {
-    if (context.focusedSurface === null) {
-      return {
-        focusedSurfaceKind: undefined,
-        focusedSurfaceTitle: undefined,
-        focusedSurfaceAtMs: undefined
-      };
-    }
-    if (context.focusedSurface) {
-      return {
-        focusedSurfaceKind: context.focusedSurface.kind,
-        focusedSurfaceTitle: context.focusedSurface.title,
-        focusedSurfaceAtMs: Date.now()
-      };
-    }
-    return {};
-  }
-  if (!lastFocus) {
-    return {};
-  }
-  if (lastFocus.focusedSurface === null) {
+function focusSnapshotFields(surface, atMs) {
+  if (surface === null) {
     return {
       focusedSurfaceKind: undefined,
       focusedSurfaceTitle: undefined,
       focusedSurfaceAtMs: undefined
     };
   }
+  if (!surface) {
+    return {};
+  }
   return {
-    focusedSurfaceKind: lastFocus.focusedSurface.kind,
-    focusedSurfaceTitle: lastFocus.focusedSurface.title,
-    focusedSurfaceAtMs: lastFocus.receivedAt
+    focusedSurfaceKind: surface.kind,
+    focusedSurfaceTitle: surface.title,
+    focusedSurfaceAtMs: atMs
   };
 }
 async function deactivate() {

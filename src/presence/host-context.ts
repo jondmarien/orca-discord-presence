@@ -1,14 +1,15 @@
 /**
  * Parse additive `workspace.readContext` / agent-identity fields from the
- * fork host (Orca-3 / Orca-4). Missing keys stay undefined so older hosts
- * keep today's snapshot shape.
+ * fork host (Orca-3 / Orca-4 / host #8). Missing keys stay undefined so
+ * older hosts keep today's snapshot shape. Join keys on `focusedSurface`
+ * are feature-detected and never copied into Discord strings.
  *
  * @module presence/host-context
  * @author Jonathan Marien
  * @date 2026-09-05
  */
 
-import { FOCUSED_SURFACE_KINDS, type FocusedSurfaceKind } from './focus'
+import { parseFocusedSurfaceObject, type FocusedSurfaceObject } from './focus'
 
 /**
  * Execution-host kinds projected by the fork (`executionHost.kind`).
@@ -31,12 +32,10 @@ export type AgentIdentity = {
 
 /**
  * Focused surface after kind validation. `null` means the host sent an
- * explicit empty sample (window unfocused).
+ * explicit empty sample (window unfocused). Optional join keys live on
+ * the object when the host (#8) sends them.
  */
-export type ParsedFocusedSurface = {
-  kind: FocusedSurfaceKind
-  title: string | null
-} | null
+export type ParsedFocusedSurface = FocusedSurfaceObject | null
 
 /**
  * Normalized `workspace.readContext` subset this plugin consumes.
@@ -73,10 +72,6 @@ function optionalBoundedString(value: unknown, max: number): string | undefined 
 
 function isExecutionHostKind(value: unknown): value is ExecutionHostKind {
   return typeof value === 'string' && (EXECUTION_HOST_KINDS as readonly string[]).includes(value)
-}
-
-function isFocusedSurfaceKind(value: unknown): value is FocusedSurfaceKind {
-  return typeof value === 'string' && (FOCUSED_SURFACE_KINDS as readonly string[]).includes(value)
 }
 
 /**
@@ -151,15 +146,7 @@ export function parseFocusedSurfaceValue(raw: unknown): ParsedFocusedSurface | u
   if (raw === null) {
     return null
   }
-  if (!raw || typeof raw !== 'object') {
-    return undefined
-  }
-  const source = raw as Record<string, unknown>
-  if (!isFocusedSurfaceKind(source.kind)) {
-    return undefined
-  }
-  const title = source.title === null ? null : optionalBoundedString(source.title, 80) ?? null
-  return { kind: source.kind, title }
+  return parseFocusedSurfaceObject(raw)
 }
 
 /**

@@ -50,6 +50,28 @@ test('parseWorkspaceContext accepts additive Orca-3 / Orca-4 fields', () => {
   expect(parsed?.focusedSurfacePresent).toBe(true)
 })
 
+test('parseWorkspaceContext feature-detects focusedSurface join keys', () => {
+  const parsed = parseWorkspaceContext({
+    displayName: 'acme',
+    branch: 'feat',
+    terminals: [],
+    focusedSurface: {
+      kind: 'agent',
+      title: 'Claude',
+      worktreeId: 'repo::/tmp/a',
+      agentId: 'sess-1',
+      leftover: true
+    }
+  })
+  expect(parsed?.focusedSurface).toEqual({
+    kind: 'agent',
+    title: 'Claude',
+    worktreeId: 'repo::/tmp/a',
+    agentId: 'sess-1'
+  })
+  expect(parsed?.focusedSurfacePresent).toBe(true)
+})
+
 test('parseWorkspaceContext treats an explicit null focusedSurface as present', () => {
   const parsed = parseWorkspaceContext({
     displayName: 'acme',

@@ -25,7 +25,15 @@ import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridg
 import { applyConfigure } from './presence/configure'
 import { createPresenceController, type PresenceController } from './presence/controller'
 import { writeDiagnosticsSnapshot } from './presence/diagnostics-store'
-import { parseUiFocusChanged, type ParsedUiFocusChanged } from './presence/focus'
+import {
+  focusedJoinKeysPresent,
+  parseUiFocusChanged,
+  pickFocusedSurface,
+  probeUiReadFocus,
+  type FocusedSurfaceObject,
+  type ParsedUiFocusChanged,
+  type UiReadFocusCache
+} from './presence/focus'
 import { parseWorkspaceContext, resolveMachineName } from './presence/host-context'
 import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
@@ -123,8 +131,8 @@ export type OrcaHost = {
   host: {
     /**
      * Invoke a host method. This plugin uses `settings.*`,
-     * `workspace.readContext`, `notifications.show`, `storage.*`, and
-     * `sidecar.*` (try-call).
+     * `workspace.readContext`, `notifications.show`, `storage.*`,
+     * `sidecar.*` (try-call), and `ui.readFocus` (try-call; host #8).
      */
     call: (method: string, args?: Record<string, unknown>) => Promise<unknown>
   }
@@ -184,6 +192,7 @@ export default async function activate(orca: OrcaHost) {
   let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env)
   const hostCaps = emptyHostCaps()
   let lastFocus: ParsedUiFocusChanged | null = null
+  const uiReadFocusCache: UiReadFocusCache = { missing: false }
 
   const logFile = resolveLogFilePath(process.env, {
     homedir: os.homedir(),
@@ -374,7 +383,28 @@ export default async function activate(orca: OrcaHost) {
     if (agentEvent) {
       agentTable?.upsert(agentEvent)
     }
-    const summary = agentTable?.summarize() ?? {
+    const parsed = parseWorkspaceContext(
+      await orca.host.call('workspace.readContext').catch(() => null)
+    )
+    const readFocus = parsed?.focusedSurfacePresent
+      ? undefined
+      : await probeUiReadFocus((method, args) => orca.host.call(method, args), uiReadFocusCache)
+    const resolved = pickFocusedSurface({
+      context: parsed,
+      readFocus,
+      lastEvent: lastFocus,
+      nowMs: Date.now()
+    })
+    if (parsed?.executionHostKind) {
+      hostCaps.executionHost = true
+    }
+    if (parsed?.focusedSurfacePresent || readFocus || lastFocus) {
+      hostCaps.focus = true
+    }
+    const summary = agentTable?.summarize({
+      worktreeId: resolved.surface?.worktreeId,
+      agentId: resolved.surface?.agentId
+    }) ?? {
       agentCount: 0,
       agentState: undefined,
       stateStartedAtMs: undefined,
@@ -382,23 +412,15 @@ export default async function activate(orca: OrcaHost) {
       agentModel: undefined,
       agentProfile: undefined
     }
-    const parsed = parseWorkspaceContext(
-      await orca.host.call('workspace.readContext').catch(() => null)
-    )
     if (!parsed) {
       diagnostics?.line('debug', 'refresh.minimal', { reason: 'no workspace context' })
     } else if (agentEvent) {
       diagnostics?.line('debug', 'refresh', {
         source: 'agent.status.changed',
         agentState: summary.agentState ?? 'idle',
-        agents: summary.agentCount
+        agents: summary.agentCount,
+        focusJoinKeys: focusedJoinKeysPresent(resolved.surface)
       })
-    }
-    if (parsed?.executionHostKind) {
-      hostCaps.executionHost = true
-    }
-    if (parsed?.focusedSurfacePresent) {
-      hostCaps.focus = true
     }
     const resume = Boolean(options.resume || agentEvent)
     await controller?.update(
@@ -421,7 +443,7 @@ export default async function activate(orca: OrcaHost) {
         agentType: summary.agentType ?? parsed?.agentType,
         agentModel: summary.agentModel ?? parsed?.agentModel,
         agentProfile: summary.agentProfile ?? parsed?.agentProfile,
-        ...focusSnapshotFields(parsed, lastFocus)
+        ...focusSnapshotFields(resolved.surface, resolved.atMs)
       },
       resume ? { resume: true } : undefined
     )
@@ -603,44 +625,27 @@ export default async function activate(orca: OrcaHost) {
 }
 
 function focusSnapshotFields(
-  context: ReturnType<typeof parseWorkspaceContext>,
-  lastFocus: ParsedUiFocusChanged | null
+  surface: FocusedSurfaceObject | null | undefined,
+  atMs?: number
 ): {
   focusedSurfaceKind?: string
   focusedSurfaceTitle?: string | null
   focusedSurfaceAtMs?: number
 } {
-  if (context?.focusedSurfacePresent) {
-    if (context.focusedSurface === null) {
-      return {
-        focusedSurfaceKind: undefined,
-        focusedSurfaceTitle: undefined,
-        focusedSurfaceAtMs: undefined
-      }
-    }
-    if (context.focusedSurface) {
-      return {
-        focusedSurfaceKind: context.focusedSurface.kind,
-        focusedSurfaceTitle: context.focusedSurface.title,
-        focusedSurfaceAtMs: Date.now()
-      }
-    }
-    return {}
-  }
-  if (!lastFocus) {
-    return {}
-  }
-  if (lastFocus.focusedSurface === null) {
+  if (surface === null) {
     return {
       focusedSurfaceKind: undefined,
       focusedSurfaceTitle: undefined,
       focusedSurfaceAtMs: undefined
     }
   }
+  if (!surface) {
+    return {}
+  }
   return {
-    focusedSurfaceKind: lastFocus.focusedSurface.kind,
-    focusedSurfaceTitle: lastFocus.focusedSurface.title,
-    focusedSurfaceAtMs: lastFocus.receivedAt
+    focusedSurfaceKind: surface.kind,
+    focusedSurfaceTitle: surface.title,
+    focusedSurfaceAtMs: atMs
   }
 }
 

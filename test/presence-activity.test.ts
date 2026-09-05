@@ -287,6 +287,8 @@ test('generic never leaks execution host, agent identity, or focus title', () =>
   expect(serialized.includes('review')).toBe(false)
   expect(serialized.includes('secrets.ts')).toBe(false)
   expect(serialized.includes('Editor')).toBe(false)
+  expect(serialized.includes('worktreeId')).toBe(false)
+  expect(serialized.includes('agentId')).toBe(false)
 })
 
 test('full detail can include focus, agent identity, and execution-host machine', () => {
