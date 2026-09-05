@@ -129,6 +129,7 @@ Panels cannot call `settings.set` in Orca’s current host API, so each toggle i
 |---|---|
 | Discord Presence: Enable/Disable | Master switch (`enabled`) |
 | Discord Presence: Show Status | Force refresh + re-`SET_ACTIVITY`; toast includes `transmitting=…` (truncated last activity) |
+| Discord Presence: Reload RPC | Close + reconnect Discord IPC, then re-`SET_ACTIVITY` (Burpcord “Reload RPC”) |
 | Discord Presence: Cycle Detail Level | `off` → `generic` → `workspace` → `full` → … |
 | Discord Presence: Toggle Branch | `showBranch` |
 | Discord Presence: Toggle Agent State | `showAgentState` |
@@ -172,10 +173,13 @@ Unrecognized agent states are **not** forwarded. They render as `idle` / `state-
 ```
 src/main.ts                 activate / deactivate + command / event / heartbeat wiring
 src/discord/ipc.ts          socket path candidates + 8-byte frame codec
-src/discord/client.ts       handshake, SET_ACTIVITY, ping/pong, teardown
+src/discord/client.ts       handshake, retry/backoff, SET_ACTIVITY, ping/pong, teardown
+src/discord/retry.ts        capped exponential backoff + handshake-not-ready
+src/discord/app-id.ts       fail-fast Application ID (snowflake) validation
 src/presence/settings.ts    defaults, normalize, detail-level cycle, field toggles
 src/presence/activity.ts    privacy-gated activity builder (the disclosure boundary)
 src/presence/controller.ts  snapshot cache, 15 s debounce, local-then-bridge publish
+src/presence/expiry.ts      activity-window helper for future focus/tool providers (#7)
 src/presence/bridge.ts      companion URL/token hygiene + HTTP client
 src/presence/log.ts         structured orca.log + capped file log
 companion/                  OS-agnostic HTTP → local Discord IPC (Linux/macOS/Windows)
@@ -186,7 +190,7 @@ dist/main.js                Orca entry (bundled Node ESM)
 |---|---|
 | Host lifecycle | `src/main.ts` — `export default activate`, `export function deactivate` |
 | IPC paths + framing | `src/discord/ipc.ts` |
-| RPC session | `src/discord/client.ts` |
+| RPC session | `src/discord/client.ts` (3× handshake retry, 3s→15s cap; clear-before-close) |
 | Settings shape | `src/presence/settings.ts` |
 | What Discord sees | `src/presence/activity.ts` |
 | When Discord is written | `src/presence/controller.ts` (prefer local IPC, else opt-in bridge) |
@@ -240,6 +244,9 @@ Lines look like:
 ```
 [chron0.discord-presence] info activate version=0.3.0 debug=true file=/home/you/.local/state/chron0-discord-presence/plugin.log
 [chron0.discord-presence] error discord.connect_failed reason="no discord ipc socket accepted a connection"
+[chron0.discord-presence] warn discord.client reason="connect attempt 1/3 failed: …; retrying in 3000ms"
+[chron0.discord-presence] error discord.app_id_invalid reason="…" rejected=not-a-snowflake fallback=1545653843239374848
+[chron0.discord-presence] info discord.reload_command
 [chron0.discord-presence] info discord.set_activity sink=local details="Working in Orca"
 [chron0.discord-presence] info bridge.publish url=http://100.x.y.z:3848
 ```
@@ -385,19 +392,24 @@ Authenticated requests send `Authorization: Bearer <token>`. `GET /health` is un
 | Symptom | Likely cause | What to do |
 |---|---|---|
 | No presence at all | Discord **browser** only | Open the Discord **desktop** app and stay signed in |
-| Status says `connected=false` | Desktop client not running, or IPC socket not found | Start Discord desktop; wait ≤90 s for the heartbeat retry |
+| No presence; desktop is running | **Activity Privacy** is off | Discord / Vesktop → **Settings → Activity Privacy** → enable **Display current activity as a status message** (and allow the game activity). This plugin cannot override that user setting. |
+| Status says `connected=false` | Desktop client not running, or IPC socket not found | Start Discord desktop; wait ≤90 s for the heartbeat retry. If Vesktop was still starting, **Reload RPC** retries the handshake (3 tries, 3s→15s backoff). |
+| Handshake fails then recovers | Discord/Vesktop accepted the pipe before READY (`data` null) | Treated as retryable. Watch `orca.log` / the plugin file for `discord.client` `connect attempt … retrying`. |
+| Invalid Application ID toast | Persisted id is not a 17–20 digit snowflake | Plugin falls back to the shipped id and logs `discord.app_id_invalid`. The shipped snowflake is always accepted. |
+| Status flickers / another game wins | **Competing RPC clients** (another IDE, game overlay, or second presence plugin) | Discord shows one activity per application. Run **Reload RPC** (close + reconnect + re-`SET_ACTIVITY`) or wait for the 90 s heartbeat `forceTransmit`. Disable the other client if it keeps overwriting Orca. |
+| “Playing Orca” stays after quit | Ghost activity (older builds left the last `SET_ACTIVITY` on Discord) | Deactivate/stop now sends `SET_ACTIVITY` **null** before closing the socket. If you still see a ghost from a previous session, **Reload RPC** or toggle Enable/Disable once. |
 | Presence vanished after ~5 minutes idle | Worker idle-reap (no host calls) | Heartbeat should prevent this; confirm the plugin is still enabled |
-| Stale branch on the profile | Branch switches emit no host event | Wait for the 90 s heartbeat, or run **Show Status** / any toggle |
+| Stale branch on the profile | Branch switches emit no host event | Wait for the 90 s heartbeat, or run **Show Status** / **Reload RPC** / any toggle |
 | Presence lags during agent tool-use | Discord rate limit | Expected: at most one `SET_ACTIVITY` per 15 s; newest state wins |
-| Manual smoke activity shows, live plugin does not stick | Another IPC client or Discord restart replaced our payload; we used to skip identical JSON | Fixed: heartbeat and **Show Status** force a re-`SET_ACTIVITY`. Run Show Status once to republish now. |
+| Manual smoke activity shows, live plugin does not stick | Another IPC client or Discord restart replaced our payload; we used to skip identical JSON | Fixed: heartbeat and **Show Status** force a re-`SET_ACTIVITY`. **Reload RPC** also reconnects the pipe. |
 | Linux worker cannot find the socket | `XDG_RUNTIME_DIR` stripped from the worker env | Plugin reconstructs `/run/user/<uid>/` and Flatpak/Snap nests |
 | Vesktop Flatpak + arRPC, no presence | Socket is inside the Vesktop sandbox, not at `$XDG_RUNTIME_DIR/discord-ipc-0` | Enable **Rich Presence via arRPC** in Vesktop. The plugin also probes `$XDG_RUNTIME_DIR/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-*` (and `/run/user/<uid>/…` when XDG is missing). Keep the desktop client running. |
 | Host has agents, Discord is on another OS, no presence | Local IPC cannot cross machines; bridge off by default | Run the companion on the Discord machine and enable the bridge — [Cross-machine companion](#cross-machine-companion-linux--macos--windows) |
-| Cannot find plugin logs in the UI | `orca.log` is easy to miss | Run **Show Status**; read `~/.local/state/chron0-discord-presence/plugin.log` (or `%LOCALAPPDATA%\…`). See [Diagnostics](#diagnostics-orcalog--file) |
+| Cannot find plugin logs in the UI | `orca.log` is easy to miss | Run **Show Status** or **Reload RPC**; read `~/.local/state/chron0-discord-presence/plugin.log` (or `%LOCALAPPDATA%\…`). Connect/reload failures are `error`/`warn` (always). Token is never logged. See [Diagnostics](#diagnostics-orcalog--file) |
 | Wrong / missing art | Assets not yet propagated, or wrong Application ID | Confirm keys `orca`, `state-working`, `state-blocked`, `state-waiting`, `state-idle` |
 | `activate` killed at startup | Handshake blocked the ready timeout | First refresh is fire-and-forget; if you changed that, restore it |
 
-**Show Status** forces a refresh and re-publish, then toasts `enabled=… connected=… sink=… transmitting=…`. That JSON is what was last sent (or `null`). The token is never logged.
+**Show Status** forces a refresh and re-publish, then toasts `enabled=… connected=… sink=… transmitting=…`. That JSON is what was last sent (or `null`). **Reload RPC** closes the IPC socket (after `SET_ACTIVITY` null), reconnects, and publishes again — use it when Vesktop was slow to READY or another RPC client stole the activity. The token is never logged.
 
 ---
 
@@ -411,6 +423,7 @@ Authenticated requests send `Authorization: Bearer <token>`. `GET /health` is un
 - Presence starts on the first agent/worktree event, command, or 90 s heartbeat — not at bare app launch.
 - Idle-reap survival depends on a 90 s `workspace.readContext` heartbeat (worker is reaped after 5 minutes of no host calls).
 - v0.3 has no settings panel; toggles are commands only. `bridgeUrl` / `bridgeToken` are persisted settings or env overlays.
+- Activity **expiry windows** (Burpcord 30s/60s sticky-state reap) are documented in [`src/presence/expiry.ts`](src/presence/expiry.ts) for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). They are not applied to today’s agent/workspace snapshot.
 
 ---
 

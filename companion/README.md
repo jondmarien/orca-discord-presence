@@ -3,7 +3,7 @@
 Author: Jonathan Marien  
 Date: 2026-09-05
 
-Small Bun/Node ESM service for **whichever machine has Discord / Vesktop / Vencord** (Linux, macOS, or Windows). It applies `SET_ACTIVITY` using the **same** IPC client as the plugin (`src/discord/client.ts` — win32 named pipes and POSIX sockets, including Vesktop Flatpak).
+Small Bun/Node ESM service for **whichever machine has Discord / Vesktop / Vencord** (Linux, macOS, or Windows). It applies `SET_ACTIVITY` using the **same** IPC client as the plugin (`src/discord/client.ts` — win32 named pipes and POSIX sockets, including Vesktop Flatpak). Handshake-not-ready and handshake timeouts retry with the same 3× / 3s→15s backoff; a missing local socket still fails immediately.
 
 The Orca **host/runtime** (any OS) optionally POSTs activity here when local Discord IPC on that host is unavailable. Not a Windows-only sidecar.
 

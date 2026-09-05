@@ -80,7 +80,8 @@ No focused Orca window/tab (terminal vs agent UI). Inputs are `agent.status.chan
 - [x] Optional OS-agnostic companion + plugin HTTP bridge (privacy-first, default off)
 - [ ] Full Orca-native remote capability / host-mediated presence (upstream Orca)
 - [ ] Richer host capability APIs (projections for where the worker runs, which machine owns Discord, optional off-box sink) — Track B in `PLAN.md`
-- [ ] Active-tab / focus events if the host ever exposes them
+- [ ] Active-tab / focus events if the host ever exposes them (activity expiry helper is already in `src/presence/expiry.ts`; do not invent a second window)
+- [ ] Burpcord-style provider priority + rotation once multiple surfaces exist (#7 / #8 deferred)
 - [ ] Feature additions that still need host APIs — file-level presence; settings panel; user-facing Application ID override; SSH/runtime host labels instead of `os.hostname()`
 
 None of the remaining items is required for the companion MVP.
