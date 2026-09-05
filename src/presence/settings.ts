@@ -1,31 +1,97 @@
-// Settings are persisted through the host `settings.*` API, so anything read
-// back may be stale, partial, or hand-edited. Normalize on every read.
+/**
+ * Presence settings model: privacy-first defaults, normalize, and toggles.
+ *
+ * Settings are persisted through the host `settings.*` API, so anything read
+ * back may be stale, partial, or hand-edited. Normalize on every read.
+ * Unknown keys are dropped; invalid types fall back to
+ * {@link DEFAULT_SETTINGS}.
+ *
+ * @module presence/settings
+ * @author Jonathan Marien
+ * @date 2026-09-05
+ */
 
+/**
+ * Detail-level ladder, in the order **Cycle Detail Level** walks.
+ *
+ * | Level | What may be transmitted |
+ * |---|---|
+ * | `off` | Nothing — presence cleared |
+ * | `generic` | Non-identifying copy + optional agent / terminals / elapsed |
+ * | `workspace` | Workspace display name; still no branch |
+ * | `full` | Workspace + optional branch, machine, etc. |
+ *
+ * @author Jonathan Marien
+ */
 export const DETAIL_LEVELS = ['off', 'generic', 'workspace', 'full'] as const
 
+/**
+ * One of {@link DETAIL_LEVELS}.
+ *
+ * @author Jonathan Marien
+ */
 export type DetailLevel = (typeof DETAIL_LEVELS)[number]
 
+/**
+ * Persisted plugin settings. Every identifying field is opt-in except the
+ * non-identifying defaults (`enabled`, `generic` detail, agent state, elapsed).
+ *
+ * @author Jonathan Marien
+ */
 export type PresenceSettings = {
+  /** Master switch. When false, activity is cleared regardless of detail. */
   enabled: boolean
+  /** Privacy ladder. See {@link DETAIL_LEVELS}. */
   detailLevel: DetailLevel
+  /**
+   * Discord Application ID (snowflake). Defaults to
+   * {@link SHIPPED_APPLICATION_ID}. v0.2 has no user-facing override UI;
+   * a 17–20 digit string is still accepted if persisted.
+   */
   applicationId: string
+  /**
+   * Optional display override for the machine name (max 64 trimmed chars).
+   * Used only when `showMachine` is on and detail is not `generic`.
+   */
   machineLabel: string | null
+  /** Include git branch in `details` at `full` when a branch exists. */
   showBranch: boolean
+  /** Include the mapped agent-state label in `state`. */
   showAgentState: boolean
+  /** Include `N terminal(s)` in `state`. */
   showTerminals: boolean
+  /** Include machine name / `machineLabel` in `state` (never at `generic`). */
   showMachine: boolean
+  /** Include a Discord elapsed-timer start timestamp. */
   showElapsed: boolean
 }
 
+/**
+ * Boolean keys of {@link PresenceSettings} (the fields {@link toggleField} flips).
+ *
+ * @author Jonathan Marien
+ */
 type BooleanSetting = {
   [K in keyof PresenceSettings]: PresenceSettings[K] extends boolean ? K : never
 }[keyof PresenceSettings]
 
-// Public Discord application id. Not a secret — it rides in every presence
-// payload. The Discord Developer Portal already has this application and the
-// five Rich Presence assets uploaded.
+/**
+ * Public Discord application id. Not a secret — it rides in every presence
+ * payload. The Discord Developer Portal already has this application and the
+ * five Rich Presence assets uploaded (`orca`, `state-working`,
+ * `state-blocked`, `state-waiting`, `state-idle`).
+ *
+ * @author Jonathan Marien
+ */
 export const SHIPPED_APPLICATION_ID = '1545653843239374848'
 
+/**
+ * Privacy-first defaults applied to every missing or invalid field.
+ *
+ * `detailLevel: 'generic'` never transmits a repo, branch, or machine name.
+ *
+ * @author Jonathan Marien
+ */
 export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   enabled: true,
   // 'generic' never transmits a repo, branch, or machine name.
@@ -43,17 +109,37 @@ const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings
   (key): key is BooleanSetting => typeof DEFAULT_SETTINGS[key] === 'boolean'
 )
 
-// Discord snowflakes are 17-20 digits today; accept that range and nothing else.
+/**
+ * Discord snowflakes are 17–20 digits today; accept that range and nothing else.
+ */
 const APPLICATION_ID_RE = /^\d{17,20}$/
 
 function isDetailLevel(value: unknown): value is DetailLevel {
   return typeof value === 'string' && (DETAIL_LEVELS as readonly string[]).includes(value)
 }
 
+/**
+ * Trim and cap a machine-label override at 64 characters; empty → `null`.
+ */
 function normalizeLabel(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim().slice(0, 64) : null
 }
 
+/**
+ * Coerce unknown persisted JSON into a complete {@link PresenceSettings}.
+ *
+ * - Non-objects and missing fields → defaults.
+ * - Non-boolean toggles are ignored (default kept).
+ * - Unknown `detailLevel` is ignored.
+ * - `applicationId` must match {@link APPLICATION_ID_RE} or equal the
+ *   shipped id; otherwise the shipped default is used. Absent/malformed
+ *   values never become `null` (that would make connect impossible).
+ * - Extra keys are not copied onto the result.
+ *
+ * @param raw - Value from `settings.get` (or `{}` / `undefined`).
+ * @returns A fully populated settings object.
+ * @author Jonathan Marien
+ */
 export function normalizeSettings(raw: unknown): PresenceSettings {
   const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const settings: PresenceSettings = { ...DEFAULT_SETTINGS }
@@ -82,11 +168,29 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
   return settings
 }
 
+/**
+ * Advance one step on the {@link DETAIL_LEVELS} ladder (`full` wraps to `off`).
+ *
+ * An unknown `current` (index `-1`) yields `DETAIL_LEVELS[0]` (`off`).
+ *
+ * @param current - Current level string (typically already normalized).
+ * @returns The next {@link DetailLevel}.
+ * @author Jonathan Marien
+ */
 export function nextDetailLevel(current: string): DetailLevel {
   const index = (DETAIL_LEVELS as readonly string[]).indexOf(current)
   return DETAIL_LEVELS[(index + 1) % DETAIL_LEVELS.length]
 }
 
+/**
+ * Flip one boolean settings field. Non-boolean or unknown `field` names
+ * return the same object unchanged (referential equality).
+ *
+ * @param settings - Current settings.
+ * @param field - A boolean key of {@link PresenceSettings}.
+ * @returns A shallow copy with that field inverted, or `settings` unchanged.
+ * @author Jonathan Marien
+ */
 export function toggleField(settings: PresenceSettings, field: string): PresenceSettings {
   if (!BOOLEAN_FIELDS.includes(field as BooleanSetting)) {
     return settings

@@ -1,10 +1,36 @@
+/**
+ * Presence controller: snapshot cache, Discord rate-limit debounce, reconnect.
+ *
+ * Discord throttles `SET_ACTIVITY`. Agent hooks fire far faster than that
+ * during a tool-use run, so every write funnels through
+ * {@link MIN_UPDATE_INTERVAL_MS}. Connect failures (Discord not running)
+ * are swallowed and retried on the next update. User-initiated
+ * {@link PresenceController.setSettings} bypasses the debounce.
+ *
+ * @module presence/controller
+ * @author Jonathan Marien
+ * @date 2026-09-05
+ */
+
 import { buildActivity, type DiscordActivity, type PresenceSnapshot } from './activity'
 import type { PresenceSettings } from './settings'
 
-// Discord throttles SET_ACTIVITY. Agent hooks fire far faster than that during
-// a tool-use run, so every write funnels through this window.
+/**
+ * Minimum time between Discord `SET_ACTIVITY` writes (15 seconds).
+ *
+ * The first update after a quiet period transmits immediately. Later
+ * updates inside the window coalesce to a single deferred write of the
+ * newest snapshot.
+ *
+ * @author Jonathan Marien
+ */
 export const MIN_UPDATE_INTERVAL_MS = 15_000
 
+/**
+ * Discord client surface the controller depends on (real or test fake).
+ *
+ * @author Jonathan Marien
+ */
 export type PresenceClient = {
   connect: () => Promise<void>
   isConnected: () => boolean
@@ -13,15 +39,36 @@ export type PresenceClient = {
   close: () => Promise<void>
 }
 
+/**
+ * Construction options for {@link createPresenceController}.
+ *
+ * Timer and clock hooks are injectable so unit tests can advance time
+ * without real `setTimeout`.
+ *
+ * @author Jonathan Marien
+ */
 export type PresenceControllerOptions = {
   client: PresenceClient
   settings: PresenceSettings
+  /** Clock in milliseconds. Defaults to `Date.now`. */
   now?: () => number
+  /** Schedule a deferred transmit. Defaults to `setTimeout`. */
   setTimer?: (fn: () => void, ms: number) => unknown
+  /** Cancel a timer returned by `setTimer`. Defaults to `clearTimeout`. */
   clearTimer?: (timer: unknown) => void
+  /** Diagnostic logger for connect / set / clear failures. */
   log?: (message: string) => void
 }
 
+/**
+ * Snapshot returned by **Discord Presence: Show Status**.
+ *
+ * `enabled` is true only when the master switch is on **and**
+ * `detailLevel !== 'off'`. `lastActivity` is the last payload successfully
+ * sent to Discord (or `null` after a clear).
+ *
+ * @author Jonathan Marien
+ */
 export type PresenceStatus = {
   enabled: boolean
   connected: boolean
@@ -29,14 +76,34 @@ export type PresenceStatus = {
   lastActivity: DiscordActivity | null
 }
 
+/**
+ * Stateful presence coordinator used by the plugin worker.
+ *
+ * @author Jonathan Marien
+ */
 export type PresenceController = {
+  /** Merge a partial snapshot and schedule or skip a Discord write. */
   update: (nextSnapshot: PresenceSnapshot) => Promise<void>
+  /**
+   * Replace settings. Disable / `off` clears immediately. Other changes
+   * transmit at once (debounce bypass) so a command feels instant.
+   */
   setSettings: (nextSettings: PresenceSettings) => Promise<void>
+  /** Current settings object (same reference the controller holds). */
   settings: () => PresenceSettings
+  /** Connection + last transmitted activity for the status command. */
   status: () => PresenceStatus
+  /** Cancel a pending timer, clear activity, close the client. */
   stop: () => Promise<void>
 }
 
+/**
+ * Create a presence controller bound to a Discord client and settings.
+ *
+ * @param options - Client, initial settings, optional clock/timer/log.
+ * @returns A {@link PresenceController}.
+ * @author Jonathan Marien
+ */
 export function createPresenceController({
   client,
   settings,

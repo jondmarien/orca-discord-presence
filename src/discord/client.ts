@@ -1,11 +1,40 @@
+/**
+ * Discord RPC-over-IPC client: connect, handshake, SET_ACTIVITY, teardown.
+ *
+ * Talks to the local Discord **desktop** client only. Browser Discord has
+ * no IPC socket. Handshake and command replies each time out after 5s.
+ * PING frames are answered with PONG; CLOSE or socket errors tear down and
+ * invoke `onClose` once.
+ *
+ * @module discord/client
+ * @author Jonathan Marien
+ * @date 2026-09-05
+ */
+
 import { randomUUID } from 'node:crypto'
 import net from 'node:net'
 import os from 'node:os'
 import { createFrameDecoder, discordIpcCandidates, encodeFrame, OPCODE } from './ipc'
 
+/**
+ * How long to wait for a `READY` dispatch after sending the handshake.
+ *
+ * @author Jonathan Marien
+ */
 const HANDSHAKE_TIMEOUT_MS = 5_000
+
+/**
+ * How long to wait for a SET_ACTIVITY (or other RPC) reply nonce.
+ *
+ * @author Jonathan Marien
+ */
 const COMMAND_TIMEOUT_MS = 5_000
 
+/**
+ * Minimal Discord RPC JSON body this client inspects on inbound frames.
+ *
+ * @author Jonathan Marien
+ */
 type RpcMessage = {
   evt?: string
   nonce?: string
@@ -13,28 +42,66 @@ type RpcMessage = {
   data?: { message?: string } | null
 }
 
+/**
+ * In-flight RPC command waiting on a matching `nonce`.
+ *
+ * @author Jonathan Marien
+ */
 type PendingCommand = {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
 
+/**
+ * Construction options for {@link createDiscordClient}.
+ *
+ * @author Jonathan Marien
+ */
 export type DiscordClientOptions = {
+  /** Discord Application ID sent in the handshake `client_id`. */
   clientId: string
+  /**
+   * Override socket-path discovery (tests inject a fake path). Defaults to
+   * {@link discordIpcCandidates} for the current process platform/env/uid.
+   */
   candidates?: () => string[]
+  /** Called once when the socket closes or handshake/frame errors tear down. */
   onClose?: () => void
+  /** Optional diagnostic logger (frame errors, socket errors, peer CLOSE). */
   log?: (message: string) => void
 }
 
+/**
+ * Stateful Discord IPC client used by the presence controller.
+ *
+ * @author Jonathan Marien
+ */
 export type DiscordClient = {
+  /** Connect to the first accepting IPC socket and complete the handshake. */
   connect: () => Promise<void>
+  /** Whether a handshake has completed and the socket is still up. */
   isConnected: () => boolean
+  /**
+   * Send `SET_ACTIVITY` with this process pid and the given activity object.
+   * Rejects if not connected or if Discord times out / returns `ERROR`.
+   */
   setActivity: (activity: object) => Promise<unknown>
+  /** Send `SET_ACTIVITY` with `activity: null` to clear the profile. */
   clearActivity: () => Promise<unknown>
+  /** Best-effort clear, then destroy the socket and reject pending commands. */
   close: () => Promise<void>
+  /** Test seam: simulate an abrupt peer disappearance. */
   destroySocketForTest: () => void
 }
 
+/**
+ * Try each candidate path in order until one TCP/named-pipe connect succeeds.
+ *
+ * @param candidates - Socket or named-pipe paths, most-likely first.
+ * @returns The connected `net.Socket`.
+ * @throws If every candidate errors (typical when Discord desktop is closed).
+ */
 function connectToFirstAvailable(candidates: string[]): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     let index = 0
@@ -59,6 +126,9 @@ function connectToFirstAvailable(candidates: string[]): Promise<net.Socket> {
   })
 }
 
+/**
+ * Default candidate list for the live plugin worker (platform, env, uid).
+ */
 function defaultCandidates(): string[] {
   return discordIpcCandidates({
     platform: process.platform,
@@ -67,6 +137,16 @@ function defaultCandidates(): string[] {
   })
 }
 
+/**
+ * Create a Discord RPC-over-IPC client.
+ *
+ * Connection is lazy: `connect()` must be called before commands. A failed
+ * handshake destroys the socket so the next `connect()` starts clean.
+ *
+ * @param options - Application id, optional path override, close/log hooks.
+ * @returns A {@link DiscordClient} bound to those options.
+ * @author Jonathan Marien
+ */
 export function createDiscordClient({
   clientId,
   candidates = defaultCandidates,
