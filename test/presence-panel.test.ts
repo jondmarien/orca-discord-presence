@@ -175,6 +175,8 @@ test('shipped panel HTML is CSP-safe and speaks the official bridge', () => {
   expect(html.includes('orca-panel-ping')).toBe(true)
   expect(html.includes('orca-panel-pong')).toBe(true)
   expect(html.includes('workspace.readContext')).toBe(true)
+  expect(html.includes("call('ui.readFocus'")).toBe(true)
+  expect(html.includes(' · linked')).toBe(true)
   expect(html.includes('notifications.show')).toBe(true)
   expect(html.includes("call('terminal.sendText'")).toBe(false)
   expect(html.includes("call('settings.set'")).toBe(true)

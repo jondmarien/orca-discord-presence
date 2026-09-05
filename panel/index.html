@@ -226,7 +226,7 @@
   </head>
   <body>
     <script id="presence-snapshot" type="application/json">null</script>
-    <script id="plugin-version" type="application/json">"0.6.0"</script>
+    <script id="plugin-version" type="application/json">"0.6.1"</script>
 
     <header class="status-bar" id="status-bar">
       <div class="status-row">
@@ -234,7 +234,7 @@
           <span class="dot" aria-hidden="true"></span>
           <span id="indicator-label">Waiting for worker snapshot</span>
         </div>
-        <span class="badge" id="version-badge">v0.6.0</span>
+        <span class="badge" id="version-badge">v0.6.1</span>
       </div>
       <div class="actions">
         <button type="button" id="btn-refresh">Refresh</button>
@@ -348,13 +348,13 @@
           <dt>Plugin</dt>
           <dd>chron0.discord-presence</dd>
           <dt>Version</dt>
-          <dd id="about-version">0.6.0</dd>
+          <dd id="about-version">0.6.1</dd>
           <dt>Author</dt>
           <dd>Jonathan Marien</dd>
         </dl>
         <p class="hint">Source (plain text — panel CSP blocks navigation):</p>
         <p>https://github.com/jondmarien/orca-discord-presence</p>
-        <p class="hint">Fork Orca-1…5: panel settings/storage, execution host, focus, sidecar mailbox. Stock stablyai/orca rejects this 0.6.0 manifest (ui:focus / sidecar). v0.5.0 stays the stock-loadable line.</p>
+        <p class="hint">Fork Orca-1…5 + #7 join keys: feature-detect worktreeId/agentId and ui.readFocus. Those ids are never shown. Stock stablyai/orca rejects this 0.6.1 manifest (ui:focus / sidecar). v0.5.0 stays the stock-loadable line.</p>
       </div>
     </section>
 
@@ -589,16 +589,20 @@
             ? [agent.type, agent.model, agent.profile].filter(Boolean).join(' · ') || '—'
             : '—'
         )
-        var focus = value.focusedSurface
-        setText(
-          'ws-focus',
-          focus === null
-            ? 'unfocused'
-            : focus && focus.kind
-              ? focus.kind + (focus.title ? ' · ' + focus.title : '')
-              : '—'
-        )
+        if (Object.prototype.hasOwnProperty.call(value, 'focusedSurface')) {
+          setText('ws-focus', formatFocusLine(value.focusedSurface))
+        } else {
+          setText('ws-focus', '—')
+        }
         setText('ws-hint', 'Live via workspace.readContext.')
+      }
+
+      function formatFocusLine(focus) {
+        if (focus === null) return 'unfocused'
+        if (!focus || !focus.kind) return '—'
+        var line = focus.kind + (focus.title ? ' · ' + focus.title : '')
+        if (focus.worktreeId || focus.agentId) line += ' · linked'
+        return line
       }
 
       function setTogglesEnabled(on) {
@@ -716,7 +720,21 @@
             return result
           }
           renderWorkspace(result.value)
-          return result
+          var ctx = result.value
+          if (ctx && Object.prototype.hasOwnProperty.call(ctx, 'focusedSurface')) {
+            return result
+          }
+          return call('ui.readFocus').then(function (focusResult) {
+            if (!focusResult.ok || !focusResult.value || typeof focusResult.value !== 'object') {
+              return result
+            }
+            if (!Object.prototype.hasOwnProperty.call(focusResult.value, 'focusedSurface')) {
+              return result
+            }
+            setText('ws-focus', formatFocusLine(focusResult.value.focusedSurface))
+            setText('ws-hint', 'Live via ui.readFocus.')
+            return result
+          })
         })
       }
 

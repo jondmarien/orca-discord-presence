@@ -13,7 +13,7 @@ Orca starts a trusted plugin worker and calls `export default function activate(
 
 The worker is **idle-reaped after 5 minutes** of no host calls. An open Discord socket does not count as activity. A 90 s `workspace.readContext` heartbeat (`HEARTBEAT_MS` in `src/main.ts`) both keeps the worker alive and picks up branch changes, which emit no event.
 
-Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`, `ui.focus.changed`) also wake a sleeping worker. Dynamic-only subscriptions would not. Stock `stablyai/orca` rejects `ui.focus.changed` / `ui:focus` / `sidecar`; this 0.6.0 line targets [`jondmarien/orca`](https://github.com/jondmarien/orca).
+Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`, `ui.focus.changed`) also wake a sleeping worker. Dynamic-only subscriptions would not. Stock `stablyai/orca` rejects `ui.focus.changed` / `ui:focus` / `sidecar`; this 0.6.1 line targets [`jondmarien/orca`](https://github.com/jondmarien/orca).
 
 ## Module map
 
@@ -30,8 +30,8 @@ activate (src/main.ts)
   ├─ presence.clear → controller.clear (hold; heartbeat does not republish)
   ├─ presence.reload → refresh → controller.reload (close + reconnect + SET_ACTIVITY)
   ├─ agent.status.changed → agent table (worktreeId + paneKey + optional identity) → aggregate → update
-  ├─ ui.focus.changed → validate kind → merge focus fields (null clears focus only)
-  ├─ events / heartbeat → workspace.readContext (execution host / agent / focus) → update + forceTransmit on heartbeat/status (heartbeat does not lift Clear)
+  ├─ ui.focus.changed → validate kind + optional join keys → merge focus fields (null clears focus only)
+  ├─ events / heartbeat → workspace.readContext (execution host / agent / focus) → try-call ui.readFocus when the context key is absent → update + forceTransmit on heartbeat/status (heartbeat does not lift Clear)
   ├─ panel snapshot → log ring + redacted JSON in storage (`diagnostics.snapshot`) and panel/index.html
   └─ deactivate → controller.stop → clear local + sidecar + remote + close socket (idempotent)
 ```
@@ -46,13 +46,13 @@ activate (src/main.ts)
 | [`src/presence/settings.ts`](../src/presence/settings.ts) | Defaults, coerce-from-storage, cycle/toggle helpers. |
 | [`src/presence/activity.ts`](../src/presence/activity.ts) | **Privacy boundary.** Snapshot + settings → activity or `null`. |
 | [`src/presence/controller.ts`](../src/presence/controller.ts) | Snapshot merge, 15 s debounce, reconnect, **local → sidecar mailbox → bridge** publish, **Reload RPC**. |
-| [`src/presence/host-context.ts`](../src/presence/host-context.ts) | Parse `executionHost` / `agent` / `focusedSurface` from `readContext`. |
-| [`src/presence/focus.ts`](../src/presence/focus.ts) | `ui.focus.changed` parse + privacy-gated labels. |
+| [`src/presence/host-context.ts`](../src/presence/host-context.ts) | Parse `executionHost` / `agent` / `focusedSurface` (including optional join keys) from `readContext`. |
+| [`src/presence/focus.ts`](../src/presence/focus.ts) | `ui.focus.changed` / `ui.readFocus` parse + privacy-gated labels. Join keys never enter Discord copy. |
 | [`src/presence/sidecar.ts`](../src/presence/sidecar.ts) | Try-call `sidecar.resolvePlacement` / `sidecar.publish`. |
 | [`src/presence/diagnostics-store.ts`](../src/presence/diagnostics-store.ts) | Cap + write `diagnostics.snapshot`. |
 | [`src/presence/expiry.ts`](../src/presence/expiry.ts) | `AGENT_RETENTION_MS` (30m stale / 60s done) plus older 30s/60s helpers for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). |
 | [`src/presence/agent-state.ts`](../src/presence/agent-state.ts) | Alias table → `working` / `blocked` / `waiting` / `done`. |
-| [`src/presence/agents.ts`](../src/presence/agents.ts) | Multi-agent table keyed by `worktreeId` + `paneKey`. |
+| [`src/presence/agents.ts`](../src/presence/agents.ts) | Multi-agent table keyed by `worktreeId` + `paneKey`. Identity can join optional focus keys; count/state stay global. |
 | [`src/presence/configure.ts`](../src/presence/configure.ts) | Fail-fast `applyConfigure` for Application ID / `openUrl` / toggles. |
 | [`src/presence/bridge.ts`](../src/presence/bridge.ts) | Companion URL/token hygiene + `POST`/`DELETE /activity`. |
 | [`src/presence/log.ts`](../src/presence/log.ts) | Structured `orca.log` + capped state-dir file. Optional `onEmit` feeds the panel ring. |
@@ -113,7 +113,7 @@ A user command that changes settings bypasses the debounce so the palette feels 
 
 The panel talks to the host only through `postMessage`:
 
-- `{ type: 'orca-panel-action', requestId, action, params }` → `workspace.readContext`, `notifications.show`, and on the fork `settings.get` / `settings.set` / `storage.get`
+- `{ type: 'orca-panel-action', requestId, action, params }` → `workspace.readContext`, `notifications.show`, optional `ui.readFocus`, and on the fork `settings.get` / `settings.set` / `storage.get`
 - `{ type: 'orca-panel-action-result', requestId, ok, value?, error? }`
 - Watchdog: `orca-panel-ping` / `orca-panel-pong`
 
@@ -147,4 +147,4 @@ Text fields are clamped to 128 characters. See [privacy.md](privacy.md) for whic
 - **Identity:** `orca-plugin.json` `publisher` + `id` → `chron0.discord-presence`. Do not rename.
 - **Panel:** `contributes.panels[0]` id `presence`, sidebar key `plugin:chron0.discord-presence/presence`. The iframe replies to `orca-panel-ping` with `orca-panel-pong`. On the fork it also calls `settings.*` and `storage.get`.
 - **Companion:** `bun run companion` / `bun run start` in `companion/`. Runs on Linux, macOS, or Windows. Optional `bun build companion/main.ts --compile`. Zero extra production dependencies; Node `http` + shared IPC modules.
-- **Focus:** subscribe to `ui.focus.changed` (requires `ui:focus`). Unknown kinds are dropped. Explicit `null` clears focus fields only.
+- **Focus:** subscribe to `ui.focus.changed` (requires `ui:focus`). Try-call `ui.readFocus` when `readContext` omits `focusedSurface`. Unknown kinds are dropped. Explicit `null` clears focus fields only. Optional `worktreeId` / `agentId` on the surface are join keys only — never transmitted, never rendered as text. Remote UI focus is sampled on the UI machine and forwarded by the host; the plugin sees the same projection and does not wait for that host PR.

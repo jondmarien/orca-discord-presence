@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { AGENT_RETENTION_MS } from '../src/presence/expiry'
 import {
   createAgentTable,
+  paneKeyMatchesAgentId,
   parseAgentStatusPayload,
   parseWorktreeRemovedId
 } from '../src/presence/agents'
@@ -203,4 +204,67 @@ test('parseWorktreeRemovedId reads worktreeId or id', () => {
   expect(parseWorktreeRemovedId({ id: 'wt-2' })).toBe('wt-2')
   expect(parseWorktreeRemovedId('wt-3')).toBe('wt-3')
   expect(parseWorktreeRemovedId({})).toBeNull()
+})
+
+test('paneKeyMatchesAgentId accepts exact or prefix: joins', () => {
+  expect(paneKeyMatchesAgentId('sess-1', 'sess-1')).toBe(true)
+  expect(paneKeyMatchesAgentId('sess-1:tab', 'sess-1')).toBe(true)
+  expect(paneKeyMatchesAgentId('sess-12', 'sess-1')).toBe(false)
+  expect(paneKeyMatchesAgentId('other', 'sess-1')).toBe(false)
+  expect(paneKeyMatchesAgentId('sess-1', '')).toBe(false)
+})
+
+test('summarize keeps global count/state and prefers focused identity', () => {
+  const { table } = tableHarness()
+  table.upsert({
+    worktreeId: 'wt-a',
+    paneKey: 'sess-1',
+    state: 'working',
+    receivedAt: 1,
+    agent: { type: 'claude', model: 'opus', profile: 'review' }
+  })
+  table.upsert({
+    worktreeId: 'wt-b',
+    paneKey: 'sess-2',
+    state: 'blocked',
+    receivedAt: 2,
+    agent: { type: 'codex', model: 'gpt', profile: 'fast' }
+  })
+  expect(table.summarize()).toMatchObject({
+    agentCount: 2,
+    agentState: 'blocked',
+    agentType: 'codex',
+    agentModel: 'gpt'
+  })
+  expect(
+    table.summarize({ worktreeId: 'wt-a', agentId: 'sess-1' })
+  ).toMatchObject({
+    agentCount: 2,
+    agentState: 'blocked',
+    agentType: 'claude',
+    agentModel: 'opus',
+    agentProfile: 'review'
+  })
+  expect(table.summarize({ agentId: 'sess-1' })).toMatchObject({
+    agentCount: 2,
+    agentState: 'blocked',
+    agentType: 'claude'
+  })
+})
+
+test('summarize falls back to the full table when focus matches nothing', () => {
+  const { table } = tableHarness()
+  table.upsert({
+    worktreeId: 'wt',
+    paneKey: 'hot',
+    state: 'blocked',
+    receivedAt: 2,
+    agent: { type: 'claude', model: 'opus' }
+  })
+  expect(table.summarize({ worktreeId: 'missing', agentId: 'nope' })).toMatchObject({
+    agentCount: 1,
+    agentState: 'blocked',
+    agentType: 'claude',
+    agentModel: 'opus'
+  })
 })

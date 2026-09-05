@@ -310,6 +310,145 @@ test('configure fails fast on a junk Application ID and accepts two paneKeys', a
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('ui.readFocus miss is cached and extra focus fields do not crash', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-readfocus-'))
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  const logFile = join(dir, 'plugin.log')
+  process.env.ORCA_PRESENCE_LOG_FILE = logFile
+  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
+  const { default: activate, deactivate } = await import('../src/main')
+  const handlers = new Map<string, (args?: Record<string, unknown>) => Promise<unknown>>()
+  const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
+  const methods: string[] = []
+  const hostLines: string[] = []
+  const orca: OrcaHost = {
+    log: (message) => {
+      hostLines.push(message)
+    },
+    commands: {
+      register: (id, handler) => {
+        handlers.set(id, handler)
+      }
+    },
+    events: {
+      on: (event, handler) => {
+        eventHandlers.set(event, handler)
+      }
+    },
+    host: {
+      call: async (method) => {
+        methods.push(method)
+        if (method === 'settings.get') {
+          return { settings: { showFocusedSurface: true, detailLevel: 'full' } }
+        }
+        if (method === 'ui.readFocus') {
+          throw new Error('unknown method')
+        }
+        if (method === 'workspace.readContext') {
+          return {
+            displayName: 'acme',
+            branch: 'main',
+            terminals: [],
+            focusedSurface: {
+              kind: 'editor',
+              title: 'app.ts',
+              worktreeId: '/secret/worktree-path',
+              agentId: 'secret-agent-id'
+            }
+          }
+        }
+        if (method === 'notifications.show') {
+          return null
+        }
+        return null
+      }
+    }
+  }
+  await activate(orca)
+  await eventHandlers.get('ui.focus.changed')?.({
+    focusedSurface: {
+      kind: 'terminal',
+      title: 'zsh',
+      worktreeId: '/secret/worktree-path',
+      agentId: 'secret-agent-id'
+    },
+    receivedAt: Date.now()
+  })
+  await handlers.get('presence.status')?.()
+  await handlers.get('presence.status')?.()
+  const readFocusCalls = methods.filter((method) => method === 'ui.readFocus').length
+  expect(readFocusCalls).toBe(0)
+  const joined = `${hostLines.join('\n')}\n${readFileSync(logFile, 'utf8')}`
+  expect(joined.includes('/secret/worktree-path')).toBe(false)
+  expect(joined.includes('secret-agent-id')).toBe(false)
+  await deactivate()
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  if (previousSkip === undefined) {
+    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  } else {
+    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('ui.readFocus miss is fine when readContext has no focusedSurface key', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-readfocus-miss-'))
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
+  const { default: activate, deactivate } = await import('../src/main')
+  const handlers = new Map<string, () => Promise<unknown>>()
+  let readFocusCalls = 0
+  const orca: OrcaHost = {
+    log: () => {},
+    commands: {
+      register: (id, handler) => {
+        handlers.set(id, handler)
+      }
+    },
+    events: { on: () => {} },
+    host: {
+      call: async (method) => {
+        if (method === 'settings.get') {
+          return { settings: {} }
+        }
+        if (method === 'ui.readFocus') {
+          readFocusCalls += 1
+          throw new Error('unknown method')
+        }
+        if (method === 'workspace.readContext') {
+          return { displayName: 'acme', branch: 'main', terminals: [] }
+        }
+        return null
+      }
+    }
+  }
+  await activate(orca)
+  await handlers.get('presence.status')?.()
+  const afterFirst = readFocusCalls
+  expect(afterFirst).toBeGreaterThanOrEqual(1)
+  await handlers.get('presence.status')?.()
+  expect(readFocusCalls).toBe(afterFirst)
+  await deactivate()
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  if (previousSkip === undefined) {
+    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  } else {
+    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('formatStatusTransmitting includes lastActivity and truncates long JSON', () => {
   expect(formatStatusTransmitting(null)).toBe('transmitting=null')
   expect(formatStatusTransmitting({ details: 'Working in Orca' })).toBe(

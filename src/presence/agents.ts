@@ -4,7 +4,8 @@
  * `agent.status.changed` already carries `worktreeId`, `paneKey`, `state`,
  * and `receivedAt`. This module aggregates those slots, drops stale and
  * recently-done rows, and produces one canonical state for
- * {@link buildActivity}.
+ * {@link buildActivity}. Optional focus join keys pick type/model/profile
+ * without changing the global count or blocked/waiting aggregate.
  *
  * @module presence/agents
  * @author Jonathan Marien
@@ -52,6 +53,16 @@ export type AgentSummary = {
 }
 
 /**
+ * Optional focus join keys from host #8. Used only to pick type/model/profile.
+ * Count and canonical state stay global so a blocked agent on another
+ * worktree still shows.
+ */
+export type AgentIdentityFocus = {
+  worktreeId?: string | null
+  agentId?: string | null
+}
+
+/**
  * Construction options for {@link createAgentTable}.
  */
 export type AgentTableOptions = {
@@ -69,7 +80,7 @@ export type AgentTable = {
   upsert: (event: AgentStatusEvent) => void
   removeWorktree: (worktreeId: string) => boolean
   prune: () => boolean
-  summarize: () => AgentSummary
+  summarize: (focus?: AgentIdentityFocus) => AgentSummary
   slots: () => AgentSlot[]
   clear: () => void
 }
@@ -86,6 +97,21 @@ const PRIORITY: Record<CanonicalAgentState, number> = {
  */
 export function agentSlotKey(worktreeId: string, paneKey: string): string {
   return `${worktreeId}\u001f${paneKey}`
+}
+
+/**
+ * Host join rule: `paneKey` matches `agentId` exactly or as `${agentId}:…`.
+ *
+ * @param paneKey - Slot pane key from `agent.status.changed`.
+ * @param agentId - Focused-surface agent-session id.
+ */
+export function paneKeyMatchesAgentId(paneKey: string, agentId: string): boolean {
+  const pane = paneKey.trim()
+  const id = agentId.trim()
+  if (!id) {
+    return false
+  }
+  return pane === id || pane.startsWith(`${id}:`)
 }
 
 /**
@@ -154,7 +180,49 @@ export function isAgentSlotFresh(slot: AgentSlot, nowMs: number): boolean {
   return isActivityFresh(slot.receivedAt, nowMs, retentionWindow(slot.canonicalState))
 }
 
-function summarizeSlots(slots: readonly AgentSlot[]): AgentSummary {
+function normalizeJoinKey(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  const trimmed = value.trim()
+  return trimmed || undefined
+}
+
+/**
+ * Slots matching optional focus join keys. An empty filter (no usable
+ * keys, or no rows) is the caller's signal to fall back.
+ */
+export function filterSlotsByFocus(slots: readonly AgentSlot[], focus?: AgentIdentityFocus): AgentSlot[] {
+  const worktreeId = normalizeJoinKey(focus?.worktreeId)
+  const agentId = normalizeJoinKey(focus?.agentId)
+  if (!worktreeId && !agentId) {
+    return [...slots]
+  }
+  return slots.filter((slot) => {
+    if (worktreeId && slot.worktreeId.trim() !== worktreeId) {
+      return false
+    }
+    if (agentId && !paneKeyMatchesAgentId(slot.paneKey, agentId)) {
+      return false
+    }
+    return true
+  })
+}
+
+function pickIdentityWinner(slots: readonly AgentSlot[]): AgentSlot | undefined {
+  let winnerSlot: AgentSlot | undefined
+  let winnerPriority = -1
+  for (const slot of slots) {
+    const priority = PRIORITY[slot.canonicalState]
+    if (priority > winnerPriority) {
+      winnerPriority = priority
+      winnerSlot = slot
+    }
+  }
+  return winnerSlot
+}
+
+function summarizeSlots(slots: readonly AgentSlot[], focus?: AgentIdentityFocus): AgentSummary {
   if (slots.length === 0) {
     return {
       agentCount: 0,
@@ -167,13 +235,11 @@ function summarizeSlots(slots: readonly AgentSlot[]): AgentSummary {
   }
   let winner: CanonicalAgentState = 'done'
   let winnerPriority = -1
-  let winnerSlot: AgentSlot | undefined
   for (const slot of slots) {
     const priority = PRIORITY[slot.canonicalState]
     if (priority > winnerPriority) {
       winner = slot.canonicalState
       winnerPriority = priority
-      winnerSlot = slot
     }
   }
   let started = Number.POSITIVE_INFINITY
@@ -182,13 +248,16 @@ function summarizeSlots(slots: readonly AgentSlot[]): AgentSummary {
       started = slot.receivedAt
     }
   }
+  const filtered = filterSlotsByFocus(slots, focus)
+  const identitySource = filtered.length > 0 ? filtered : slots
+  const identitySlot = pickIdentityWinner(identitySource)
   return {
     agentCount: slots.length,
     agentState: winner,
     stateStartedAtMs: Number.isFinite(started) ? started : undefined,
-    agentType: winnerSlot?.agent?.type,
-    agentModel: winnerSlot?.agent?.model,
-    agentProfile: winnerSlot?.agent?.profile
+    agentType: identitySlot?.agent?.type,
+    agentModel: identitySlot?.agent?.model,
+    agentProfile: identitySlot?.agent?.profile
   }
 }
 
@@ -277,9 +346,9 @@ export function createAgentTable({
       return changed
     },
     prune,
-    summarize() {
+    summarize(focus) {
       prune()
-      return summarizeSlots([...map.values()])
+      return summarizeSlots([...map.values()], focus)
     },
     slots: () => [...map.values()],
     clear() {
