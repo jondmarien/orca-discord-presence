@@ -2,7 +2,7 @@
  * Privacy-safe diagnostics snapshot embedded in the Orca panel HTML.
  *
  * Panels cannot call `settings.*` or `storage.*` today (PLAN.md Task B4 /
- * issue #3). The worker therefore serializes a redacted view of status,
+ * issue #10). The worker therefore serializes a redacted view of status,
  * field toggles, and recent log lines into `panel/index.html` when the
  * install is writable. The Discord Application ID and bridge token are
  * never included.
