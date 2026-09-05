@@ -1,0 +1,124 @@
+# Cut a GitHub Release on every push to main.
+#
+# Product version in package.json / orca-plugin.json stays honest (e.g. 0.3.0).
+# Tags are unique per commit: v${VERSION}-${GITHUB_SHA::7}.
+# Zip name is stable so this URL always hits the latest build:
+#   https://github.com/jondmarien/orca-discord-presence/releases/latest/download/chron0.discord-presence.zip
+#
+# Skip: put [skip release] in the commit message.
+# Tests use fake IPC — no Discord required.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.1
+
+      - name: Install, test, build
+        run: |
+          bun install --frozen-lockfile
+          bun test
+          bun run build
+
+      - name: Pack plugin zip
+        run: |
+          set -euo pipefail
+          VERSION="$(python3 -c "import json; print(json.load(open('package.json'))['version'])")"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          PLUGIN_DIR="chron0.discord-presence"
+          ZIP_NAME="chron0.discord-presence.zip"
+          STAGE="$(mktemp -d)/${PLUGIN_DIR}"
+
+          mkdir -p "${STAGE}/dist" "${STAGE}/assets"
+          cp orca-plugin.json "${STAGE}/"
+          cp dist/main.js "${STAGE}/dist/"
+          cp -R assets/. "${STAGE}/assets/"
+          if [ -d panel ]; then
+            cp -R panel "${STAGE}/panel"
+          fi
+
+          # Confirm the zip is a loadable plugin root (folder with orca-plugin.json).
+          test -f "${STAGE}/orca-plugin.json"
+          test -f "${STAGE}/dist/main.js"
+
+          (cd "$(dirname "${STAGE}")" && zip -r "${GITHUB_WORKSPACE}/${ZIP_NAME}" "${PLUGIN_DIR}")
+
+          {
+            echo "VERSION=${VERSION}"
+            echo "SHORT_SHA=${SHORT_SHA}"
+            echo "TAG=v${VERSION}-${SHORT_SHA}"
+            echo "ZIP_NAME=${ZIP_NAME}"
+          } >> "${GITHUB_ENV}"
+
+          echo "Packed ${ZIP_NAME} (${VERSION}, ${SHORT_SHA})"
+          unzip -l "${ZIP_NAME}"
+
+      - name: Write release notes
+        run: |
+          set -euo pipefail
+          PANEL_LINE=""
+          if [ -d panel ]; then
+            PANEL_LINE="- \`panel/\`"
+          fi
+          cat > release-notes.md <<EOF
+          ## Discord Presence ${VERSION} (build ${SHORT_SHA})
+
+          Plugin id: \`chron0.discord-presence\`
+
+          **Product version** in \`orca-plugin.json\` / \`package.json\` is **${VERSION}**.
+          This GitHub tag (\`${TAG}\`) is unique per \`main\` push so Releases do not collide.
+          The zip filename stays \`chron0.discord-presence.zip\` so
+          [the latest download URL](https://github.com/jondmarien/orca-discord-presence/releases/latest/download/chron0.discord-presence.zip) does not change.
+
+          ### Install
+
+          1. Download [\`chron0.discord-presence.zip\`](https://github.com/jondmarien/orca-discord-presence/releases/latest/download/chron0.discord-presence.zip).
+          2. Unzip it.
+          3. Orca → **Settings → Plugins** → enable **Plugin system** → **Install plugin** → **Local folder**.
+          4. Paste the full path to the unzipped folder that contains \`orca-plugin.json\`.
+          5. Approve consent, then run **Discord Presence: Show Status**.
+
+          Orca does not install from the zip file itself — point it at the unpacked folder.
+
+          ### Contents
+
+          - \`orca-plugin.json\`
+          - \`dist/main.js\`
+          - \`assets/\`
+          ${PANEL_LINE}
+
+          Commit: ${GITHUB_SHA}
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Discord Presence ${{ env.VERSION }} (build ${{ env.SHORT_SHA }})
+          body_path: release-notes.md
+          files: chron0.discord-presence.zip
+          fail_on_unmatched_files: true
+          make_latest: true
+          target_commitish: ${{ github.sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
