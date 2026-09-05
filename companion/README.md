@@ -7,7 +7,7 @@ Small Bun/Node ESM service for **whichever machine has Discord / Vesktop / Venco
 
 The Orca **host/runtime** (any OS) optionally POSTs activity here when local Discord IPC on that host is unavailable. Not a Windows-only sidecar.
 
-Full setup, Tailscale, SSH tunnel, and security notes: [../README.md](../README.md#cross-machine-companion-linux--macos--windows).
+Full setup, Tailscale, SSH tunnel, and security notes: [../README.md](../README.md#dual-host-companion).
 
 ```bash
 # from this directory (Linux, macOS, Windows)
