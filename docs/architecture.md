@@ -43,7 +43,7 @@ Tests live under `test/` and use Bun’s test runner. Client tests stand up a fa
 Discord desktop listens on up to ten endpoints: `discord-ipc-0` … `discord-ipc-9`.
 
 - **Windows:** named pipes `\\?\pipe\discord-ipc-N`.
-- **POSIX:** Unix sockets under `XDG_RUNTIME_DIR`, `/run/user/<uid>`, `TMPDIR` / `TMP` / `TEMP`, then `/tmp`. Flatpak (`app/com.discordapp.Discord`) and Snap (`snap.discord`) nest one directory deeper.
+- **POSIX:** Unix sockets under `XDG_RUNTIME_DIR`, `/run/user/<uid>`, `TMPDIR` / `TMP` / `TEMP`, then `/tmp`. Official Discord Flatpak (`app/com.discordapp.Discord`) and Snap (`snap.discord`) nest one directory deeper. Vesktop Flatpak + arRPC uses `.flatpak/dev.vencord.Vesktop/xdg-run`. Plain `discord-ipc-N` is still tried first.
 
 Orca’s worker env allowlist **drops** `XDG_RUNTIME_DIR`. On Linux the plugin reconstructs `/run/user/<uid>` from `os.userInfo().uid`.
 

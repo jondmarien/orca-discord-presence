@@ -21,11 +21,22 @@ const SOCKET_INDEX_LIMIT = 10
 
 /**
  * Extra path segments for sandboxed Discord installs. Empty string is the
- * unsandboxed runtime dir. Flatpak and Snap nest one level down.
+ * unsandboxed runtime dir (`discord-ipc-N` directly under the prefix).
+ *
+ * Official Discord Flatpak and Snap nest one level down. Vesktop Flatpak
+ * (`dev.vencord.Vesktop`) with arRPC exposes the socket under
+ * `.flatpak/dev.vencord.Vesktop/xdg-run` — the host view of the sandbox
+ * XDG runtime. There is no Flathub app `dev.vencord.Vencord` (Vencord is
+ * a client mod; Vesktop is the standalone client), so that id is omitted.
  *
  * @author Jonathan Marien
  */
-const SANDBOX_SUBDIRS = ['', 'app/com.discordapp.Discord', 'snap.discord'] as const
+const SANDBOX_SUBDIRS = [
+  '',
+  'app/com.discordapp.Discord',
+  'snap.discord',
+  '.flatpak/dev.vencord.Vesktop/xdg-run'
+] as const
 
 /**
  * Discord IPC opcodes. Handshake uses 0; RPC commands and READY/ERROR
