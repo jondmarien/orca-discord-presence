@@ -13,6 +13,7 @@
 
 import { canonicalizeAgentState, type CanonicalAgentState } from './agent-state'
 import { AGENT_RETENTION_MS, isActivityFresh } from './expiry'
+import { parseAgentIdentity, type AgentIdentity } from './host-context'
 
 /**
  * One parsed `agent.status.changed` event.
@@ -22,6 +23,8 @@ export type AgentStatusEvent = {
   paneKey: string
   state: string
   receivedAt: number
+  /** Optional Orca-3 labels from the event payload. */
+  agent?: AgentIdentity
 }
 
 /**
@@ -33,6 +36,7 @@ export type AgentSlot = {
   rawState: string
   canonicalState: CanonicalAgentState
   receivedAt: number
+  agent?: AgentIdentity
 }
 
 /**
@@ -42,6 +46,9 @@ export type AgentSummary = {
   agentCount: number
   agentState: CanonicalAgentState | undefined
   stateStartedAtMs: number | undefined
+  agentType: string | undefined
+  agentModel: string | undefined
+  agentProfile: string | undefined
 }
 
 /**
@@ -103,12 +110,17 @@ export function parseAgentStatusPayload(payload: unknown, nowMs: number): AgentS
     typeof source.receivedAt === 'number' && Number.isFinite(source.receivedAt)
       ? source.receivedAt
       : nowMs
-  return {
+  const identity = parseAgentIdentity(source)
+  const event: AgentStatusEvent = {
     worktreeId: typeof source.worktreeId === 'string' ? source.worktreeId : '',
     paneKey: typeof source.paneKey === 'string' ? source.paneKey : '',
     state: source.state,
     receivedAt
   }
+  if (identity.type || identity.model || identity.profile) {
+    event.agent = identity
+  }
+  return event
 }
 
 /**
@@ -144,15 +156,24 @@ export function isAgentSlotFresh(slot: AgentSlot, nowMs: number): boolean {
 
 function summarizeSlots(slots: readonly AgentSlot[]): AgentSummary {
   if (slots.length === 0) {
-    return { agentCount: 0, agentState: undefined, stateStartedAtMs: undefined }
+    return {
+      agentCount: 0,
+      agentState: undefined,
+      stateStartedAtMs: undefined,
+      agentType: undefined,
+      agentModel: undefined,
+      agentProfile: undefined
+    }
   }
   let winner: CanonicalAgentState = 'done'
   let winnerPriority = -1
+  let winnerSlot: AgentSlot | undefined
   for (const slot of slots) {
     const priority = PRIORITY[slot.canonicalState]
     if (priority > winnerPriority) {
       winner = slot.canonicalState
       winnerPriority = priority
+      winnerSlot = slot
     }
   }
   let started = Number.POSITIVE_INFINITY
@@ -164,7 +185,10 @@ function summarizeSlots(slots: readonly AgentSlot[]): AgentSummary {
   return {
     agentCount: slots.length,
     agentState: winner,
-    stateStartedAtMs: Number.isFinite(started) ? started : undefined
+    stateStartedAtMs: Number.isFinite(started) ? started : undefined,
+    agentType: winnerSlot?.agent?.type,
+    agentModel: winnerSlot?.agent?.model,
+    agentProfile: winnerSlot?.agent?.profile
   }
 }
 
@@ -233,7 +257,8 @@ export function createAgentTable({
         paneKey: event.paneKey,
         rawState: event.state,
         canonicalState,
-        receivedAt: event.receivedAt
+        receivedAt: event.receivedAt,
+        agent: event.agent
       })
       prune()
       schedulePrune()

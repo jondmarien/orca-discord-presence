@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import type { DiscordActivity } from '../src/presence/activity'
 import type { PresenceBridge } from '../src/presence/bridge'
 import { createPresenceController, MIN_UPDATE_INTERVAL_MS, type PresenceClient } from '../src/presence/controller'
+import type { PresenceSidecar } from '../src/presence/sidecar'
 import { DEFAULT_SETTINGS, type PresenceSettings } from '../src/presence/settings'
 
 type FakeTimer = {
@@ -10,7 +11,7 @@ type FakeTimer = {
   cancelled: boolean
 }
 
-function harness(overrides: Partial<PresenceSettings> = {}) {
+function harness(overrides: Partial<PresenceSettings> = {}, extras: { sidecar?: boolean } = {}) {
   let now = 1_000_000
   const activities: Array<DiscordActivity | null> = []
   const bridged: Array<DiscordActivity | 'clear'> = []
@@ -43,9 +44,24 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
       bridged.push('clear')
     }
   }
+  const sidecarOps: Array<'set' | 'clear'> = []
+  const sidecar: PresenceSidecar | undefined = extras.sidecar
+    ? {
+        resolvePlacement: async () => ({
+          mailboxAvailable: true,
+          companionStillValid: true,
+          lastPublishedAt: null
+        }),
+        publish: async (op) => {
+          sidecarOps.push(op)
+          return true
+        }
+      }
+    : undefined
   const controller = createPresenceController({
     client,
     bridge,
+    sidecar,
     settings: { ...DEFAULT_SETTINGS, detailLevel: 'full', ...overrides },
     now: () => now,
     setTimer: (fn, ms) => {
@@ -71,7 +87,7 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
       }
     }
   }
-  return { controller, client, activities, bridged, logs, advance, nowRef: () => now }
+  return { controller, client, activities, bridged, sidecarOps, logs, advance, nowRef: () => now }
 }
 
 test('the first update writes through immediately', async () => {
@@ -356,5 +372,76 @@ test('disabling the bridge after a remote publish clears the companion', async (
   })
   expect(bridged.filter((entry) => entry === 'clear').length).toBe(1)
   expect(controller.status().sink).toBeNull()
+})
+
+test('local IPC does not publish sidecar frames', async () => {
+  const { controller, activities, sidecarOps } = harness({}, { sidecar: true })
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  expect(activities.length).toBe(1)
+  expect(sidecarOps.length).toBe(0)
+  expect(controller.status().sink).toBe('local')
+  expect(controller.status().sidecarMailbox).toBe(false)
+})
+
+test('falls back to sidecar when local IPC is down and the companion is off', async () => {
+  const { controller, client, activities, sidecarOps } = harness({}, { sidecar: true })
+  client.connect = async () => {
+    throw new Error('no discord ipc socket accepted a connection')
+  }
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  expect(activities.length).toBe(0)
+  expect(sidecarOps).toEqual(['set'])
+  expect(controller.status().connected).toBe(false)
+  expect(controller.status().sink).toBe('sidecar')
+  expect(controller.status().sidecarMailbox).toBe(true)
+})
+
+test('companion remains the Discord-visible sink when sidecar only stores a mailbox', async () => {
+  const { controller, client, activities, bridged, sidecarOps } = harness(
+    {
+      bridgeEnabled: true,
+      bridgeUrl: 'http://100.64.1.2:3848',
+      bridgeToken: 'tok'
+    },
+    { sidecar: true }
+  )
+  client.connect = async () => {
+    throw new Error('no discord ipc socket accepted a connection')
+  }
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  expect(activities.length).toBe(0)
+  expect(sidecarOps).toEqual(['set'])
+  expect(bridged.length).toBe(1)
+  expect(controller.status().sink).toBe('bridge')
+  expect(controller.status().sidecarMailbox).toBe(true)
+})
+
+test('stop after a sidecar publish clears the mailbox', async () => {
+  const { controller, client, sidecarOps } = harness({}, { sidecar: true })
+  client.connect = async () => {
+    throw new Error('no discord ipc socket accepted a connection')
+  }
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.stop()
+  expect(sidecarOps.at(-1)).toBe('clear')
+  expect(controller.status().sidecarMailbox).toBe(false)
+})
+
+test('switching from sidecar to local clears the mailbox', async () => {
+  const { controller, client, sidecarOps } = harness({}, { sidecar: true })
+  let allowLocal = false
+  client.connect = async () => {
+    if (!allowLocal) {
+      throw new Error('no discord ipc socket accepted a connection')
+    }
+    client.connected = true
+  }
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  expect(controller.status().sink).toBe('sidecar')
+  allowLocal = true
+  await controller.forceTransmit()
+  expect(controller.status().sink).toBe('local')
+  expect(sidecarOps.filter((op) => op === 'clear').length).toBe(1)
+  expect(controller.status().sidecarMailbox).toBe(false)
 })
 

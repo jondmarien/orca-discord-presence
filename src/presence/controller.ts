@@ -17,13 +17,14 @@ import { buildActivity, type DiscordActivity, type PresenceSnapshot } from './ac
 import { resolveBridgeTarget, type PresenceBridge } from './bridge'
 import { formatLogLine, type DiagnosticSink } from './log'
 import type { PresenceSettings } from './settings'
+import type { PresenceSidecar } from './sidecar'
 
 /**
  * Last successful publish path. `null` after a clear or before the first
  * successful write. Local IPC wins when connected; the HTTP bridge is the
  * fallback when Discord is not running on the Orca host.
  */
-export type PresenceSink = 'local' | 'bridge'
+export type PresenceSink = 'local' | 'bridge' | 'sidecar'
 
 /**
  * Minimum time between Discord `SET_ACTIVITY` writes (15 seconds).
@@ -59,6 +60,12 @@ export type PresenceControllerOptions = {
    * when {@link resolveBridgeTarget} returns `null`.
    */
   bridge?: PresenceBridge
+  /**
+   * Optional fork sidecar mailbox (Orca-5). Used when local IPC fails.
+   * Companion remains the Discord-visible fallback while the UI executor
+   * is not-implemented.
+   */
+  sidecar?: PresenceSidecar
   /** Clock in milliseconds. Defaults to `Date.now`. */
   now?: () => number
   /** Schedule a deferred transmit. Defaults to `setTimeout`. */
@@ -93,6 +100,8 @@ export type PresenceStatus = {
   lastActivity: DiscordActivity | null
   /** On-disk log path when a diagnostic sink is wired (Show Status). */
   logFile: string | null
+  /** True when a sidecar presence frame is currently stored on the host. */
+  sidecarMailbox: boolean
   /**
    * True after {@link PresenceController.clear} until the next resume
    * (agent event, Show Status, Reload RPC, or a settings write).
@@ -160,6 +169,7 @@ export function createPresenceController({
   client,
   settings,
   bridge,
+  sidecar,
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
@@ -176,6 +186,7 @@ export function createPresenceController({
   let lastSink: PresenceSink | null = null
   let lastBridgeUrl: string | null = null
   let lastBridgeToken: string | null = null
+  let lastSidecarMailbox = false
   let stopped = false
   let holdClear = false
 
@@ -228,6 +239,41 @@ export function createPresenceController({
     }
   }
 
+  async function tryClearSidecar() {
+    if (!sidecar || !lastSidecarMailbox) {
+      return
+    }
+    lastSidecarMailbox = false
+    try {
+      emit('info', 'sidecar.clear')
+      await sidecar.publish('clear')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      emit('error', 'sidecar.clear_failed', { reason: message })
+    }
+  }
+
+  async function tryPublishSidecar(activity: DiscordActivity): Promise<boolean> {
+    if (!sidecar) {
+      return false
+    }
+    try {
+      const placement = await sidecar.resolvePlacement()
+      if (!placement?.mailboxAvailable) {
+        return false
+      }
+      const accepted = await sidecar.publish('set', activity)
+      if (accepted) {
+        emit('info', 'sidecar.publish', { channel: 'presence' })
+      }
+      return accepted
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      emit('error', 'sidecar.publish_failed', { reason: message })
+      return false
+    }
+  }
+
   async function forgetBridge(clearRemote: boolean) {
     const url = lastBridgeUrl
     const token = lastBridgeToken ?? ''
@@ -264,6 +310,9 @@ export function createPresenceController({
         if (lastSink === 'bridge') {
           await forgetBridge(true)
         }
+        if (lastSidecarMailbox) {
+          await tryClearSidecar()
+        }
         lastSentSerialized = serialized
         lastActivity = activity
         lastSentAt = now()
@@ -276,33 +325,49 @@ export function createPresenceController({
       }
       return
     }
+    const sidecarOk = await tryPublishSidecar(activity)
+    lastSidecarMailbox = sidecarOk
     const target = resolveBridgeTarget(currentSettings)
-    if (!target) {
-      if (currentSettings.bridgeEnabled) {
-        emit('warn', 'bridge.skipped', { reason: 'url/token is not usable' })
+    if (target && bridge) {
+      try {
+        emit('info', 'bridge.publish', { url: bridgeOrigin(target.url) })
+        await bridge.publish(target.url, target.token, activity)
+        emit('info', 'discord.set_activity', { sink: 'bridge', details: activity.details })
+        lastSentSerialized = serialized
+        lastActivity = activity
+        lastSentAt = now()
+        lastSink = 'bridge'
+        lastBridgeUrl = target.url
+        lastBridgeToken = target.token
+        cleared = false
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        emit('error', 'bridge.publish_failed', { url: bridgeOrigin(target.url), reason: message })
+        lastSentSerialized = null
+        if (sidecarOk) {
+          lastSentSerialized = serialized
+          lastActivity = activity
+          lastSentAt = now()
+          lastSink = 'sidecar'
+          cleared = false
+        }
       }
       return
     }
-    if (!bridge) {
-      emit('warn', 'bridge.skipped', { reason: 'no transport is configured' })
+    if (currentSettings.bridgeEnabled) {
+      emit('warn', 'bridge.skipped', {
+        reason: target ? 'no transport is configured' : 'url/token is not usable'
+      })
+    }
+    if (!sidecarOk) {
       return
     }
-    try {
-      emit('info', 'bridge.publish', { url: bridgeOrigin(target.url) })
-      await bridge.publish(target.url, target.token, activity)
-      emit('info', 'discord.set_activity', { sink: 'bridge', details: activity.details })
-      lastSentSerialized = serialized
-      lastActivity = activity
-      lastSentAt = now()
-      lastSink = 'bridge'
-      lastBridgeUrl = target.url
-      lastBridgeToken = target.token
-      cleared = false
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      emit('error', 'bridge.publish_failed', { url: bridgeOrigin(target.url), reason: message })
-      lastSentSerialized = null
-    }
+    lastSentSerialized = serialized
+    lastActivity = activity
+    lastSentAt = now()
+    lastSink = 'sidecar'
+    cleared = false
+    emit('info', 'discord.set_activity', { sink: 'sidecar', details: activity.details })
   }
 
   async function clearPresence() {
@@ -328,6 +393,7 @@ export function createPresenceController({
     } else {
       await forgetBridge(false)
     }
+    await tryClearSidecar()
   }
 
   async function schedule() {
@@ -439,7 +505,7 @@ export function createPresenceController({
         emit('error', 'discord.reload_close_failed', { reason: message })
       }
       await transmit(true)
-      if (!client.isConnected() && lastSink !== 'bridge') {
+      if (!client.isConnected() && lastSink !== 'bridge' && lastSink !== 'sidecar') {
         emit('error', 'discord.reload_failed', {
           reason: 'reconnect did not complete; see discord.connect_failed'
         })
@@ -454,6 +520,7 @@ export function createPresenceController({
       detailLevel: currentSettings.detailLevel,
       lastActivity,
       logFile: diagnostics?.filePath ?? null,
+      sidecarMailbox: lastSidecarMailbox,
       heldClear: holdClear
     }),
     async stop() {

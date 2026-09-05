@@ -15,14 +15,22 @@
 import os from 'node:os'
 import { inspectApplicationId } from './discord/app-id'
 import { createDiscordClient } from './discord/client'
-import { createAgentTable, parseAgentStatusPayload, parseWorktreeRemovedId } from './presence/agents'
+import {
+  createAgentTable,
+  parseAgentStatusPayload,
+  parseWorktreeRemovedId,
+  type AgentStatusEvent
+} from './presence/agents'
 import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
 import { applyConfigure } from './presence/configure'
 import { createPresenceController, type PresenceController } from './presence/controller'
+import { writeDiagnosticsSnapshot } from './presence/diagnostics-store'
+import { parseUiFocusChanged, type ParsedUiFocusChanged } from './presence/focus'
+import { parseWorkspaceContext, resolveMachineName } from './presence/host-context'
 import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
 import { resolvePanelHtmlPath, writePanelSnapshot } from './presence/panel-html'
-import { buildPresencePanelSnapshot } from './presence/panel-snapshot'
+import { buildPresencePanelSnapshot, type PresencePanelHost } from './presence/panel-snapshot'
 import {
   normalizeSettings,
   nextDetailLevel,
@@ -30,6 +38,7 @@ import {
   toggleField,
   type PresenceSettings
 } from './presence/settings'
+import { createSidecarTransport } from './presence/sidecar'
 import { PLUGIN_VERSION } from './version'
 
 /**
@@ -40,6 +49,12 @@ import { PLUGIN_VERSION } from './version'
  * switches, which emit no event.
  */
 const HEARTBEAT_MS = 90_000
+
+/**
+ * Re-read `settings.get` so panel `settings.set` applies without waiting
+ * for the 90 s heartbeat.
+ */
+const SETTINGS_POLL_MS = 5_000
 
 /**
  * Coalesce panel HTML rewrites during a chatty agent event stream.
@@ -85,33 +100,6 @@ const TOGGLE_COMMANDS = {
 type ToggleCommandId = keyof typeof TOGGLE_COMMANDS
 
 /**
- * Payload of the host `agent.status.changed` event used by this plugin.
- *
- * `state` is an Orca agent status (`working`, `blocked`, `waiting`, `done`,
- * or an unrecognized future value). `receivedAt` is the host timestamp in
- * milliseconds; the activity builder may convert it to a Discord start
- * timestamp when `showElapsed` is on.
- */
-type AgentStatusPayload = {
-  state: string
-  receivedAt: number
-  worktreeId?: string
-  paneKey?: string
-}
-
-/**
- * Subset of `workspace.readContext` this plugin reads.
- *
- * `terminals` is only used for its length. Missing `displayName` / `branch`
- * are treated as absent by the activity builder.
- */
-type WorkspaceContext = {
-  displayName?: string
-  branch?: string
-  terminals: readonly unknown[]
-}
-
-/**
  * Host object Orca injects into `activate`. This is the subset of the
  * plugin worker API this plugin actually calls — not the full host surface.
  */
@@ -134,8 +122,9 @@ export type OrcaHost = {
   }
   host: {
     /**
-     * Invoke a host method. This plugin uses `settings.get`, `settings.set`,
-     * `workspace.readContext`, and `notifications.show`.
+     * Invoke a host method. This plugin uses `settings.*`,
+     * `workspace.readContext`, `notifications.show`, `storage.*`, and
+     * `sidecar.*` (try-call).
      */
     call: (method: string, args?: Record<string, unknown>) => Promise<unknown>
   }
@@ -144,6 +133,7 @@ export type OrcaHost = {
 let controller: PresenceController | null = null
 let agentTable: ReturnType<typeof createAgentTable> | null = null
 let heartbeat: ReturnType<typeof setInterval> | null = null
+let settingsPoll: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
 let logRing: LogRing | null = null
 let panelWriteTimer: ReturnType<typeof setTimeout> | null = null
@@ -160,64 +150,17 @@ function publicConfigureView(settings: PresenceSettings) {
     openUrl: settings.openUrl,
     showOpenButton: settings.showOpenButton,
     openButtonLabel: settings.openButtonLabel,
-    showAgentCount: settings.showAgentCount
+    showAgentCount: settings.showAgentCount,
+    showFocusedSurface: settings.showFocusedSurface,
+    focusedSurfaceDetail: settings.focusedSurfaceDetail,
+    showAgentType: settings.showAgentType,
+    showAgentModel: settings.showAgentModel,
+    showAgentProfile: settings.showAgentProfile
   }
 }
 
-/**
- * Embed a redacted snapshot into `panel/index.html` when the install is
- * writable. Marketplace copies are often immutable — failures are silent
- * after the first debug line.
- */
-function publishPanelSnapshot(mode: 'immediate' | 'debounced') {
-  const flush = () => {
-    panelWriteTimer = null
-    if (!controller || !logRing) {
-      return
-    }
-    const snapshot = buildPresencePanelSnapshot({
-      version: PLUGIN_VERSION,
-      status: controller.status(),
-      settings: controller.settings(),
-      logs: logRing.lines()
-    })
-    const target = resolvePanelHtmlPath(process.env, import.meta.url)
-    if (!target) {
-      return
-    }
-    const result = writePanelSnapshot(target, snapshot)
-    if (result.ok) {
-      diagnostics?.line('debug', 'panel.snapshot_written', { lines: snapshot.logs.length })
-      return
-    }
-    if (!panelWriteNoted) {
-      panelWriteNoted = true
-      diagnostics?.line('debug', 'panel.snapshot_skipped', { reason: result.reason })
-    }
-  }
-  if (mode === 'immediate') {
-    if (panelWriteTimer) {
-      clearTimeout(panelWriteTimer)
-      panelWriteTimer = null
-    }
-    try {
-      flush()
-    } catch {
-      // Panel rewrite must never take down presence.
-    }
-    return
-  }
-  if (panelWriteTimer) {
-    return
-  }
-  panelWriteTimer = setTimeout(() => {
-    try {
-      flush()
-    } catch {
-      // Same as immediate: ignore rewrite errors.
-    }
-  }, PANEL_WRITE_DEBOUNCE_MS)
-  panelWriteTimer.unref?.()
+function emptyHostCaps(): PresencePanelHost {
+  return { sidecar: false, focus: false, executionHost: false }
 }
 
 /**
@@ -239,6 +182,8 @@ export default async function activate(orca: OrcaHost) {
       : {}
   const appId = inspectApplicationId(rawSettings.applicationId, SHIPPED_APPLICATION_ID)
   let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env)
+  const hostCaps = emptyHostCaps()
+  let lastFocus: ParsedUiFocusChanged | null = null
 
   const logFile = resolveLogFilePath(process.env, {
     homedir: os.homedir(),
@@ -273,6 +218,11 @@ export default async function activate(orca: OrcaHost) {
     })
   }
 
+  const sidecar = createSidecarTransport((method, args) => orca.host.call(method, args))
+  void sidecar.resolvePlacement().then((placement) => {
+    hostCaps.sidecar = Boolean(placement?.mailboxAvailable)
+  })
+
   function createController(nextSettings: PresenceSettings): PresenceController {
     return createPresenceController({
       client: createDiscordClient({
@@ -282,10 +232,66 @@ export default async function activate(orca: OrcaHost) {
       bridge: createBridgeTransport({
         log: (message) => diagnostics?.line('error', 'bridge.transport', { reason: message })
       }),
+      sidecar,
       settings: nextSettings,
       diagnostics: diagnostics ?? undefined,
       log: (message) => orca.log(message)
     })
+  }
+
+  /**
+   * Embed a redacted snapshot into `panel/index.html` when the install is
+   * writable, and write the same blob to `storage.set` for live panel polls.
+   */
+  async function publishPanelSnapshot(mode: 'immediate' | 'debounced') {
+    const flush = async () => {
+      panelWriteTimer = null
+      if (!controller || !logRing) {
+        return
+      }
+      const snapshot = buildPresencePanelSnapshot({
+        version: PLUGIN_VERSION,
+        status: controller.status(),
+        settings: controller.settings(),
+        logs: logRing.lines(),
+        host: { ...hostCaps }
+      })
+      await writeDiagnosticsSnapshot((method, args) => orca.host.call(method, args), snapshot)
+      const target = resolvePanelHtmlPath(process.env, import.meta.url)
+      if (!target) {
+        return
+      }
+      const result = writePanelSnapshot(target, snapshot)
+      if (result.ok) {
+        diagnostics?.line('debug', 'panel.snapshot_written', { lines: snapshot.logs.length })
+        return
+      }
+      if (!panelWriteNoted) {
+        panelWriteNoted = true
+        diagnostics?.line('debug', 'panel.snapshot_skipped', { reason: result.reason })
+      }
+    }
+    if (mode === 'immediate') {
+      if (panelWriteTimer) {
+        clearTimeout(panelWriteTimer)
+        panelWriteTimer = null
+      }
+      try {
+        await flush()
+      } catch {
+        // Panel rewrite must never take down presence.
+      }
+      return
+    }
+    if (panelWriteTimer) {
+      return
+    }
+    panelWriteTimer = setTimeout(() => {
+      void flush().catch(() => {
+        // Same as immediate: ignore rewrite errors.
+      })
+    }, PANEL_WRITE_DEBOUNCE_MS)
+    panelWriteTimer.unref?.()
   }
 
   let pushAgentRefresh: () => void = () => {}
@@ -302,6 +308,18 @@ export default async function activate(orca: OrcaHost) {
   })
 
   controller = createController(settings)
+
+  async function readHostSettings(): Promise<PresenceSettings | null> {
+    try {
+      const next = (await orca.host.call('settings.get')) as { settings?: unknown }
+      if (!next || typeof next !== 'object') {
+        return null
+      }
+      return applyBridgeEnvOverrides(normalizeSettings(next.settings), process.env)
+    } catch {
+      return null
+    }
+  }
 
   /**
    * Persist every settings field through `settings.set`, then push the
@@ -326,35 +344,48 @@ export default async function activate(orca: OrcaHost) {
     } else {
       await controller?.setSettings(nextSettings)
     }
-    publishPanelSnapshot('immediate')
+    await publishPanelSnapshot('immediate')
+  }
+
+  async function applyHostSettingsIfChanged(): Promise<void> {
+    const next = await readHostSettings()
+    if (!next) {
+      return
+    }
+    if (JSON.stringify(next) === JSON.stringify(settings)) {
+      return
+    }
+    await persist(next)
   }
 
   /**
-   * Merge workspace context and the agent table into the controller.
+   * Merge workspace context, agent table, and optional focus into the
+   * controller.
    *
    * A missing `workspace.readContext` used to return without `update`, so
    * generic “Working in Orca” never appeared. We still publish a minimal
-   * snapshot (`machineName` + optional agent fields) in that case.
+   * snapshot (`machineName` + optional agent / focus fields) in that case.
    */
   async function refresh(
-    agentEvent?: AgentStatusPayload | null,
+    agentEvent?: AgentStatusEvent | null,
     options: { force?: boolean; resume?: boolean } = {}
   ) {
+    await applyHostSettingsIfChanged()
     if (agentEvent) {
-      const parsed = parseAgentStatusPayload(agentEvent, Date.now())
-      if (parsed) {
-        agentTable?.upsert(parsed)
-      }
+      agentTable?.upsert(agentEvent)
     }
     const summary = agentTable?.summarize() ?? {
       agentCount: 0,
       agentState: undefined,
-      stateStartedAtMs: undefined
+      stateStartedAtMs: undefined,
+      agentType: undefined,
+      agentModel: undefined,
+      agentProfile: undefined
     }
-    const context = (await orca.host.call('workspace.readContext').catch(() => null)) as
-      | WorkspaceContext
-      | null
-    if (!context) {
+    const parsed = parseWorkspaceContext(
+      await orca.host.call('workspace.readContext').catch(() => null)
+    )
+    if (!parsed) {
       diagnostics?.line('debug', 'refresh.minimal', { reason: 'no workspace context' })
     } else if (agentEvent) {
       diagnostics?.line('debug', 'refresh', {
@@ -363,27 +394,41 @@ export default async function activate(orca: OrcaHost) {
         agents: summary.agentCount
       })
     }
+    if (parsed?.executionHostKind) {
+      hostCaps.executionHost = true
+    }
+    if (parsed?.focusedSurfacePresent) {
+      hostCaps.focus = true
+    }
     const resume = Boolean(options.resume || agentEvent)
     await controller?.update(
       {
-        machineName: os.hostname(),
-        ...(context
+        machineName: resolveMachineName({
+          machineLabel: settings.machineLabel,
+          executionHostLabel: parsed?.executionHostLabel,
+          hostname: os.hostname()
+        }),
+        ...(parsed
           ? {
-              displayName: context.displayName,
-              branch: context.branch,
-              terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
+              displayName: parsed.displayName,
+              branch: parsed.branch,
+              terminalCount: parsed.terminalCount
             }
           : {}),
         agentState: summary.agentState,
         stateStartedAtMs: summary.stateStartedAtMs,
-        agentCount: summary.agentCount
+        agentCount: summary.agentCount,
+        agentType: summary.agentType ?? parsed?.agentType,
+        agentModel: summary.agentModel ?? parsed?.agentModel,
+        agentProfile: summary.agentProfile ?? parsed?.agentProfile,
+        ...focusSnapshotFields(parsed, lastFocus)
       },
       resume ? { resume: true } : undefined
     )
     if (options.force) {
       await controller?.forceTransmit(resume)
     }
-    publishPanelSnapshot('debounced')
+    void publishPanelSnapshot('debounced')
   }
 
   pushAgentRefresh = () => {
@@ -418,11 +463,12 @@ export default async function activate(orca: OrcaHost) {
     const status = controller?.status()
     const file = status?.logFile ?? diagnostics?.filePath ?? ''
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null)
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel} debug=${settings.debugLogging}`
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} sidecarMailbox=${status?.sidecarMailbox} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel} debug=${settings.debugLogging}`
     diagnostics?.line('info', 'status', {
       enabled: status?.enabled,
       connected: status?.connected,
       sink: status?.sink,
+      sidecarMailbox: status?.sidecarMailbox,
       bridge: status?.bridgeEnabled,
       detail: status?.detailLevel,
       debug: settings.debugLogging,
@@ -433,7 +479,7 @@ export default async function activate(orca: OrcaHost) {
       title: 'Discord Rich Presence',
       body: `${summary} ${transmitting}`
     })
-    publishPanelSnapshot('immediate')
+    await publishPanelSnapshot('immediate')
     return status
   })
 
@@ -443,17 +489,18 @@ export default async function activate(orca: OrcaHost) {
     await controller?.reload()
     const status = controller?.status()
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null)
-    const summary = `reloaded connected=${status?.connected} sink=${status?.sink} ${transmitting}`
+    const summary = `reloaded connected=${status?.connected} sink=${status?.sink} sidecarMailbox=${status?.sidecarMailbox} ${transmitting}`
     diagnostics?.line('info', 'discord.reload_done', {
       connected: status?.connected,
       sink: status?.sink,
+      sidecarMailbox: status?.sidecarMailbox,
       transmitting: JSON.stringify(status?.lastActivity)
     })
     await orca.host.call('notifications.show', {
       title: 'Discord Rich Presence',
       body: summary
     })
-    publishPanelSnapshot('immediate')
+    await publishPanelSnapshot('immediate')
     return status
   })
 
@@ -461,17 +508,18 @@ export default async function activate(orca: OrcaHost) {
     diagnostics?.line('info', 'discord.clear_command')
     await controller?.clear()
     const status = controller?.status()
-    const summary = `cleared enabled=${status?.enabled} heldClear=${status?.heldClear} sink=${status?.sink}`
+    const summary = `cleared enabled=${status?.enabled} heldClear=${status?.heldClear} sink=${status?.sink} sidecarMailbox=${status?.sidecarMailbox}`
     diagnostics?.line('info', 'discord.clear_done', {
       enabled: status?.enabled,
       heldClear: status?.heldClear,
-      sink: status?.sink
+      sink: status?.sink,
+      sidecarMailbox: status?.sidecarMailbox
     })
     await orca.host.call('notifications.show', {
       title: 'Discord Rich Presence',
       body: `${summary} Presence is cleared until the next agent event, Show Status, Reload RPC, or a settings change. enabled stays on.`
     })
-    publishPanelSnapshot('immediate')
+    await publishPanelSnapshot('immediate')
     return status
   })
 
@@ -488,8 +536,8 @@ export default async function activate(orca: OrcaHost) {
     if (result.changed.length === 0) {
       const view = publicConfigureView(settings)
       const hint =
-        'Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.'
-      const body = `applicationId=${view.shippedApplicationId ? 'shipped' : view.applicationId} openUrl=${view.openUrl || '(empty)'} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} label=${view.openButtonLabel}`
+        'Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount, showFocusedSurface, focusedSurfaceDetail, showAgentType, showAgentModel, showAgentProfile }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.'
+      const body = `applicationId=${view.shippedApplicationId ? 'shipped' : view.applicationId} openUrl=${view.openUrl || '(empty)'} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} focus=${view.showFocusedSurface} label=${view.openButtonLabel}`
       await orca.host.call('notifications.show', {
         title: 'Discord Rich Presence',
         body: `${body} ${hint}`
@@ -521,18 +569,79 @@ export default async function activate(orca: OrcaHost) {
     }
     await refresh()
   })
+  orca.events.on('ui.focus.changed', async (payload) => {
+    const parsed = parseUiFocusChanged(payload)
+    if (!parsed) {
+      return
+    }
+    lastFocus = parsed
+    hostCaps.focus = true
+    await refresh()
+  })
 
   heartbeat = setInterval(() => {
     void refresh(undefined, { force: true })
   }, HEARTBEAT_MS)
   heartbeat.unref?.()
 
+  settingsPoll = setInterval(() => {
+    void (async () => {
+      const next = await readHostSettings()
+      if (!next || JSON.stringify(next) === JSON.stringify(settings)) {
+        return
+      }
+      await persist(next)
+      await refresh()
+    })()
+  }, SETTINGS_POLL_MS)
+  settingsPoll.unref?.()
+
   // Why: fire-and-forget. `activate` must resolve inside
   // PLUGIN_WORKER_READY_TIMEOUT_MS (10s) or the host SIGKILLs the worker, and
   // the first refresh chains into a socket scan plus a 5s handshake timeout.
-  void refresh().then(() => {
-    publishPanelSnapshot('immediate')
-  })
+  void refresh().then(() => publishPanelSnapshot('immediate'))
+}
+
+function focusSnapshotFields(
+  context: ReturnType<typeof parseWorkspaceContext>,
+  lastFocus: ParsedUiFocusChanged | null
+): {
+  focusedSurfaceKind?: string
+  focusedSurfaceTitle?: string | null
+  focusedSurfaceAtMs?: number
+} {
+  if (context?.focusedSurfacePresent) {
+    if (context.focusedSurface === null) {
+      return {
+        focusedSurfaceKind: undefined,
+        focusedSurfaceTitle: undefined,
+        focusedSurfaceAtMs: undefined
+      }
+    }
+    if (context.focusedSurface) {
+      return {
+        focusedSurfaceKind: context.focusedSurface.kind,
+        focusedSurfaceTitle: context.focusedSurface.title,
+        focusedSurfaceAtMs: Date.now()
+      }
+    }
+    return {}
+  }
+  if (!lastFocus) {
+    return {}
+  }
+  if (lastFocus.focusedSurface === null) {
+    return {
+      focusedSurfaceKind: undefined,
+      focusedSurfaceTitle: undefined,
+      focusedSurfaceAtMs: undefined
+    }
+  }
+  return {
+    focusedSurfaceKind: lastFocus.focusedSurface.kind,
+    focusedSurfaceTitle: lastFocus.focusedSurface.title,
+    focusedSurfaceAtMs: lastFocus.receivedAt
+  }
 }
 
 /**
@@ -548,6 +657,10 @@ export async function deactivate() {
   if (heartbeat) {
     clearInterval(heartbeat)
     heartbeat = null
+  }
+  if (settingsPoll) {
+    clearInterval(settingsPoll)
+    settingsPoll = null
   }
   if (panelWriteTimer) {
     clearTimeout(panelWriteTimer)

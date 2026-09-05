@@ -3,8 +3,8 @@
   "id": "discord-presence",
   "publisher": "chron0",
   "name": "Discord Rich Presence",
-  "version": "0.5.0",
-  "description": "Shows your current Orca workspace, branch, and agent state as Discord Rich Presence. Every field is opt-in.",
+  "version": "0.6.0",
+  "description": "Shows your current Orca workspace, branch, agent, and optional focused surface as Discord Rich Presence. Every identifying field is opt-in.",
   "engines": { "orca": ">=1.4.0" },
   "pluginApi": 1,
   "main": "dist/main.js",
@@ -37,7 +37,8 @@
     "events": [
       { "on": "agent.status.changed" },
       { "on": "worktree.created" },
-      { "on": "worktree.removed" }
+      { "on": "worktree.removed" },
+      { "on": "ui.focus.changed" }
     ]
   },
   "capabilities": [
@@ -45,6 +46,8 @@
     { "kind": "events:subscribe" },
     { "kind": "storage" },
     { "kind": "settings:own" },
-    { "kind": "notifications:show" }
+    { "kind": "notifications:show" },
+    { "kind": "ui:focus" },
+    { "kind": "sidecar" }
   ]
 }

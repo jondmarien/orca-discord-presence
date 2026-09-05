@@ -12,8 +12,10 @@
 
 import { isPlausibleApplicationId } from '../discord/app-id'
 import {
+  FOCUSED_SURFACE_DETAILS,
   normalizeOpenButtonLabel,
   normalizeOpenUrl,
+  type FocusedSurfaceDetail,
   SHIPPED_APPLICATION_ID,
   type PresenceSettings
 } from './settings'
@@ -103,16 +105,6 @@ export function applyConfigure(current: PresenceSettings, args: unknown): Presen
     }
   }
 
-  if ('showOpenButton' in source) {
-    if (typeof source.showOpenButton !== 'boolean') {
-      return { ok: false, error: 'showOpenButton must be a boolean' }
-    }
-    if (source.showOpenButton !== current.showOpenButton) {
-      next.showOpenButton = source.showOpenButton
-      changed.push('showOpenButton')
-    }
-  }
-
   if ('openButtonLabel' in source) {
     if (typeof source.openButtonLabel !== 'string') {
       return { ok: false, error: 'openButtonLabel must be a string' }
@@ -124,13 +116,38 @@ export function applyConfigure(current: PresenceSettings, args: unknown): Presen
     }
   }
 
-  if ('showAgentCount' in source) {
-    if (typeof source.showAgentCount !== 'boolean') {
-      return { ok: false, error: 'showAgentCount must be a boolean' }
+  if ('focusedSurfaceDetail' in source) {
+    if (
+      typeof source.focusedSurfaceDetail !== 'string' ||
+      !(FOCUSED_SURFACE_DETAILS as readonly string[]).includes(source.focusedSurfaceDetail)
+    ) {
+      return { ok: false, error: 'focusedSurfaceDetail must be "kind" or "kind+title"' }
     }
-    if (source.showAgentCount !== current.showAgentCount) {
-      next.showAgentCount = source.showAgentCount
-      changed.push('showAgentCount')
+    const focusedSurfaceDetail = source.focusedSurfaceDetail as FocusedSurfaceDetail
+    if (focusedSurfaceDetail !== current.focusedSurfaceDetail) {
+      next.focusedSurfaceDetail = focusedSurfaceDetail
+      changed.push('focusedSurfaceDetail')
+    }
+  }
+
+  const booleanArgs = [
+    'showOpenButton',
+    'showAgentCount',
+    'showFocusedSurface',
+    'showAgentType',
+    'showAgentModel',
+    'showAgentProfile'
+  ] as const
+  for (const field of booleanArgs) {
+    if (!(field in source)) {
+      continue
+    }
+    if (typeof source[field] !== 'boolean') {
+      return { ok: false, error: `${field} must be a boolean` }
+    }
+    if (source[field] !== current[field]) {
+      next[field] = source[field]
+      changed.push(field)
     }
   }
 

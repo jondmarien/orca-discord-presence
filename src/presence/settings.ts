@@ -33,6 +33,16 @@ export const DETAIL_LEVELS = ['off', 'generic', 'workspace', 'full'] as const
 export type DetailLevel = (typeof DETAIL_LEVELS)[number]
 
 /**
+ * How much of a focused surface to render when the toggle is on.
+ */
+export const FOCUSED_SURFACE_DETAILS = ['kind', 'kind+title'] as const
+
+/**
+ * One of {@link FOCUSED_SURFACE_DETAILS}.
+ */
+export type FocusedSurfaceDetail = (typeof FOCUSED_SURFACE_DETAILS)[number]
+
+/**
  * Persisted plugin settings. Every identifying field is opt-in except the
  * non-identifying defaults (`enabled`, `generic` detail, agent state, elapsed).
  */
@@ -98,6 +108,22 @@ export type PresenceSettings = {
    * multi-agent table.
    */
   showAgentCount: boolean
+  /**
+   * Opt-in focused-surface label (#7 / Orca-4). Default **off**.
+   * Never transmitted at `generic`.
+   */
+  showFocusedSurface: boolean
+  /**
+   * How much focus to show when {@link showFocusedSurface} is on.
+   * `kind+title` is only applied at `full`.
+   */
+  focusedSurfaceDetail: FocusedSurfaceDetail
+  /** Agent type label from Orca-3. Default off; `full` only. */
+  showAgentType: boolean
+  /** Agent model label from Orca-3. Default off; `full` only. */
+  showAgentModel: boolean
+  /** Orca agent profile label from Orca-3. Default off; `full` only. */
+  showAgentProfile: boolean
 }
 
 /**
@@ -155,7 +181,12 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   openUrl: '',
   showOpenButton: false,
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
-  showAgentCount: false
+  showAgentCount: false,
+  showFocusedSurface: false,
+  focusedSurfaceDetail: 'kind',
+  showAgentType: false,
+  showAgentModel: false,
+  showAgentProfile: false
 })
 
 const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(
@@ -164,6 +195,10 @@ const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings
 
 function isDetailLevel(value: unknown): value is DetailLevel {
   return typeof value === 'string' && (DETAIL_LEVELS as readonly string[]).includes(value)
+}
+
+function isFocusedSurfaceDetail(value: unknown): value is FocusedSurfaceDetail {
+  return typeof value === 'string' && (FOCUSED_SURFACE_DETAILS as readonly string[]).includes(value)
 }
 
 /**
@@ -244,6 +279,9 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
   }
   if (isDetailLevel(source.detailLevel)) {
     settings.detailLevel = source.detailLevel
+  }
+  if (isFocusedSurfaceDetail(source.focusedSurfaceDetail)) {
+    settings.focusedSurfaceDetail = source.focusedSurfaceDetail
   }
   // Why: absent or malformed overrides fall back to the shipped id — never to
   // null, which would leave the plugin permanently unable to connect.

@@ -77,3 +77,23 @@ test('wrong types fail fast', () => {
   expect(applyConfigure(DEFAULT_SETTINGS, { showOpenButton: 'yes' }).ok).toBe(false)
   expect(applyConfigure(DEFAULT_SETTINGS, 'nope').ok).toBe(false)
 })
+
+test('fork field args apply and reject junk', () => {
+  const result = applyConfigure(DEFAULT_SETTINGS, {
+    showFocusedSurface: true,
+    focusedSurfaceDetail: 'kind+title',
+    showAgentType: true,
+    showAgentModel: true,
+    showAgentProfile: true
+  })
+  expect(result.ok).toBe(true)
+  if (result.ok) {
+    expect(result.settings.showFocusedSurface).toBe(true)
+    expect(result.settings.focusedSurfaceDetail).toBe('kind+title')
+    expect(result.settings.showAgentType).toBe(true)
+    expect(result.settings.showAgentModel).toBe(true)
+    expect(result.settings.showAgentProfile).toBe(true)
+  }
+  expect(applyConfigure(DEFAULT_SETTINGS, { focusedSurfaceDetail: 'everything' }).ok).toBe(false)
+  expect(applyConfigure(DEFAULT_SETTINGS, { showAgentType: 'yes' }).ok).toBe(false)
+})

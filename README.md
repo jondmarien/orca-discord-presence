@@ -6,7 +6,7 @@
 
 **Workspace, branch, and agent state on your Discord profile — every identifying field is opt-in.**
 
-[![Version](https://img.shields.io/badge/v0.5.0-blue.svg)](orca-plugin.json)
+[![Version](https://img.shields.io/badge/v0.6.0-blue.svg)](orca-plugin.json)
 [![Latest release](https://img.shields.io/github/v/release/jondmarien/orca-discord-presence?label=latest%20release)](https://github.com/jondmarien/orca-discord-presence/releases/latest)
 [![Orca plugin](https://img.shields.io/badge/Orca-chron0.discord--presence-5c6bc0)](orca-plugin.json)
 [![Bun](https://img.shields.io/badge/Bun-1.4+-000000?logo=bun&logoColor=white)](https://bun.sh)
@@ -32,10 +32,10 @@ A trusted Orca plugin worker (`dist/main.js`) that publishes privacy-gated Rich 
 |---|---|
 | Qualified id | `chron0.discord-presence` |
 | What Discord shows (default) | Game `Orca` · `Working in Orca` · agent label · elapsed timer · `orca` / `state-*` art |
-| What it reads | `agent.status.changed`, `workspace.readContext` (name, branch, terminal **count**), worktree events, 90 s heartbeat |
-| What it does **not** read | Focused window / tab / file — see [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) |
-| Discord path | Local IPC first; opt-in HTTP companion if Discord is on another machine ([#6](https://github.com/jondmarien/orca-discord-presence/pull/6)) |
-| Settings UI | Command palette for every toggle. v0.4 adds a **Discord Presence** sidebar (read-only checkboxes, live workspace, snapshot logs). Writable settings still need host APIs — [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
+| What it reads | `agent.status.changed`, `workspace.readContext` (name, branch, terminal **count**, optional execution host / agent / focus), worktree events, optional `ui.focus.changed`, 90 s heartbeat |
+| What it does **not** read | File paths or editor cursors. Focus titles are host-truncated and off until you opt in. |
+| Discord path | Local IPC first; fork sidecar mailbox when local IPC fails; opt-in HTTP companion if Discord is on another machine ([#6](https://github.com/jondmarien/orca-discord-presence/pull/6)) |
+| Settings UI | Command palette for every toggle. On [`jondmarien/orca`](https://github.com/jondmarien/orca) the sidebar can persist toggles (`settings.set`) and poll live logs (`storage.get`). Stock `stablyai/orca` rejects this 0.6.0 manifest (`ui:focus` / `sidecar`); use v0.5.0 there. |
 
 ---
 
@@ -59,9 +59,9 @@ Files: [`assets/orca.png`](assets/orca.png) · [`assets/state-working.png`](asse
 
 ## How it works
 
-Presence is a **privacy-gated snapshot** of your workspace and agent status — not the Orca tab or file you have focused.
+Presence is a **privacy-gated snapshot** of your workspace and agent status. Focused-surface copy is opt-in and off by default.
 
-1. **What drives it.** The plugin reads `agent.status.changed` (`worktreeId`, `paneKey`, `state`, `receivedAt`), `workspace.readContext` (display name, branch, terminal **count**), worktree created/removed, and a 90 s heartbeat. Multiple panes/worktrees are aggregated in memory. It does **not** know which window, tab, or file is focused ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). Orca does not expose those events today.
+1. **What drives it.** The plugin reads `agent.status.changed` (`worktreeId`, `paneKey`, `state`, `receivedAt`, optional `agent` labels), `workspace.readContext` (display name, branch, terminal **count**, optional `executionHost` / `agent` / `focusedSurface`), worktree created/removed, `ui.focus.changed` on the fork, and a 90 s heartbeat. Multiple panes/worktrees are aggregated in memory. Unknown focus kinds are dropped. File-level presence is still out of scope.
 2. **Privacy default.** At `generic`, Discord only gets non-identifying copy such as `Working in Orca`, plus optional agent state and an elapsed timer. Repo, branch, and machine names stay off until you raise the detail level. [`src/presence/activity.ts`](src/presence/activity.ts) is the only module that chooses identifying strings. Discord, the HTTP bridge, and the companion transmit that result (or clear). Full gate table: [docs/privacy.md](docs/privacy.md).
 3. **Where Discord must run.** Presence needs the **desktop** client (Discord, Vesktop + arRPC, or Vencord-with-RPC) — not the browser. That client must be signed in on the Orca **host/runtime**, or on a [companion](#dual-host-companion) machine if you enable the bridge. The plugin tries **local IPC first** (Unix sockets or Windows pipes, including Vesktop Flatpak nests). Handshake retries 3 times with 3 s → 15 s backoff; a missing socket fails immediately so the companion can take over. The plugin does **not** dual-publish. Wire format and debounce: [docs/architecture.md](docs/architecture.md).
 4. **Stay current.** Writes are debounced to Discord’s `SET_ACTIVITY` limit (at most one per 15 s). The heartbeat and **Show Status** re-send even when the payload is unchanged. **Reload RPC** closes, reconnects, and publishes again. Stop / deactivate send `SET_ACTIVITY` null first (no ghost “Playing Orca”).
@@ -74,18 +74,18 @@ What the plugin cannot do today, and what to do instead. Skim this with [How it 
 
 | Limit | What to do instead | Track |
 |---|---|---|
-| **Focused window / tab** — presence is not “what you are looking at” | Presence stays workspace + agent status. Refresh with the 90 s heartbeat or **Show Status** | [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) |
-| **File-level presence** — Orca does not expose the active file | Nothing to enable; no path is sent | [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
-| **Settings panel** — Orca panels cannot call `settings.set` | Use the [command palette](#commands) for every toggle | [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
-| **Writable settings / live log tail in the sidebar** — Orca panels cannot call `settings.set` or read the log file | Open the [Discord Presence sidebar](#diagnostics) for live workspace + a snapshot. Change settings from the [command palette](#commands). Marketplace copies may show empty logs | [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
-| **Native remote / host-mediated presence** | Run the [companion](#dual-host-companion) on the machine that has Discord | companion [#6](https://github.com/jondmarien/orca-discord-presence/pull/6) · native [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
+| **Focused window / tab on stock Orca** — `stablyai/orca` rejects `ui:focus` | Load v0.5.0 on stock, or smoke-test 0.6.0 against [`jondmarien/orca`](https://github.com/jondmarien/orca) `pnpm dev` | [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) |
+| **File-level presence** — Orca does not expose the active file | Nothing to enable; no path is sent. Focus titles are host-truncated | [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
+| **Settings panel on stock Orca** — panels cannot call `settings.set` | Use the [command palette](#commands). On the fork, sidebar toggles persist | [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
+| **Writable settings / live log tail on stock Orca** | Fork: panel `settings.*` + `storage.get` (`diagnostics.snapshot`). Stock: snapshot rewrite on a writable install + palette | [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
+| **Native Discord IPC from a paired UI client** — sidecar mailbox stores a frame; the UI executor may still be `not-implemented` | Run the [companion](#dual-host-companion) on the machine that has Discord. Sidecar + companion is not dual Discord today | companion [#6](https://github.com/jondmarien/orca-discord-presence/pull/6) · sidecar [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
 | **Browser Discord** — no IPC socket | Open Discord **desktop** (or Vesktop / Vencord-with-RPC) and stay signed in | — |
 | **Two plugin installs as a bridge** — installing on two machines does not share agent events | Companion on the Discord machine; this plugin on the Orca host | [#6](https://github.com/jondmarien/orca-discord-presence/pull/6) |
 | **Machine name = SSH remote host** — `os.hostname()` is the Orca **client** | Leave **Toggle Machine Name** off unless that hostname is what you want | — |
 | **Presence at bare launch** | Run **Show Status**, or wait for the first agent/worktree event or 90 s heartbeat | — |
 | **Instant branch updates** — branch switches emit no host event | Wait ≤90 s for the heartbeat, or run **Show Status** / **Reload RPC** | — |
 
-Agent-table retention lives in [`src/presence/expiry.ts`](src/presence/expiry.ts) (`AGENT_RETENTION_MS`): non-done slots drop after ~30 minutes without an update; `done` slots drop after ~60 seconds. The older 30s/60s `ACTIVITY_EXPIRY_MS` helpers stay for a future focus/tool path ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)) and are not a second window system.
+Agent-table retention lives in [`src/presence/expiry.ts`](src/presence/expiry.ts) (`AGENT_RETENTION_MS`): non-done slots drop after ~30 minutes without an update; `done` slots drop after ~60 seconds. Focused-surface samples use `ACTIVITY_EXPIRY_MS.long` (60 s) so a stale “Terminal” does not stick.
 
 ---
 
@@ -101,6 +101,7 @@ Agent-table retention lives in [`src/presence/expiry.ts`](src/presence/expiry.ts
 
 ### Advanced
 
+- Fork Orca-1…5: writable sidebar settings, live `diagnostics.snapshot` logs, execution-host machine label, opt-in agent type/model/profile, opt-in focused surface, sidecar mailbox when local IPC fails.
 - OS-agnostic companion bridge for dual-host setups ([#6](https://github.com/jondmarien/orca-discord-presence/pull/6)) — Tailscale, LAN, or SSH tunnel; token required off-loopback.
 - Vesktop Flatpak + arRPC socket discovery (`$XDG_RUNTIME_DIR/.flatpak/dev.vencord.Vesktop/xdg-run/…`); reconstructs `/run/user/<uid>/` when the worker env drops `XDG_RUNTIME_DIR`.
 - Handshake retry / backoff, fail-fast Application ID check, clear-before-close.
@@ -114,7 +115,7 @@ Agent-table retention lives in [`src/presence/expiry.ts`](src/presence/expiry.ts
 - **Reload RPC** — close IPC, reconnect, publish again (slow READY, competing RPC client, Discord restart).
 - **Cycle Detail Level** — `off` → `generic` → `workspace` → `full`.
 - Structured `orca.log` plus a capped on-disk log under XDG state / `%LOCALAPPDATA%`.
-- **Discord Presence** sidebar — live workspace, Show Status toast, read-only field toggles, collapsible Extension Logs on a writable install. Enable / Cycle Detail / Reload RPC stay on the command palette.
+- **Discord Presence** sidebar — live workspace (including fork execution host / agent / focus), Show Status toast, writable toggles when `settings.set` is panel-callable, live logs via `diagnostics.snapshot`. Palette commands stay for stock hosts.
 
 ---
 
@@ -136,7 +137,7 @@ Direct download (filename is stable; contents change with each release):
 
 Unzip it. You need the folder that contains `orca-plugin.json` (and `dist/main.js`). Orca does **not** install from the `.zip` file itself.
 
-Each `main` push publishes a new release. The product version inside `orca-plugin.json` is `0.5.0`; GitHub tags look like `v0.5.0-<sha>` so every build is unique. Put `[skip release]` in a commit message to skip a release.
+Each `main` push publishes a new release. **Testing for 0.6.0 is the `develop` branch** — `main` stays on the current release line until Jon promotes. The product version inside `orca-plugin.json` is `0.6.0`; GitHub tags look like `v0.6.0-<sha>` so every build is unique. Put `[skip release]` in a commit message to skip a release.
 
 ### 3. Load the folder in Orca
 
@@ -153,13 +154,19 @@ The plugin asks only for:
 
 | Capability | Used for |
 |---|---|
-| `workspace:read` | Workspace name, branch, terminal count |
-| `events:subscribe` | Agent status + worktree created/removed |
-| `storage` | Host storage (declared; settings use `settings:own`) |
-| `settings:own` | Persist toggles |
+| `workspace:read` | Workspace name, branch, terminal count, optional execution host |
+| `events:subscribe` | Agent status, worktree created/removed, `ui.focus.changed` |
+| `storage` | Worker writes `diagnostics.snapshot`; panel polls live logs |
+| `settings:own` | Persist toggles (worker + fork panel) |
 | `notifications:show` | **Show Status** toast (command palette and sidebar) |
+| `ui:focus` | Focused UI surface (kind + truncated title). Off unless you enable it |
+| `sidecar` | Publish a presence frame so a paired UI client can apply it on the Discord machine |
 
 No `secrets`. No terminal write. After you approve, confirm **Discord Rich Presence** (`chron0.discord-presence`) is enabled in **Settings → Plugins**.
+
+`engines.orca` stays `>=1.4.0` (methods are probed; the fork may still report 1.4.x). Stock `stablyai/orca` will **reject this 0.6.0 manifest** because `ui:focus`, `sidecar`, and `ui.focus.changed` are not in its closed sets. v0.5.0 remains the stock-loadable line.
+
+**Smoke-test (fork):** check out [`jondmarien/orca`](https://github.com/jondmarien/orca) `main`, `pnpm dev`, and add this plugin’s **`develop`** checkout to **Settings → Plugins → Development → Add path**. Do not expect stock `stablyai/orca` to load 0.6.0.
 
 ### 5. Confirm it is alive
 
@@ -181,7 +188,7 @@ Then load the **repository root** (the folder that contains `orca-plugin.json`) 
 
 - **Settings → Plugins → Install plugin → Local folder** — same as the zip, pointed at your checkout.
 - **Settings → Plugins → Development → Add path** — live `devPluginPaths` checkout (still requires consent).
-- **Settings → Plugins → Install plugin → Git URL** — pin a tag or commit: `https://github.com/jondmarien/orca-discord-presence.git#<tag>`. Copy the exact tag from [the latest release](https://github.com/jondmarien/orca-discord-presence/releases/latest) (after CI: `v0.5.0-<sha>`).
+- **Settings → Plugins → Install plugin → Git URL** — pin a tag or commit: `https://github.com/jondmarien/orca-discord-presence.git#<tag>`. Copy the exact tag from [the latest release](https://github.com/jondmarien/orca-discord-presence/releases/latest) (after CI: `v0.6.0-<sha>`). For fork smoke-tests, point `devPluginPaths` at a `develop` checkout.
 
 Commit `dist/main.js` when TypeScript sources change so a checkout or marketplace clone works without a local build.
 
@@ -189,7 +196,7 @@ Commit `dist/main.js` when TypeScript sources change so a checkout or marketplac
 
 ## Configuration
 
-v0.5 still uses the command palette for writes — Orca panels cannot call `settings.set` yet. `bridgeUrl` / `bridgeToken` persist via `settings:own` or env overlays. Application ID and `openUrl` go through **Discord Presence: Configure** (`invokeCommand` args).
+On the fork, the sidebar persists toggles via `settings.set`. The panel never writes `applicationId`, `bridgeToken`, `bridgeUrl`, `openUrl`, or `machineLabel`. Stock Orca stays palette-only. `bridgeUrl` / `bridgeToken` persist via `settings:own` or env overlays. Application ID and `openUrl` go through **Discord Presence: Configure** (`invokeCommand` args).
 
 ### Defaults
 
@@ -205,6 +212,9 @@ v0.5 still uses the command palette for writes — Orca panels cannot call `sett
 | `openUrl` / `showOpenButton` | `""` / `false` | Opt-in Discord button. HTTPS only; never put secrets in the URL. |
 | `openButtonLabel` | `Open Orca` | Button label (1–32 chars). |
 | `showAgentCount` | `false` | Prefix `N agent(s)` when more than one pane/worktree is live. |
+| `showFocusedSurface` | `false` | Opt-in focused-surface label. Never at `generic`. |
+| `focusedSurfaceDetail` | `kind` | `kind+title` only at `full`. |
+| `showAgentType` / `showAgentModel` / `showAgentProfile` | `false` | Orca-3 labels; `full` only. |
 
 Workspace, branch, and machine names — **when you enable them** — go to Discord’s servers and appear on your profile. See [docs/privacy.md](docs/privacy.md).
 
@@ -343,23 +353,21 @@ v0.4 contributes one experimental panel:
 
 **Open it:** enable the plugin, then open Orca’s **right sidebar** and click the Discord Presence (settings / gear) activity-bar icon.
 
-The iframe is sandboxed. Host CSP is `default-src 'none'; connect-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:` (plus host extras). The panel cannot `fetch`, read files, or call `settings.*` / `storage.*` / `secrets.*` / `events.subscribe` / command invoke.
+The iframe is sandboxed. Host CSP is `default-src 'none'; connect-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:` (plus host extras). The panel cannot `fetch`, read files, call `secrets.*`, subscribe to events, or invoke commands. On the fork it **can** call `settings.get` / `settings.set` and `storage.get`.
 
 | Surface | How |
 |---|---|
-| Live workspace | `workspace.readContext` via `postMessage` `{ type: 'orca-panel-action' }` — display name, branch, terminal count |
+| Live workspace | `workspace.readContext` via `postMessage` `{ type: 'orca-panel-action' }` — display name, branch, terminal count, optional execution host / agent / focus |
 | Show Status toast | `notifications.show` with compact `enabled` / `connected` / `sink` / `detail` from the embedded snapshot |
-| Refresh | Re-reads workspace context and re-renders `window.__PRESENCE_PANEL__` if the worker embedded a snapshot |
-| Read-only toggles | Checkboxes reflect the last snapshot. They do **not** persist — host B4 / [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
-| Collapsible logs | Ring-buffer lines the worker embeds when it can rewrite `panel/index.html` |
-| Reload RPC / Cycle Detail / Enable | Command palette only. The panel **Reload RPC (palette)** button is a reminder toast, not a reconnect |
+| Refresh | Re-reads workspace + `settings.get` + `storage.get` when those methods work |
+| Field toggles | Writable on the fork via `settings.set`. Stock Orca: read-only + command palette |
+| Collapsible logs | Poll `diagnostics.snapshot` (~2s) on the fork; otherwise the worker rewrite on a writable install |
+| Reload RPC / Cycle Detail | Command palette. The panel **Reload RPC (palette)** button is a reminder toast, not a reconnect |
 
-1. `panel/index.html` is a **static shell**. Marketplace / immutable installs still show live workspace + empty logs + the conventional log path and “run Show Status” copy. Badge / About version comes from `PLUGIN_VERSION` (`#plugin-version` JSON + stamped text), not a hand-edited fallback. A bump that forgets the panel fails `bun test`.
-2. On a **writable** install (`devPluginPaths`), the worker keeps an in-memory log ring and, on activate / Show Status / Reload RPC / heartbeat (debounced), rewrites a `#presence-snapshot` JSON blob (`window.__PRESENCE_PANEL__`). Reopen the tab to load a newer rewrite.
+1. `panel/index.html` is a **static shell**. Marketplace / immutable installs still show live workspace + the conventional log path. Badge / About version comes from `PLUGIN_VERSION` (`#plugin-version` JSON + stamped text). A bump that forgets the panel fails `bun test`.
+2. The worker writes the same redacted snapshot to `storage.set` (`diagnostics.snapshot`, ~60 KiB cap) and, on a writable install, rewrites `#presence-snapshot`.
 3. Override path: `ORCA_PRESENCE_PANEL_HTML`. Skip writes: `ORCA_PRESENCE_SKIP_PANEL_WRITE=1`.
-4. The Discord Application ID and bridge token are **never** written into the panel. Log lines are redacted (`token=***`).
-
-A real settings + live log panel still needs host work tracked on [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) (PLAN.md Task B4).
+4. The Discord Application ID, bridge token, bridge URL, `openUrl`, and `machineLabel` are **never** written from the panel. Log lines are redacted (`token=***`).
 
 ### Log file
 
@@ -371,7 +379,7 @@ A real settings + live log panel still needs host work tracked on [#10](https://
 | `info` / `debug` | When `debugLogging` is on (default **on**) |
 
 ```
-[chron0.discord-presence] info activate version=0.5.0 debug=true file=/home/you/.local/state/chron0-discord-presence/plugin.log
+[chron0.discord-presence] info activate version=0.6.0 debug=true file=/home/you/.local/state/chron0-discord-presence/plugin.log
 [chron0.discord-presence] error discord.connect_failed reason="no discord ipc socket accepted a connection"
 [chron0.discord-presence] info discord.set_activity sink=local details="Working in Orca"
 ```
@@ -409,7 +417,7 @@ bun run build
 
 Commit `dist/main.js` when TypeScript sources change so a checkout or marketplace clone works without a local build. Zero production dependencies. File-level JSDoc only (`@module`, `@author Jonathan Marien`, `@date`).
 
-Each push to `main` (unless the commit message contains `[skip release]`) runs `bun test` + `bun run build` and publishes `chron0.discord-presence.zip` on [GitHub Releases](https://github.com/jondmarien/orca-discord-presence/releases/latest). Tags are `v{product-version}-{sha7}`; `orca-plugin.json` / `package.json` stay at the product version (`0.5.0` after this release). The zip includes `panel/` when that folder is present.
+Each push to `main` (unless the commit message contains `[skip release]`) runs `bun test` + `bun run build` and publishes `chron0.discord-presence.zip` on [GitHub Releases](https://github.com/jondmarien/orca-discord-presence/releases/latest). Tags are `v{product-version}-{sha7}`; `orca-plugin.json` / `package.json` stay at the product version (`0.6.0` on `develop` until Jon promotes). The zip includes `panel/` when that folder is present.
 
 Module map, opcodes, and debounce: [docs/architecture.md](docs/architecture.md).
 
@@ -433,7 +441,7 @@ Module map, opcodes, and debounce: [docs/architecture.md](docs/architecture.md).
 | Vesktop Flatpak + arRPC, no presence | Socket inside the sandbox | Enable **Rich Presence via arRPC**. Plugin also probes `.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-*` |
 | Agents on host, Discord on another OS | Local IPC cannot cross machines | [Dual-host companion](#dual-host-companion) |
 | Cannot find logs | `orca.log` is easy to miss | Open the **Discord Presence** sidebar (Extension Logs) or **Show Status**; then `~/.local/state/chron0-discord-presence/plugin.log` or `%LOCALAPPDATA%\…`. Marketplace copies may show an empty log view until the worker can rewrite the panel |
-| Panel toggles do nothing | `settings.set` is not panel-callable | Expected. Use the command palette. Host gap: [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) / PLAN.md B4 |
+| Panel toggles do nothing | Stock Orca, or `settings.set` probe failed | Expected on stock. Use the command palette. Fork: `jondmarien/orca` `pnpm dev` |
 | Wrong / missing art | Assets not propagated, or wrong Application ID | Confirm keys `orca`, `state-working`, `state-blocked`, `state-waiting`, `state-idle` |
 | `activate` killed at startup | Handshake blocked the ready timeout | First refresh is fire-and-forget |
 
@@ -463,8 +471,8 @@ Limits and workarounds (focus, settings panel, companion, browser Discord, stale
 | [companion/README.md](companion/README.md) | Companion start / HTTP surface |
 | [ROADMAP.md](ROADMAP.md) | Limits and follow-up work |
 | [#6](https://github.com/jondmarien/orca-discord-presence/pull/6) | Companion MVP (merged) |
-| [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) | Focused window / tab (blocked on host APIs) |
-| [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) | Host capabilities Orca does not expose yet |
+| [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) | Focused window / tab (consumed on the fork as of 0.6.0) |
+| [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) | Fork Orca-1…5 consumed in 0.6.0; stock Orca still closed |
 | [#15](https://github.com/jondmarien/orca-discord-presence/issues/15) | Clear, presence button, configure, multi-agent (v0.5) |
 | [PR #11](https://github.com/jondmarien/orca-discord-presence/pull/11) | Diagnostics panel (v0.4) |
 | [Issues](https://github.com/jondmarien/orca-discord-presence/issues) | Tracker |

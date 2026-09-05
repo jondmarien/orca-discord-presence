@@ -37,6 +37,7 @@ function statusWith(overrides: Partial<PresenceStatus> = {}): PresenceStatus {
     detailLevel: 'generic',
     lastActivity: { details: 'Working in Orca', assets: { large_image: 'orca', large_text: 'Orca', small_image: 'state-idle', small_text: 'idle' } },
     logFile: '/tmp/plugin.log',
+    sidecarMailbox: false,
     heldClear: false,
     ...overrides
   }
@@ -95,7 +96,26 @@ test('buildPresencePanelSnapshot omits secrets and summarizes activity', () => {
   expect(JSON.stringify(snapshot).includes('openUrl')).toBe(false)
   expect(snapshot.fields.showOpenButton).toBe(false)
   expect(snapshot.fields.showAgentCount).toBe(false)
+  expect(snapshot.fields.showFocusedSurface).toBe(false)
+  expect(snapshot.fields.focusedSurfaceDetail).toBe('kind')
+  expect(snapshot.fields.showAgentType).toBe(false)
+  expect(snapshot.status.sidecarMailbox).toBe(false)
+  expect(snapshot.host).toEqual({ sidecar: false, focus: false, executionHost: false })
   expect(formatPanelStatusToast(snapshot)).toBe('enabled=true connected=true sink=local detail=generic')
+})
+
+test('buildPresencePanelSnapshot records host probe flags', () => {
+  const snapshot = buildPresencePanelSnapshot({
+    version: PLUGIN_VERSION,
+    status: statusWith({ sidecarMailbox: true }),
+    settings: { ...DEFAULT_SETTINGS, showFocusedSurface: true, focusedSurfaceDetail: 'kind+title' },
+    logs: [],
+    host: { sidecar: true, focus: true, executionHost: true }
+  })
+  expect(snapshot.host).toEqual({ sidecar: true, focus: true, executionHost: true })
+  expect(snapshot.status.sidecarMailbox).toBe(true)
+  expect(snapshot.fields.showFocusedSurface).toBe(true)
+  expect(snapshot.fields.focusedSurfaceDetail).toBe('kind+title')
 })
 
 test('summarizePanelActivity and conventional log hint', () => {
@@ -157,8 +177,10 @@ test('shipped panel HTML is CSP-safe and speaks the official bridge', () => {
   expect(html.includes('workspace.readContext')).toBe(true)
   expect(html.includes('notifications.show')).toBe(true)
   expect(html.includes("call('terminal.sendText'")).toBe(false)
-  expect(html.includes("call('settings.set'")).toBe(false)
-  expect(html.includes("call('storage.")).toBe(false)
+  expect(html.includes("call('settings.set'")).toBe(true)
+  expect(html.includes("call('storage.get'")).toBe(true)
+  expect(html.includes('diagnostics.snapshot')).toBe(true)
+  expect(html.includes('showFocusedSurface')).toBe(true)
   expect(html.includes('fetch(')).toBe(false)
   expect(html.includes(SHIPPED_APPLICATION_ID)).toBe(false)
   expect(html.includes('bridgeToken')).toBe(false)
