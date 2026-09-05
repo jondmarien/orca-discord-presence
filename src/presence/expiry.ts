@@ -24,6 +24,17 @@ export const ACTIVITY_EXPIRY_MS = {
 } as const
 
 /**
+ * In-memory agent-table retention (#15). Non-done rows go stale after
+ * ~30 minutes without an update; `done` rows linger ~60 seconds then drop.
+ */
+export const AGENT_RETENTION_MS = {
+  /** Last `receivedAt` age after which a non-done slot is dropped. */
+  stale: 1_800_000,
+  /** How long a `done` slot remains before it is dropped. */
+  done: 60_000
+} as const
+
+/**
  * One of {@link ACTIVITY_EXPIRY_MS}.
  */
 export type ActivityExpiryMs = (typeof ACTIVITY_EXPIRY_MS)[keyof typeof ACTIVITY_EXPIRY_MS]
