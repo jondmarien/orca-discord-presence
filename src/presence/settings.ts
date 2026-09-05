@@ -12,6 +12,7 @@
  * @date 2026-09-05
  */
 
+import { inspectApplicationId } from '../discord/app-id'
 import { normalizeBridgeToken, normalizeBridgeUrl } from './bridge'
 
 /**
@@ -140,11 +141,6 @@ const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings
   (key): key is BooleanSetting => typeof DEFAULT_SETTINGS[key] === 'boolean'
 )
 
-/**
- * Discord snowflakes are 17–20 digits today; accept that range and nothing else.
- */
-const APPLICATION_ID_RE = /^\d{17,20}$/
-
 function isDetailLevel(value: unknown): value is DetailLevel {
   return typeof value === 'string' && (DETAIL_LEVELS as readonly string[]).includes(value)
 }
@@ -184,17 +180,12 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
   }
   // Why: absent or malformed overrides fall back to the shipped id — never to
   // null, which would leave the plugin permanently unable to connect.
-  // The shipped placeholder is also accepted so persisted defaults round-trip.
-  if (typeof source.applicationId === 'string') {
-    const trimmed = source.applicationId.trim()
-    if (APPLICATION_ID_RE.test(trimmed) || trimmed === SHIPPED_APPLICATION_ID) {
-      settings.applicationId = trimmed
-    } else {
-      settings.applicationId = DEFAULT_SETTINGS.applicationId
-    }
-  } else {
-    settings.applicationId = DEFAULT_SETTINGS.applicationId
-  }
+  // The shipped snowflake is always accepted. Junk ids are rejected here;
+  // activate() logs / optionally toasts when inspectApplicationId used a fallback.
+  settings.applicationId = inspectApplicationId(
+    source.applicationId,
+    SHIPPED_APPLICATION_ID
+  ).applicationId
   settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel
   settings.bridgeUrl = normalizeBridgeUrl(source.bridgeUrl)
   settings.bridgeToken = normalizeBridgeToken(source.bridgeToken)

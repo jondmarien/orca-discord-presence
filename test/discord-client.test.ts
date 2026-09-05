@@ -26,14 +26,26 @@ function cleanupTarget(target: FakeTarget) {
   }
 }
 
-function startFakeDiscord(socketPath: string, { onCommand }: { onCommand: (data: Record<string, unknown>) => void }) {
+function startFakeDiscord(
+  socketPath: string,
+  {
+    onCommand,
+    handshake
+  }: {
+    onCommand: (data: Record<string, unknown>) => void
+    handshake?: (connection: number) => Record<string, unknown>
+  }
+) {
+  let connections = 0
   const server = net.createServer((socket) => {
+    const connection = ++connections
     const decoder = createFrameDecoder((opcode, data) => {
       const payload = data as Record<string, unknown>
       if (opcode === OPCODE.HANDSHAKE) {
-        socket.write(
-          encodeFrame(OPCODE.FRAME, { cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } })
-        )
+        const body = handshake
+          ? handshake(connection)
+          : { cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } }
+        socket.write(encodeFrame(OPCODE.FRAME, body))
         return
       }
       if (opcode === OPCODE.PING) {
@@ -101,6 +113,141 @@ test('clearActivity sends a null activity', async () => {
   const args = commands[0]?.args as { activity: unknown }
   expect(args.activity).toBeNull()
   await client.close()
+  server.close()
+  cleanupTarget(target)
+})
+
+test('close sends SET_ACTIVITY null before tearing down the socket', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  const commands: Record<string, unknown>[] = []
+  const server = await startFakeDiscord(socketPath, {
+    onCommand: (data) => commands.push(data)
+  })
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath]
+  })
+  await client.connect()
+  await client.setActivity({ details: 'orca' })
+  await client.close()
+  expect(commands.length).toBe(2)
+  expect((commands[1]?.args as { activity: unknown }).activity).toBeNull()
+  server.close()
+  cleanupTarget(target)
+})
+
+test('close is idempotent', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  const server = await startFakeDiscord(socketPath, { onCommand: () => {} })
+  let closes = 0
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath],
+    onClose: () => {
+      closes++
+    }
+  })
+  await client.connect()
+  await client.close()
+  await client.close()
+  expect(closes).toBe(1)
+  expect(client.isConnected()).toBe(false)
+  server.close()
+  cleanupTarget(target)
+})
+
+test('READY with null data is retryable and a later READY succeeds', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  const sleeps: number[] = []
+  const server = await startFakeDiscord(socketPath, {
+    onCommand: () => {},
+    handshake: (connection) =>
+      connection === 1
+        ? { cmd: 'DISPATCH', evt: 'READY', data: null }
+        : { cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } }
+  })
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath],
+    sleep: async (ms) => {
+      sleeps.push(ms)
+    }
+  })
+  await client.connect()
+  expect(client.isConnected()).toBe(true)
+  expect(sleeps).toEqual([3_000])
+  await client.close()
+  server.close()
+  cleanupTarget(target)
+})
+
+test('handshake timeout retries then succeeds', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  const sleeps: number[] = []
+  const server = await startFakeDiscord(socketPath, {
+    onCommand: () => {},
+    handshake: (connection) => {
+      if (connection === 1) {
+        return { cmd: 'DISPATCH', evt: 'NOT_READY' }
+      }
+      return { cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } }
+    }
+  })
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath],
+    handshakeTimeoutMs: 40,
+    sleep: async (ms) => {
+      sleeps.push(ms)
+    }
+  })
+  await client.connect()
+  expect(client.isConnected()).toBe(true)
+  expect(sleeps).toEqual([3_000])
+  await client.close()
+  server.close()
+  cleanupTarget(target)
+})
+
+test('an invalid Application ID fails fast without opening a socket', async () => {
+  let candidateCalls = 0
+  const client = createDiscordClient({
+    clientId: 'not-a-snowflake',
+    candidates: () => {
+      candidateCalls++
+      return ['/nonexistent/orca-presence-missing-socket']
+    }
+  })
+  await expect(client.connect()).rejects.toThrow(/application id is invalid/i)
+  expect(candidateCalls).toBe(0)
+})
+
+test('a 404 handshake error is fatal and is not retried', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  let handshakes = 0
+  const server = await startFakeDiscord(socketPath, {
+    onCommand: () => {},
+    handshake: () => {
+      handshakes++
+      return { evt: 'ERROR', data: { message: '404 Not Found' } }
+    }
+  })
+  const sleeps: number[] = []
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath],
+    sleep: async (ms) => {
+      sleeps.push(ms)
+    }
+  })
+  await expect(client.connect()).rejects.toThrow(/404/)
+  expect(handshakes).toBe(1)
+  expect(sleeps).toEqual([])
   server.close()
   cleanupTarget(target)
 })
