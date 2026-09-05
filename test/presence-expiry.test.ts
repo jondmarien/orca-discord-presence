@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { ACTIVITY_EXPIRY_MS, isActivityFresh } from '../src/presence/expiry'
+import { ACTIVITY_EXPIRY_MS, AGENT_RETENTION_MS, isActivityFresh } from '../src/presence/expiry'
 
 test('short and long expiry windows are 30s and 60s', () => {
   expect(ACTIVITY_EXPIRY_MS.short).toBe(30_000)
@@ -12,6 +12,11 @@ test('isActivityFresh is true only inside the window', () => {
   expect(isActivityFresh(lastSeen, lastSeen + 30_000, ACTIVITY_EXPIRY_MS.short)).toBe(false)
   expect(isActivityFresh(lastSeen, lastSeen + 59_999, ACTIVITY_EXPIRY_MS.long)).toBe(true)
   expect(isActivityFresh(lastSeen, lastSeen + 60_000, ACTIVITY_EXPIRY_MS.long)).toBe(false)
+})
+
+test('agent retention is 30 minutes for stale work and 60 seconds for done', () => {
+  expect(AGENT_RETENTION_MS.stale).toBe(1_800_000)
+  expect(AGENT_RETENTION_MS.done).toBe(60_000)
 })
 
 test('invalid clocks and non-positive windows are stale', () => {

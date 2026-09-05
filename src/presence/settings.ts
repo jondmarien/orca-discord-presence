@@ -43,8 +43,8 @@ export type PresenceSettings = {
   detailLevel: DetailLevel
   /**
    * Discord Application ID (snowflake). Defaults to
-   * {@link SHIPPED_APPLICATION_ID}. v0.2 has no user-facing override UI;
-   * a 17–20 digit string is still accepted if persisted.
+   * {@link SHIPPED_APPLICATION_ID}. Override via **Configure**; empty
+   * restores the shipped id. A 17–20 digit string is accepted.
    */
   applicationId: string
   /**
@@ -84,6 +84,20 @@ export type PresenceSettings = {
    * Connect failures are always logged even when this is off.
    */
   debugLogging: boolean
+  /**
+   * Opt-in Discord activity button URL (`https:` only, no userinfo).
+   * Empty means no button is attached.
+   */
+  openUrl: string
+  /** When true and {@link openUrl} is set, attach one Discord button. */
+  showOpenButton: boolean
+  /** Discord button label (1–32 chars). Default {@link DEFAULT_OPEN_BUTTON_LABEL}. */
+  openButtonLabel: string
+  /**
+   * When true, include `N agent(s)` in the state line from the
+   * multi-agent table.
+   */
+  showAgentCount: boolean
 }
 
 /**
@@ -100,6 +114,21 @@ type BooleanSetting = {
  * `state-blocked`, `state-waiting`, `state-idle`).
  */
 export const SHIPPED_APPLICATION_ID = '1545653843239374848'
+
+/**
+ * Default Discord activity button label (within the 1–32 char limit).
+ */
+export const DEFAULT_OPEN_BUTTON_LABEL = 'Open Orca'
+
+/**
+ * Discord activity button URL maximum (official Activity Buttons schema).
+ */
+export const DISCORD_BUTTON_URL_MAX = 512
+
+/**
+ * Discord activity button label maximum (official Activity Buttons schema).
+ */
+export const DISCORD_BUTTON_LABEL_MAX = 32
 
 /**
  * Privacy-first defaults applied to every missing or invalid field.
@@ -122,7 +151,11 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   bridgeUrl: '',
   bridgeToken: '',
   // Default on for this debug-friendly release; toggle off via command.
-  debugLogging: true
+  debugLogging: true,
+  openUrl: '',
+  showOpenButton: false,
+  openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
+  showAgentCount: false
 })
 
 const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(
@@ -138,6 +171,53 @@ function isDetailLevel(value: unknown): value is DetailLevel {
  */
 function normalizeLabel(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim().slice(0, 64) : null
+}
+
+/**
+ * Coerce a persisted open-button URL. HTTPS only, no credentials, max 512.
+ * Invalid values become `""` so storage cannot attach a junk button.
+ *
+ * @param value - Raw settings value.
+ * @returns A trimmed `https:` URL, or `""`.
+ */
+export function normalizeOpenUrl(value: unknown): string {
+  if (typeof value !== 'string') {
+    return ''
+  }
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > DISCORD_BUTTON_URL_MAX) {
+    return ''
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return ''
+  }
+  if (parsed.protocol !== 'https:') {
+    return ''
+  }
+  if (parsed.username || parsed.password) {
+    return ''
+  }
+  return trimmed
+}
+
+/**
+ * Coerce a Discord button label to 1–32 characters. Empty → default.
+ *
+ * @param value - Raw settings value.
+ * @returns A safe label.
+ */
+export function normalizeOpenButtonLabel(value: unknown): string {
+  if (typeof value !== 'string') {
+    return DEFAULT_OPEN_BUTTON_LABEL
+  }
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return DEFAULT_OPEN_BUTTON_LABEL
+  }
+  return trimmed.slice(0, DISCORD_BUTTON_LABEL_MAX)
 }
 
 /**
@@ -176,6 +256,10 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
   settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel
   settings.bridgeUrl = normalizeBridgeUrl(source.bridgeUrl)
   settings.bridgeToken = normalizeBridgeToken(source.bridgeToken)
+  settings.openUrl = normalizeOpenUrl(source.openUrl)
+  settings.openButtonLabel = normalizeOpenButtonLabel(
+    source.openButtonLabel === undefined ? DEFAULT_SETTINGS.openButtonLabel : source.openButtonLabel
+  )
   return settings
 }
 

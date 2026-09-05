@@ -25,8 +25,11 @@ activate (src/main.ts)
   ├─ createBridgeTransport()
   ├─ createPresenceController({ client, bridge, settings, diagnostics })
   ├─ commands → persist (settings.set) → controller.setSettings → refresh
+  ├─ presence.configure → applyConfigure (fail-fast) → persist; App ID change recreates the IPC client
+  ├─ presence.clear → controller.clear (hold; heartbeat does not republish)
   ├─ presence.reload → refresh → controller.reload (close + reconnect + SET_ACTIVITY)
-  ├─ events / heartbeat → workspace.readContext (or minimal snapshot) → update + forceTransmit on heartbeat/status
+  ├─ agent.status.changed → agent table (worktreeId + paneKey) → aggregate → update
+  ├─ events / heartbeat → workspace.readContext (or minimal snapshot) → update + forceTransmit on heartbeat/status (heartbeat does not lift Clear)
   ├─ panel snapshot → log ring + redacted JSON embedded in panel/index.html (writable installs)
   └─ deactivate → controller.stop → clear local + remote + close socket (idempotent)
 ```
@@ -41,7 +44,10 @@ activate (src/main.ts)
 | [`src/presence/settings.ts`](../src/presence/settings.ts) | Defaults, coerce-from-storage, cycle/toggle helpers. |
 | [`src/presence/activity.ts`](../src/presence/activity.ts) | **Privacy boundary.** Snapshot + settings → activity or `null`. |
 | [`src/presence/controller.ts`](../src/presence/controller.ts) | Snapshot merge, 15 s debounce, reconnect, **local-then-bridge** publish, **Reload RPC**. |
-| [`src/presence/expiry.ts`](../src/presence/expiry.ts) | Activity-window helper for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). Not wired into live presence yet. |
+| [`src/presence/expiry.ts`](../src/presence/expiry.ts) | `AGENT_RETENTION_MS` (30m stale / 60s done) plus older 30s/60s helpers for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). |
+| [`src/presence/agent-state.ts`](../src/presence/agent-state.ts) | Alias table → `working` / `blocked` / `waiting` / `done`. |
+| [`src/presence/agents.ts`](../src/presence/agents.ts) | Multi-agent table keyed by `worktreeId` + `paneKey`. |
+| [`src/presence/configure.ts`](../src/presence/configure.ts) | Fail-fast `applyConfigure` for Application ID / `openUrl` / toggles. |
 | [`src/presence/bridge.ts`](../src/presence/bridge.ts) | Companion URL/token hygiene + `POST`/`DELETE /activity`. |
 | [`src/presence/log.ts`](../src/presence/log.ts) | Structured `orca.log` + capped state-dir file. Optional `onEmit` feeds the panel ring. |
 | [`src/presence/log-ring.ts`](../src/presence/log-ring.ts) | Bounded in-memory tail for the sidebar snapshot. |
@@ -109,7 +115,9 @@ It cannot persist settings or read the log file. The worker optionally rewrites 
 
 ## Activity expiry (future providers)
 
-[`src/presence/expiry.ts`](../src/presence/expiry.ts) exports `ACTIVITY_EXPIRY_MS` (`short` 30s, `long` 60s) and `isActivityFresh()`. A prior Discord RPC integration used those windows so tool-specific states die after the user leaves a surface. This plugin does **not** rotate providers yet — only agent status + workspace snapshot. When [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) (focused window/tab) lands, providers should call `isActivityFresh` instead of inventing a new clock. Full priority + round-robin rotation stays deferred.
+[`src/presence/expiry.ts`](../src/presence/expiry.ts) exports `AGENT_RETENTION_MS` (`stale` 30 minutes, `done` 60 seconds) for the live agent table, plus `ACTIVITY_EXPIRY_MS` (`short` 30s, `long` 60s) and `isActivityFresh()` for a future focus/tool path. This plugin does **not** rotate providers yet. When [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) (focused window/tab) lands, providers should reuse `isActivityFresh` instead of inventing a new clock.
+
+**Clear:** `presence.clear` sends `SET_ACTIVITY` null (and companion `DELETE` when that was the last sink) without flipping `enabled`. Automatic republish is held. The heartbeat does not lift the hold. The next `agent.status.changed`, Show Status, Reload RPC, or settings write does.
 
 ## Activity fields
 
@@ -118,10 +126,11 @@ Produced by `buildActivity` in `src/presence/activity.ts`:
 | JSON field | Source |
 |---|---|
 | `details` | `"Working in Orca"`, workspace name, or `name — branch` |
-| `state` | `label · N terminals · machine` (omitted if empty) |
+| `state` | `N agent(s) · label · N terminals · machine` (omitted if empty) |
 | `timestamps.start` | `min(stateStartedAtMs, now)` as Unix **seconds** |
 | `assets.large_image` | always `orca` when an activity exists |
 | `assets.small_image` | `state-working` / `state-blocked` / `state-waiting` / `state-idle` |
+| `buttons` | at most one `{ label, url }` when `showOpenButton` + HTTPS `openUrl` |
 
 Text fields are clamped to 128 characters. See [privacy.md](privacy.md) for which settings unlock which strings.
 

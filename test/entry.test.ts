@@ -98,8 +98,12 @@ test('activate registers commands and events; deactivate is safe to call', async
     'presence.toggle-elapsed',
     'presence.toggle-bridge',
     'presence.debug-logging',
+    'presence.toggle-open-button',
+    'presence.toggle-agent-count',
     'presence.status',
-    'presence.reload'
+    'presence.reload',
+    'presence.clear',
+    'presence.configure'
   ])
   expect(events).toEqual(['agent.status.changed', 'worktree.created', 'worktree.removed'])
   expect(hostLines.some((line) => line.includes('activate') && line.includes('chron0.discord-presence'))).toBe(
@@ -186,6 +190,102 @@ test('an invalid persisted Application ID is logged and toasted', async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('configure fails fast on a junk Application ID and accepts two paneKeys', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-configure-'))
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
+  const { default: activate, deactivate } = await import('../src/main')
+  const handlers = new Map<string, (args?: Record<string, unknown>) => Promise<unknown>>()
+  const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
+  const notifications: string[] = []
+  const persisted = new Map<string, unknown>()
+  const orca: OrcaHost = {
+    log: () => {},
+    commands: {
+      register: (id, handler) => {
+        handlers.set(id, handler)
+      }
+    },
+    events: {
+      on: (event, handler) => {
+        eventHandlers.set(event, handler)
+      }
+    },
+    host: {
+      call: async (method, args) => {
+        if (method === 'settings.get') {
+          return { settings: Object.fromEntries(persisted) }
+        }
+        if (method === 'settings.set') {
+          persisted.set(String(args?.key), args?.value)
+          return null
+        }
+        if (method === 'notifications.show') {
+          notifications.push(String(args?.body ?? ''))
+          return null
+        }
+        return null
+      }
+    }
+  }
+  await activate(orca)
+  const junk = (await handlers.get('presence.configure')?.({ applicationId: 'nope' })) as {
+    ok: boolean
+    error?: string
+  }
+  expect(junk.ok).toBe(false)
+  expect(junk.error).toMatch(/snowflake/i)
+  expect(persisted.get('applicationId')).toBeUndefined()
+
+  const configured = (await handlers.get('presence.configure')?.({
+    showAgentCount: true,
+    openUrl: 'https://orca.example',
+    showOpenButton: true
+  })) as { ok: boolean; showAgentCount?: boolean; openUrl?: string }
+  expect(configured.ok).toBe(true)
+  expect(configured.showAgentCount).toBe(true)
+  expect(configured.openUrl).toBe('https://orca.example')
+  expect(persisted.get('openUrl')).toBe('https://orca.example')
+  expect(persisted.get('showAgentCount')).toBe(true)
+
+  const agent = eventHandlers.get('agent.status.changed')
+  await agent?.({
+    worktreeId: 'wt',
+    paneKey: 'a',
+    state: 'working',
+    receivedAt: Date.now()
+  })
+  await agent?.({
+    worktreeId: 'wt',
+    paneKey: 'b',
+    state: 'running',
+    receivedAt: Date.now()
+  })
+
+  const help = (await handlers.get('presence.configure')?.()) as { ok: boolean; hint?: string }
+  expect(help.ok).toBe(true)
+  expect(help.hint).toMatch(/applicationId/i)
+
+  const clearResult = (await handlers.get('presence.clear')?.()) as { heldClear?: boolean; enabled?: boolean }
+  expect(clearResult.enabled).toBe(true)
+  expect(clearResult.heldClear).toBe(true)
+
+  await deactivate()
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  if (previousSkip === undefined) {
+    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  } else {
+    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('formatStatusTransmitting includes lastActivity and truncates long JSON', () => {
   expect(formatStatusTransmitting(null)).toBe('transmitting=null')
   expect(formatStatusTransmitting({ details: 'Working in Orca' })).toBe(
@@ -203,6 +303,8 @@ test('shipped dist entry is Node-compatible ESM with the same exports', async ()
   expect(shipped.includes('Bun.spawn')).toBe(false)
   expect(shipped.includes('from "node:net"') || shipped.includes("from 'node:net'")).toBe(true)
   expect(shipped.includes('presence.reload')).toBe(true)
+  expect(shipped.includes('presence.clear')).toBe(true)
+  expect(shipped.includes('presence.configure')).toBe(true)
   expect(shipped.includes('discord.app_id_invalid')).toBe(true)
   expect(shipped.includes('presence-snapshot') || shipped.includes('panel.snapshot')).toBe(true)
   const entry = new URL('../dist/main.js', import.meta.url).href

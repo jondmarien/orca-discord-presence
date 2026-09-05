@@ -410,6 +410,223 @@ function createDiscordClient({
   };
 }
 
+// src/presence/agent-state.ts
+var AGENT_STATE_ALIASES = {
+  working: "working",
+  running: "working",
+  active: "working",
+  in_progress: "working",
+  busy: "working",
+  thinking: "working",
+  blocked: "blocked",
+  error: "blocked",
+  failed: "blocked",
+  failure: "blocked",
+  interrupted: "blocked",
+  waiting: "waiting",
+  needs_input: "waiting",
+  needsinput: "waiting",
+  input: "waiting",
+  permission: "waiting",
+  paused: "waiting",
+  pending: "waiting",
+  done: "done",
+  complete: "done",
+  completed: "done",
+  finished: "done",
+  idle: "done",
+  success: "done",
+  cancelled: "done",
+  canceled: "done"
+};
+function normalizeStateKey(raw) {
+  return raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+function canonicalizeAgentState(raw) {
+  if (typeof raw !== "string") {
+    return "done";
+  }
+  const key = normalizeStateKey(raw);
+  if (!key) {
+    return "done";
+  }
+  return AGENT_STATE_ALIASES[key] ?? "done";
+}
+
+// src/presence/expiry.ts
+var AGENT_RETENTION_MS = {
+  stale: 1800000,
+  done: 60000
+};
+function isActivityFresh(lastSeenAtMs, nowMs, windowMs) {
+  if (!Number.isFinite(lastSeenAtMs) || !Number.isFinite(nowMs) || !Number.isFinite(windowMs)) {
+    return false;
+  }
+  if (windowMs <= 0) {
+    return false;
+  }
+  return nowMs - lastSeenAtMs < windowMs;
+}
+
+// src/presence/agents.ts
+var PRIORITY = {
+  blocked: 3,
+  waiting: 2,
+  working: 1,
+  done: 0
+};
+function agentSlotKey(worktreeId, paneKey) {
+  return `${worktreeId}\x1F${paneKey}`;
+}
+function parseAgentStatusPayload(payload, nowMs) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const source = payload;
+  if (typeof source.state !== "string") {
+    return null;
+  }
+  const receivedAt = typeof source.receivedAt === "number" && Number.isFinite(source.receivedAt) ? source.receivedAt : nowMs;
+  return {
+    worktreeId: typeof source.worktreeId === "string" ? source.worktreeId : "",
+    paneKey: typeof source.paneKey === "string" ? source.paneKey : "",
+    state: source.state,
+    receivedAt
+  };
+}
+function parseWorktreeRemovedId(payload) {
+  if (typeof payload === "string" && payload.trim().length > 0) {
+    return payload.trim();
+  }
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const source = payload;
+  if (typeof source.worktreeId === "string" && source.worktreeId.trim().length > 0) {
+    return source.worktreeId.trim();
+  }
+  if (typeof source.id === "string" && source.id.trim().length > 0) {
+    return source.id.trim();
+  }
+  return null;
+}
+function retentionWindow(state) {
+  return state === "done" ? AGENT_RETENTION_MS.done : AGENT_RETENTION_MS.stale;
+}
+function isAgentSlotFresh(slot, nowMs) {
+  return isActivityFresh(slot.receivedAt, nowMs, retentionWindow(slot.canonicalState));
+}
+function summarizeSlots(slots) {
+  if (slots.length === 0) {
+    return { agentCount: 0, agentState: undefined, stateStartedAtMs: undefined };
+  }
+  let winner = "done";
+  let winnerPriority = -1;
+  for (const slot of slots) {
+    const priority = PRIORITY[slot.canonicalState];
+    if (priority > winnerPriority) {
+      winner = slot.canonicalState;
+      winnerPriority = priority;
+    }
+  }
+  let started = Number.POSITIVE_INFINITY;
+  for (const slot of slots) {
+    if (slot.canonicalState === winner && slot.receivedAt < started) {
+      started = slot.receivedAt;
+    }
+  }
+  return {
+    agentCount: slots.length,
+    agentState: winner,
+    stateStartedAtMs: Number.isFinite(started) ? started : undefined
+  };
+}
+function createAgentTable({
+  now = () => Date.now(),
+  setTimer = (fn, ms) => setTimeout(fn, ms),
+  clearTimer = (timer) => clearTimeout(timer),
+  onChange
+} = {}) {
+  const map = new Map;
+  let pendingTimer = null;
+  function cancelTimer() {
+    if (pendingTimer) {
+      clearTimer(pendingTimer);
+      pendingTimer = null;
+    }
+  }
+  function schedulePrune() {
+    cancelTimer();
+    let nextAt = Number.POSITIVE_INFINITY;
+    const clock = now();
+    for (const slot of map.values()) {
+      const expiresAt = slot.receivedAt + retentionWindow(slot.canonicalState);
+      if (expiresAt < nextAt) {
+        nextAt = expiresAt;
+      }
+    }
+    if (!Number.isFinite(nextAt)) {
+      return;
+    }
+    pendingTimer = setTimer(() => {
+      pendingTimer = null;
+      const changed = prune();
+      if (changed) {
+        onChange?.();
+      }
+      schedulePrune();
+    }, Math.max(0, nextAt - clock));
+  }
+  function prune() {
+    const clock = now();
+    let changed = false;
+    for (const [key, slot] of map) {
+      if (!isAgentSlotFresh(slot, clock)) {
+        map.delete(key);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  return {
+    upsert(event) {
+      const canonicalState = canonicalizeAgentState(event.state);
+      map.set(agentSlotKey(event.worktreeId, event.paneKey), {
+        worktreeId: event.worktreeId,
+        paneKey: event.paneKey,
+        rawState: event.state,
+        canonicalState,
+        receivedAt: event.receivedAt
+      });
+      prune();
+      schedulePrune();
+    },
+    removeWorktree(worktreeId) {
+      let changed = false;
+      for (const [key, slot] of map) {
+        if (slot.worktreeId === worktreeId) {
+          map.delete(key);
+          changed = true;
+        }
+      }
+      if (changed) {
+        schedulePrune();
+      }
+      return changed;
+    },
+    prune,
+    summarize() {
+      prune();
+      return summarizeSlots([...map.values()]);
+    },
+    slots: () => [...map.values()],
+    clear() {
+      map.clear();
+      cancelTimer();
+    }
+  };
+}
+
 // src/presence/bridge.ts
 var BRIDGE_TIMEOUT_MS = 5000;
 var MAX_BRIDGE_URL_LENGTH = 512;
@@ -556,6 +773,183 @@ function createBridgeTransport({
   };
 }
 
+// src/presence/settings.ts
+var DETAIL_LEVELS = ["off", "generic", "workspace", "full"];
+var SHIPPED_APPLICATION_ID = "1545653843239374848";
+var DEFAULT_OPEN_BUTTON_LABEL = "Open Orca";
+var DISCORD_BUTTON_URL_MAX = 512;
+var DISCORD_BUTTON_LABEL_MAX = 32;
+var DEFAULT_SETTINGS = Object.freeze({
+  enabled: true,
+  detailLevel: "generic",
+  applicationId: SHIPPED_APPLICATION_ID,
+  machineLabel: null,
+  showBranch: false,
+  showAgentState: true,
+  showTerminals: false,
+  showMachine: false,
+  showElapsed: true,
+  bridgeEnabled: false,
+  bridgeUrl: "",
+  bridgeToken: "",
+  debugLogging: true,
+  openUrl: "",
+  showOpenButton: false,
+  openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
+  showAgentCount: false
+});
+var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
+function isDetailLevel(value) {
+  return typeof value === "string" && DETAIL_LEVELS.includes(value);
+}
+function normalizeLabel(value) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim().slice(0, 64) : null;
+}
+function normalizeOpenUrl(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > DISCORD_BUTTON_URL_MAX) {
+    return "";
+  }
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return "";
+  }
+  if (parsed.protocol !== "https:") {
+    return "";
+  }
+  if (parsed.username || parsed.password) {
+    return "";
+  }
+  return trimmed;
+}
+function normalizeOpenButtonLabel(value) {
+  if (typeof value !== "string") {
+    return DEFAULT_OPEN_BUTTON_LABEL;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return DEFAULT_OPEN_BUTTON_LABEL;
+  }
+  return trimmed.slice(0, DISCORD_BUTTON_LABEL_MAX);
+}
+function normalizeSettings(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const settings = { ...DEFAULT_SETTINGS };
+  for (const field of BOOLEAN_FIELDS) {
+    if (typeof source[field] === "boolean") {
+      settings[field] = source[field];
+    }
+  }
+  if (isDetailLevel(source.detailLevel)) {
+    settings.detailLevel = source.detailLevel;
+  }
+  settings.applicationId = inspectApplicationId(source.applicationId, SHIPPED_APPLICATION_ID).applicationId;
+  settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel;
+  settings.bridgeUrl = normalizeBridgeUrl(source.bridgeUrl);
+  settings.bridgeToken = normalizeBridgeToken(source.bridgeToken);
+  settings.openUrl = normalizeOpenUrl(source.openUrl);
+  settings.openButtonLabel = normalizeOpenButtonLabel(source.openButtonLabel === undefined ? DEFAULT_SETTINGS.openButtonLabel : source.openButtonLabel);
+  return settings;
+}
+function nextDetailLevel(current) {
+  const index = DETAIL_LEVELS.indexOf(current);
+  return DETAIL_LEVELS[(index + 1) % DETAIL_LEVELS.length];
+}
+function toggleField(settings, field) {
+  if (!BOOLEAN_FIELDS.includes(field)) {
+    return settings;
+  }
+  const key = field;
+  return { ...settings, [key]: !settings[key] };
+}
+
+// src/presence/configure.ts
+function applyConfigure(current, args) {
+  if (args === undefined || args === null) {
+    return { ok: true, settings: current, changed: [] };
+  }
+  if (typeof args !== "object" || Array.isArray(args)) {
+    return { ok: false, error: "Configure args must be an object" };
+  }
+  const source = args;
+  const next = { ...current };
+  const changed = [];
+  if ("applicationId" in source) {
+    if (typeof source.applicationId !== "string") {
+      return { ok: false, error: "applicationId must be a string (empty restores the shipped id)" };
+    }
+    const trimmed = source.applicationId.trim();
+    const applicationId = trimmed.length === 0 ? SHIPPED_APPLICATION_ID : trimmed;
+    if (!isPlausibleApplicationId(applicationId) && applicationId !== SHIPPED_APPLICATION_ID) {
+      return {
+        ok: false,
+        error: "Application ID is not a 17–20 digit snowflake"
+      };
+    }
+    if (applicationId !== current.applicationId) {
+      next.applicationId = applicationId;
+      changed.push("applicationId");
+    }
+  }
+  if ("openUrl" in source) {
+    if (typeof source.openUrl !== "string") {
+      return { ok: false, error: "openUrl must be a string (https only; empty clears it)" };
+    }
+    if (source.openUrl.trim().length === 0) {
+      if (current.openUrl !== "") {
+        next.openUrl = "";
+        changed.push("openUrl");
+      }
+    } else {
+      const openUrl = normalizeOpenUrl(source.openUrl);
+      if (!openUrl) {
+        return {
+          ok: false,
+          error: "openUrl must be an https:// URL (1–512 chars, no credentials in the URL)"
+        };
+      }
+      if (openUrl !== current.openUrl) {
+        next.openUrl = openUrl;
+        changed.push("openUrl");
+      }
+    }
+  }
+  if ("showOpenButton" in source) {
+    if (typeof source.showOpenButton !== "boolean") {
+      return { ok: false, error: "showOpenButton must be a boolean" };
+    }
+    if (source.showOpenButton !== current.showOpenButton) {
+      next.showOpenButton = source.showOpenButton;
+      changed.push("showOpenButton");
+    }
+  }
+  if ("openButtonLabel" in source) {
+    if (typeof source.openButtonLabel !== "string") {
+      return { ok: false, error: "openButtonLabel must be a string" };
+    }
+    const openButtonLabel = normalizeOpenButtonLabel(source.openButtonLabel);
+    if (openButtonLabel !== current.openButtonLabel) {
+      next.openButtonLabel = openButtonLabel;
+      changed.push("openButtonLabel");
+    }
+  }
+  if ("showAgentCount" in source) {
+    if (typeof source.showAgentCount !== "boolean") {
+      return { ok: false, error: "showAgentCount must be a boolean" };
+    }
+    if (source.showAgentCount !== current.showAgentCount) {
+      next.showAgentCount = source.showAgentCount;
+      changed.push("showAgentCount");
+    }
+  }
+  return { ok: true, settings: next, changed };
+}
+
 // src/presence/activity.ts
 var DISCORD_TEXT_MAX = 128;
 var AGENT_STATE_LABELS = {
@@ -564,12 +958,12 @@ var AGENT_STATE_LABELS = {
   waiting: { label: "waiting for input", asset: "state-waiting" },
   done: { label: "idle", asset: "state-idle" }
 };
-var IDLE = AGENT_STATE_LABELS.done;
 function clamp(text) {
   return text.length > DISCORD_TEXT_MAX ? `${text.slice(0, DISCORD_TEXT_MAX - 1)}…` : text;
 }
 function agentVisual(state) {
-  return state && state in AGENT_STATE_LABELS ? AGENT_STATE_LABELS[state] : IDLE;
+  const canonical = canonicalizeAgentState(state);
+  return AGENT_STATE_LABELS[canonical];
 }
 function buildDetails(snapshot, settings) {
   if (settings.detailLevel === "generic") {
@@ -583,6 +977,9 @@ function buildDetails(snapshot, settings) {
 }
 function buildState(snapshot, settings) {
   const parts = [];
+  if (settings.showAgentCount && typeof snapshot.agentCount === "number" && snapshot.agentCount > 0) {
+    parts.push(`${snapshot.agentCount} agent${snapshot.agentCount === 1 ? "" : "s"}`);
+  }
   if (settings.showAgentState) {
     parts.push(agentVisual(snapshot.agentState).label);
   }
@@ -617,6 +1014,9 @@ function buildActivity(snapshot, settings, nowMs) {
   }
   if (settings.showElapsed && typeof snapshot.stateStartedAtMs === "number") {
     activity.timestamps = { start: Math.floor(Math.min(snapshot.stateStartedAtMs, nowMs) / 1000) };
+  }
+  if (settings.showOpenButton && settings.openUrl) {
+    activity.buttons = [{ label: settings.openButtonLabel, url: settings.openUrl }];
   }
   return activity;
 }
@@ -735,6 +1135,7 @@ function createPresenceController({
   let lastBridgeUrl = null;
   let lastBridgeToken = null;
   let stopped = false;
+  let holdClear = false;
   function emit(level, event, detail) {
     if (diagnostics) {
       diagnostics.line(level, event, detail);
@@ -883,10 +1284,21 @@ function createPresenceController({
     }, MIN_UPDATE_INTERVAL_MS - elapsed);
   }
   return {
-    async update(nextSnapshot) {
+    async update(nextSnapshot, options) {
+      if (options?.resume) {
+        holdClear = false;
+      }
       snapshot = { ...snapshot, ...nextSnapshot };
+      if (holdClear) {
+        return;
+      }
       if (!currentSettings.enabled || currentSettings.detailLevel === "off") {
         await clearPresence();
+        return;
+      }
+      if (options?.resume) {
+        lastSentSerialized = null;
+        await transmit();
         return;
       }
       const candidate = buildActivity(snapshot, currentSettings, now());
@@ -896,6 +1308,7 @@ function createPresenceController({
       await schedule();
     },
     async setSettings(nextSettings) {
+      holdClear = false;
       const previousBridge = lastSink === "bridge" && lastBridgeUrl != null ? { url: lastBridgeUrl, token: lastBridgeToken ?? "" } : null;
       currentSettings = nextSettings;
       if (!currentSettings.enabled || currentSettings.detailLevel === "off") {
@@ -919,7 +1332,13 @@ function createPresenceController({
       lastSentSerialized = null;
       await transmit();
     },
-    async forceTransmit() {
+    async forceTransmit(resume = false) {
+      if (resume) {
+        holdClear = false;
+      }
+      if (holdClear) {
+        return;
+      }
       if (pendingTimer) {
         clearTimer(pendingTimer);
         pendingTimer = null;
@@ -928,7 +1347,17 @@ function createPresenceController({
       emit("info", "discord.force_transmit");
       await transmit(true);
     },
+    async clear() {
+      if (pendingTimer) {
+        clearTimer(pendingTimer);
+        pendingTimer = null;
+      }
+      holdClear = true;
+      emit("info", "discord.clear_hold");
+      await clearPresence();
+    },
     async reload() {
+      holdClear = false;
       if (pendingTimer) {
         clearTimer(pendingTimer);
         pendingTimer = null;
@@ -957,7 +1386,8 @@ function createPresenceController({
       sink: lastSink,
       detailLevel: currentSettings.detailLevel,
       lastActivity,
-      logFile: diagnostics?.filePath ?? null
+      logFile: diagnostics?.filePath ?? null,
+      heldClear: holdClear
     }),
     async stop() {
       if (stopped) {
@@ -1089,69 +1519,17 @@ function buildPresencePanelSnapshot(input) {
       showMachine: settings.showMachine,
       showElapsed: settings.showElapsed,
       bridgeEnabled: settings.bridgeEnabled,
-      debugLogging: settings.debugLogging
+      debugLogging: settings.debugLogging,
+      showOpenButton: settings.showOpenButton,
+      showAgentCount: settings.showAgentCount
     },
     logs: logs.map(redactPanelLogLine),
     logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT
   };
 }
 
-// src/presence/settings.ts
-var DETAIL_LEVELS = ["off", "generic", "workspace", "full"];
-var SHIPPED_APPLICATION_ID = "1545653843239374848";
-var DEFAULT_SETTINGS = Object.freeze({
-  enabled: true,
-  detailLevel: "generic",
-  applicationId: SHIPPED_APPLICATION_ID,
-  machineLabel: null,
-  showBranch: false,
-  showAgentState: true,
-  showTerminals: false,
-  showMachine: false,
-  showElapsed: true,
-  bridgeEnabled: false,
-  bridgeUrl: "",
-  bridgeToken: "",
-  debugLogging: true
-});
-var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
-function isDetailLevel(value) {
-  return typeof value === "string" && DETAIL_LEVELS.includes(value);
-}
-function normalizeLabel(value) {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim().slice(0, 64) : null;
-}
-function normalizeSettings(raw) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  const settings = { ...DEFAULT_SETTINGS };
-  for (const field of BOOLEAN_FIELDS) {
-    if (typeof source[field] === "boolean") {
-      settings[field] = source[field];
-    }
-  }
-  if (isDetailLevel(source.detailLevel)) {
-    settings.detailLevel = source.detailLevel;
-  }
-  settings.applicationId = inspectApplicationId(source.applicationId, SHIPPED_APPLICATION_ID).applicationId;
-  settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel;
-  settings.bridgeUrl = normalizeBridgeUrl(source.bridgeUrl);
-  settings.bridgeToken = normalizeBridgeToken(source.bridgeToken);
-  return settings;
-}
-function nextDetailLevel(current) {
-  const index = DETAIL_LEVELS.indexOf(current);
-  return DETAIL_LEVELS[(index + 1) % DETAIL_LEVELS.length];
-}
-function toggleField(settings, field) {
-  if (!BOOLEAN_FIELDS.includes(field)) {
-    return settings;
-  }
-  const key = field;
-  return { ...settings, [key]: !settings[key] };
-}
-
 // src/version.ts
-var PLUGIN_VERSION = "0.4.1";
+var PLUGIN_VERSION = "0.5.0";
 
 // src/main.ts
 var HEARTBEAT_MS = 90000;
@@ -1171,15 +1549,28 @@ var TOGGLE_COMMANDS = {
   "presence.toggle-machine": "showMachine",
   "presence.toggle-elapsed": "showElapsed",
   "presence.toggle-bridge": "bridgeEnabled",
-  "presence.debug-logging": "debugLogging"
+  "presence.debug-logging": "debugLogging",
+  "presence.toggle-open-button": "showOpenButton",
+  "presence.toggle-agent-count": "showAgentCount"
 };
 var controller = null;
+var agentTable = null;
 var heartbeat = null;
 var diagnostics = null;
 var logRing = null;
 var panelWriteTimer = null;
 var panelWriteNoted = false;
 var deactivated = false;
+function publicConfigureView(settings) {
+  return {
+    applicationId: settings.applicationId,
+    shippedApplicationId: settings.applicationId === SHIPPED_APPLICATION_ID,
+    openUrl: settings.openUrl,
+    showOpenButton: settings.showOpenButton,
+    openButtonLabel: settings.openButtonLabel,
+    showAgentCount: settings.showAgentCount
+  };
+}
 function publishPanelSnapshot(mode) {
   const flush = () => {
     panelWriteTimer = null;
@@ -1264,19 +1655,35 @@ async function activate(orca) {
       body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ""}. Using shipped id. ${appId.reason ?? ""}`
     });
   }
-  controller = createPresenceController({
-    client: createDiscordClient({
-      clientId: settings.applicationId,
-      log: (message, level = "error") => diagnostics?.line(level, "discord.client", { reason: message })
-    }),
-    bridge: createBridgeTransport({
-      log: (message) => diagnostics?.line("error", "bridge.transport", { reason: message })
-    }),
-    settings,
-    diagnostics,
-    log: (message) => orca.log(message)
+  function createController(nextSettings) {
+    return createPresenceController({
+      client: createDiscordClient({
+        clientId: nextSettings.applicationId,
+        log: (message, level = "error") => diagnostics?.line(level, "discord.client", { reason: message })
+      }),
+      bridge: createBridgeTransport({
+        log: (message) => diagnostics?.line("error", "bridge.transport", { reason: message })
+      }),
+      settings: nextSettings,
+      diagnostics: diagnostics ?? undefined,
+      log: (message) => orca.log(message)
+    });
+  }
+  let pushAgentRefresh = () => {};
+  agentTable = createAgentTable({
+    now: () => Date.now(),
+    setTimer: (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      timer.unref?.();
+      return timer;
+    },
+    onChange: () => {
+      pushAgentRefresh();
+    }
   });
+  controller = createController(settings);
   async function persist(nextSettings) {
+    const applicationIdChanged = nextSettings.applicationId !== settings.applicationId;
     settings = nextSettings;
     diagnostics?.setDebugEnabled(nextSettings.debugLogging);
     for (const [key, value] of Object.entries(nextSettings)) {
@@ -1285,19 +1692,38 @@ async function activate(orca) {
         orca.log(`failed to persist ${key}: ${message}`);
       });
     }
-    await controller?.setSettings(nextSettings);
+    if (applicationIdChanged) {
+      diagnostics?.line("info", "discord.app_id_rebind", { applicationId: nextSettings.applicationId });
+      await controller?.stop();
+      controller = createController(nextSettings);
+    } else {
+      await controller?.setSettings(nextSettings);
+    }
     publishPanelSnapshot("immediate");
   }
-  async function refresh(agentState, options = {}) {
+  async function refresh(agentEvent, options = {}) {
+    if (agentEvent) {
+      const parsed = parseAgentStatusPayload(agentEvent, Date.now());
+      if (parsed) {
+        agentTable?.upsert(parsed);
+      }
+    }
+    const summary = agentTable?.summarize() ?? {
+      agentCount: 0,
+      agentState: undefined,
+      stateStartedAtMs: undefined
+    };
     const context = await orca.host.call("workspace.readContext").catch(() => null);
     if (!context) {
       diagnostics?.line("debug", "refresh.minimal", { reason: "no workspace context" });
-    } else if (agentState) {
+    } else if (agentEvent) {
       diagnostics?.line("debug", "refresh", {
         source: "agent.status.changed",
-        agentState: agentState.state
+        agentState: summary.agentState ?? "idle",
+        agents: summary.agentCount
       });
     }
+    const resume = Boolean(options.resume || agentEvent);
     await controller?.update({
       machineName: os2.hostname(),
       ...context ? {
@@ -1305,13 +1731,18 @@ async function activate(orca) {
         branch: context.branch,
         terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
       } : {},
-      ...agentState ? { agentState: agentState.state, stateStartedAtMs: agentState.receivedAt } : {}
-    });
+      agentState: summary.agentState,
+      stateStartedAtMs: summary.stateStartedAtMs,
+      agentCount: summary.agentCount
+    }, resume ? { resume: true } : undefined);
     if (options.force) {
-      await controller?.forceTransmit();
+      await controller?.forceTransmit(resume);
     }
     publishPanelSnapshot("debounced");
   }
+  pushAgentRefresh = () => {
+    refresh();
+  };
   orca.commands.register("presence.toggle", async () => {
     await persist({ ...settings, enabled: !settings.enabled });
     await refresh();
@@ -1330,7 +1761,7 @@ async function activate(orca) {
     });
   }
   orca.commands.register("presence.status", async () => {
-    await refresh(undefined, { force: true });
+    await refresh(undefined, { force: true, resume: true });
     const status = controller?.status();
     const file = status?.logFile ?? diagnostics?.filePath ?? "";
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
@@ -1371,13 +1802,65 @@ async function activate(orca) {
     publishPanelSnapshot("immediate");
     return status;
   });
+  orca.commands.register("presence.clear", async () => {
+    diagnostics?.line("info", "discord.clear_command");
+    await controller?.clear();
+    const status = controller?.status();
+    const summary = `cleared enabled=${status?.enabled} heldClear=${status?.heldClear} sink=${status?.sink}`;
+    diagnostics?.line("info", "discord.clear_done", {
+      enabled: status?.enabled,
+      heldClear: status?.heldClear,
+      sink: status?.sink
+    });
+    await orca.host.call("notifications.show", {
+      title: "Discord Rich Presence",
+      body: `${summary} Presence is cleared until the next agent event, Show Status, Reload RPC, or a settings change. enabled stays on.`
+    });
+    publishPanelSnapshot("immediate");
+    return status;
+  });
+  orca.commands.register("presence.configure", async (args) => {
+    const result = applyConfigure(settings, args ?? {});
+    if (!result.ok) {
+      diagnostics?.line("error", "presence.configure_failed", { reason: result.error });
+      await orca.host.call("notifications.show", {
+        title: "Discord Rich Presence",
+        body: result.error
+      });
+      return result;
+    }
+    if (result.changed.length === 0) {
+      const view = publicConfigureView(settings);
+      const hint = "Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.";
+      const body = `applicationId=${view.shippedApplicationId ? "shipped" : view.applicationId} openUrl=${view.openUrl || "(empty)"} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} label=${view.openButtonLabel}`;
+      await orca.host.call("notifications.show", {
+        title: "Discord Rich Presence",
+        body: `${body} ${hint}`
+      });
+      return { ok: true, ...view, hint, changed: [] };
+    }
+    await persist(result.settings);
+    await refresh(undefined, { resume: true });
+    const view = publicConfigureView(settings);
+    diagnostics?.line("info", "presence.configure", { changed: result.changed });
+    await orca.host.call("notifications.show", {
+      title: "Discord Rich Presence",
+      body: `updated ${result.changed.join(", ")}`
+    });
+    return { ok: true, changed: result.changed, ...view };
+  });
   orca.events.on("agent.status.changed", async (payload) => {
-    await refresh(payload);
+    const parsed = parseAgentStatusPayload(payload, Date.now());
+    await refresh(parsed ?? undefined);
   });
   orca.events.on("worktree.created", async () => {
     await refresh();
   });
-  orca.events.on("worktree.removed", async () => {
+  orca.events.on("worktree.removed", async (payload) => {
+    const worktreeId = parseWorktreeRemovedId(payload);
+    if (worktreeId) {
+      agentTable?.removeWorktree(worktreeId);
+    }
     await refresh();
   });
   heartbeat = setInterval(() => {
@@ -1402,6 +1885,8 @@ async function deactivate() {
     panelWriteTimer = null;
   }
   diagnostics?.line("info", "deactivate");
+  agentTable?.clear();
+  agentTable = null;
   await controller?.stop();
   controller = null;
   diagnostics = null;

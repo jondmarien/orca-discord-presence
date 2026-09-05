@@ -35,6 +35,7 @@ function statusWith(overrides: Partial<PresenceStatus> = {}): PresenceStatus {
     detailLevel: 'generic',
     lastActivity: { details: 'Working in Orca', assets: { large_image: 'orca', large_text: 'Orca', small_image: 'state-idle', small_text: 'idle' } },
     logFile: '/tmp/plugin.log',
+    heldClear: false,
     ...overrides
   }
 }
@@ -89,6 +90,9 @@ test('buildPresencePanelSnapshot omits secrets and summarizes activity', () => {
   expect(JSON.stringify(snapshot).includes('bridgeToken')).toBe(false)
   expect(JSON.stringify(snapshot).includes('applicationId')).toBe(false)
   expect(JSON.stringify(snapshot).includes('100.64.0.2')).toBe(false)
+  expect(JSON.stringify(snapshot).includes('openUrl')).toBe(false)
+  expect(snapshot.fields.showOpenButton).toBe(false)
+  expect(snapshot.fields.showAgentCount).toBe(false)
   expect(formatPanelStatusToast(snapshot)).toBe('enabled=true connected=true sink=local detail=generic')
 })
 

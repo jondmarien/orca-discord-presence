@@ -17,6 +17,8 @@ From `DEFAULT_SETTINGS` in [`src/presence/settings.ts`](../src/presence/settings
 - Application id is the shipped public snowflake `1545653843239374848`.
 - Companion bridge **off** (`bridgeEnabled: false`, empty URL/token).
 - `debugLogging` **on** (local `orca.log` + state-dir file; not sent to Discord).
+- Discord activity button **off** (`showOpenButton: false`, empty `openUrl`).
+- Agent-count prefix **off**.
 
 `generic` never includes a workspace display name, git branch, or machine name — even if `showBranch` or `showMachine` were flipped on. Those toggles only take effect at higher detail levels (machine also requires detail ≠ `generic`; branch requires `full`).
 
@@ -39,6 +41,8 @@ The bridge token is a shared secret between the Orca host and the companion. It 
 | Workspace display name | `detailLevel` is `workspace` or `full` |
 | `name — branch` | `detailLevel === 'full'` **and** `showBranch` **and** a branch exists |
 | Agent label (`working`, `blocked`, `waiting for input`, `idle`) | `showAgentState` |
+| `N agent(s)` | `showAgentCount` and the live agent table is non-empty |
+| One activity button (`Open Orca` + your HTTPS URL) | `showOpenButton` and a normalized `https:` `openUrl` |
 | `N terminal(s)` | `showTerminals` and `terminalCount` is a number |
 | Machine name or `machineLabel` | `showMachine` **and** `detailLevel !== 'generic'` |
 | Start timestamp (Unix seconds) | `showElapsed` and `stateStartedAtMs` is a number |
@@ -48,7 +52,8 @@ The bridge token is a shared secret between the Orca host and the companion. It 
 |---|
 | Discord bot token / client secret (this plugin has none) |
 | File paths, file names, or editor cursors (host API exposes none) |
-| Raw unrecognized agent states (mapped to idle) |
+| Raw unrecognized agent states (aliased, then mapped to idle) |
+| Secrets in `openUrl` (operator responsibility; credentials-in-URL are rejected) |
 | SSH remote hostnames (`os.hostname()` is the Orca **client**) |
 | Extra keys from hand-edited settings JSON |
 | A blank `state` string (the field is omitted instead) |
@@ -58,9 +63,9 @@ Disable (`enabled: false`) or `detailLevel: 'off'` produce **no** activity; the 
 
 ## Agent state mapping
 
-Only these Orca states have labels. Anything else becomes idle so a future or malformed state cannot leak:
+Host strings are canonicalized first (`running` / `active` → working, `error` / `failed` → blocked, `needs_input` → waiting, `complete` / `finished` → done). Only these labels are sent. Anything else becomes idle so a future or malformed state cannot leak:
 
-| Orca state | Label | Asset key |
+| Canonical state | Label | Asset key |
 |---|---|---|
 | `working` | working | `state-working` |
 | `blocked` | blocked | `state-blocked` |
@@ -80,8 +85,10 @@ Only these Orca states have labels. Anything else becomes idle so a future or ma
 - `bridgeUrl` must be `http:` / `https:` with no URL credentials; trailing `/activity` is stripped. Otherwise it becomes `""`.
 - `bridgeToken` is trimmed and capped at 256 characters.
 - A non-loopback `bridgeUrl` without a token is not used (`resolveBridgeTarget` returns `null`).
+- `openUrl` must be `https:` with no URL credentials, max 512 characters. Otherwise it becomes `""`.
+- `openButtonLabel` is trimmed and capped at 32 characters; empty becomes `Open Orca`.
 
-Commands persist the full normalized object via `settings.set` (one key per field). v0.4 ships a **diagnostics** panel that displays a redacted snapshot; it cannot call `settings.set`. The panel never includes `applicationId`, `bridgeToken`, or `bridgeUrl`.
+Commands persist the full normalized object via `settings.set` (one key per field). **Configure** fail-fast rejects a junk Application ID or `openUrl` instead of storing them. The diagnostics panel displays a redacted snapshot; it cannot call `settings.set`. The panel never includes `applicationId`, `bridgeToken`, `bridgeUrl`, or `openUrl`.
 
 ## Capabilities
 

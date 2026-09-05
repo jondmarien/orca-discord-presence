@@ -3,7 +3,7 @@
   "id": "discord-presence",
   "publisher": "chron0",
   "name": "Discord Rich Presence",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Shows your current Orca workspace, branch, and agent state as Discord Rich Presence. Every field is opt-in.",
   "engines": { "orca": ">=1.4.0" },
   "pluginApi": 1,
@@ -28,7 +28,11 @@
       { "id": "presence.toggle-machine", "title": "Discord Presence: Toggle Machine Name" },
       { "id": "presence.toggle-elapsed", "title": "Discord Presence: Toggle Elapsed Timer" },
       { "id": "presence.toggle-bridge", "title": "Discord Presence: Toggle Bridge" },
-      { "id": "presence.debug-logging", "title": "Discord Presence: Toggle Debug Logging" }
+      { "id": "presence.debug-logging", "title": "Discord Presence: Toggle Debug Logging" },
+      { "id": "presence.toggle-open-button", "title": "Discord Presence: Toggle Open Button" },
+      { "id": "presence.toggle-agent-count", "title": "Discord Presence: Toggle Agent Count" },
+      { "id": "presence.clear", "title": "Discord Presence: Clear" },
+      { "id": "presence.configure", "title": "Discord Presence: Configure" }
     ],
     "events": [
       { "on": "agent.status.changed" },

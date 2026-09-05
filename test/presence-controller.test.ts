@@ -261,6 +261,82 @@ test('stop after a bridge publish clears the remote activity', async () => {
   expect(controller.status().sink).toBeNull()
 })
 
+test('clear sends SET_ACTIVITY null without disabling', async () => {
+  const { controller, activities } = harness()
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  expect(controller.settings().enabled).toBe(true)
+  await controller.clear()
+  expect(activities.at(-1)).toBeNull()
+  expect(controller.settings().enabled).toBe(true)
+  expect(controller.status().heldClear).toBe(true)
+  expect(controller.status().lastActivity).toBeNull()
+})
+
+test('clear after a bridge publish clears the remote activity', async () => {
+  const { controller, client, bridged } = harness({
+    bridgeEnabled: true,
+    bridgeUrl: 'http://100.64.1.2:3848',
+    bridgeToken: 'tok'
+  })
+  client.connect = async () => {
+    throw new Error('no discord ipc socket accepted a connection')
+  }
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.clear()
+  expect(bridged.at(-1)).toBe('clear')
+  expect(controller.status().sink).toBeNull()
+  expect(controller.status().heldClear).toBe(true)
+})
+
+test('heartbeat forceTransmit does not lift a clear hold', async () => {
+  const { controller, activities } = harness()
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.clear()
+  const afterClear = activities.length
+  await controller.forceTransmit()
+  expect(activities.length).toBe(afterClear)
+  expect(controller.status().heldClear).toBe(true)
+})
+
+test('an agent update with resume republishes after clear', async () => {
+  const { controller, activities } = harness()
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.clear()
+  await controller.update({ displayName: 'repo', agentState: 'blocked', terminalCount: 1 }, { resume: true })
+  expect(controller.status().heldClear).toBe(false)
+  expect(activities.at(-1) && 'state' in (activities.at(-1) as object) ? (activities.at(-1) as { state: string }).state : null).toBe(
+    'blocked'
+  )
+})
+
+test('Show Status forceTransmit(true) lifts a clear hold', async () => {
+  const { controller, activities } = harness()
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.clear()
+  await controller.forceTransmit(true)
+  expect(controller.status().heldClear).toBe(false)
+  expect(activities.at(-1) && 'details' in (activities.at(-1) as object) ? (activities.at(-1) as { details: string }).details : null).toBe(
+    'repo'
+  )
+})
+
+test('clear is idempotent', async () => {
+  const { controller, activities } = harness()
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.clear()
+  await controller.clear()
+  expect(activities.filter((entry) => entry === null).length).toBe(1)
+})
+
+test('setSettings lifts a clear hold and republishes', async () => {
+  const { controller, activities } = harness()
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.clear()
+  await controller.setSettings({ ...DEFAULT_SETTINGS, detailLevel: 'full', showTerminals: true })
+  expect(controller.status().heldClear).toBe(false)
+  expect(activities.at(-1)).not.toBeNull()
+})
+
 test('disabling the bridge after a remote publish clears the companion', async () => {
   const { controller, client, bridged } = harness({
     bridgeEnabled: true,

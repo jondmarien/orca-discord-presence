@@ -161,6 +161,87 @@ test('over-long names are truncated to discord limits', () => {
   expect((activity?.details.length ?? 0) <= 128).toBe(true)
 })
 
+test('running aliases to the working asset and label', () => {
+  const activity = buildActivity(
+    { ...SNAPSHOT, agentState: 'running' },
+    settingsWith({ detailLevel: 'full' }),
+    NOW_MS
+  )
+  expect(activity?.state).toBe('working')
+  expect(activity?.assets.small_image).toBe('state-working')
+  expect(activity?.assets.small_text).toBe('working')
+})
+
+test('needs_input aliases to waiting for input', () => {
+  const activity = buildActivity(
+    { ...SNAPSHOT, agentState: 'needs_input' },
+    settingsWith({ detailLevel: 'full' }),
+    NOW_MS
+  )
+  expect(activity?.state).toBe('waiting for input')
+  expect(activity?.assets.small_image).toBe('state-waiting')
+})
+
+test('an unrecognized agent state is omitted from the serialized payload', () => {
+  const activity = buildActivity(
+    { ...SNAPSHOT, agentState: 'exfiltrating-secrets' },
+    settingsWith({ detailLevel: 'full' }),
+    NOW_MS
+  )
+  const serialized = JSON.stringify(activity)
+  expect(activity?.state).toBe('idle')
+  expect(serialized.includes('exfiltrating-secrets')).toBe(false)
+})
+
+test('an https openUrl with showOpenButton attaches one Discord button', () => {
+  const activity = buildActivity(
+    SNAPSHOT,
+    settingsWith({
+      detailLevel: 'generic',
+      showOpenButton: true,
+      openUrl: 'https://orca.example/docs',
+      openButtonLabel: 'Open Orca'
+    }),
+    NOW_MS
+  )
+  expect(activity?.buttons).toEqual([{ label: 'Open Orca', url: 'https://orca.example/docs' }])
+})
+
+test('buttons are omitted without a flag or https URL', () => {
+  const noFlag = buildActivity(
+    SNAPSHOT,
+    settingsWith({ openUrl: 'https://orca.example', showOpenButton: false }),
+    NOW_MS
+  )
+  expect(noFlag && 'buttons' in noFlag).toBe(false)
+  const noUrl = buildActivity(SNAPSHOT, settingsWith({ showOpenButton: true, openUrl: '' }), NOW_MS)
+  expect(noUrl && 'buttons' in noUrl).toBe(false)
+})
+
+test('showAgentCount prefixes the state line', () => {
+  const activity = buildActivity(
+    { ...SNAPSHOT, agentCount: 2 },
+    settingsWith({ detailLevel: 'full', showAgentState: true, showAgentCount: true }),
+    NOW_MS
+  )
+  expect(activity?.state).toBe('2 agents · working')
+})
+
+test('a single agent is not pluralized when the count is shown', () => {
+  const activity = buildActivity(
+    { ...SNAPSHOT, agentCount: 1, agentState: 'blocked' },
+    settingsWith({
+      detailLevel: 'full',
+      showAgentState: true,
+      showAgentCount: true,
+      showTerminals: false,
+      showMachine: false
+    }),
+    NOW_MS
+  )
+  expect(activity?.state).toBe('1 agent · blocked')
+})
+
 test('an empty state string is omitted rather than sent blank', () => {
   const activity = buildActivity(
     SNAPSHOT,
