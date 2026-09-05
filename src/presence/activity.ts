@@ -10,6 +10,7 @@
  * @date 2026-09-05
  */
 
+import { canonicalizeAgentState } from './agent-state'
 import type { PresenceSettings } from './settings'
 
 /**
@@ -39,6 +40,11 @@ export type PresenceSnapshot = {
   stateStartedAtMs?: number
   /** `os.hostname()` of the Orca **client** (not an SSH remote). */
   machineName?: string
+  /**
+   * Live agent-table size after retention. Used only when
+   * `showAgentCount` is on.
+   */
+  agentCount?: number
 }
 
 /**
@@ -66,6 +72,11 @@ export type DiscordActivity = {
     /** Human label matching the small asset (`working`, `idle`, …). */
     small_text: string
   }
+  /**
+   * Discord activity buttons when sending `SET_ACTIVITY`. Official send
+   * shape is `{ label, url }` (max 2). This plugin attaches at most one.
+   */
+  buttons?: Array<{ label: string; url: string }>
 }
 
 /**
@@ -93,9 +104,8 @@ function clamp(text: string): string {
  * Map an agent state string to a known label/asset, or idle.
  */
 function agentVisual(state: string | undefined) {
-  return state && state in AGENT_STATE_LABELS
-    ? AGENT_STATE_LABELS[state as keyof typeof AGENT_STATE_LABELS]
-    : IDLE
+  const canonical = canonicalizeAgentState(state)
+  return AGENT_STATE_LABELS[canonical]
 }
 
 /**
@@ -124,6 +134,9 @@ function buildDetails(snapshot: PresenceSnapshot, settings: PresenceSettings): s
  */
 function buildState(snapshot: PresenceSnapshot, settings: PresenceSettings): string {
   const parts: string[] = []
+  if (settings.showAgentCount && typeof snapshot.agentCount === 'number' && snapshot.agentCount > 0) {
+    parts.push(`${snapshot.agentCount} agent${snapshot.agentCount === 1 ? '' : 's'}`)
+  }
   if (settings.showAgentState) {
     parts.push(agentVisual(snapshot.agentState).label)
   }
@@ -179,6 +192,9 @@ export function buildActivity(
     // Discord's RPC example uses seconds; a clock skew forward would render a
     // nonsense countdown, so clamp to now.
     activity.timestamps = { start: Math.floor(Math.min(snapshot.stateStartedAtMs, nowMs) / 1000) }
+  }
+  if (settings.showOpenButton && settings.openUrl) {
+    activity.buttons = [{ label: settings.openButtonLabel, url: settings.openUrl }]
   }
   return activity
 }
