@@ -12,7 +12,7 @@ Every identifying field is **opt-in**. The default detail level (`generic`) neve
 
 Browser Discord has **no** IPC socket. Presence will never appear if only the web client is open.
 
-Deeper notes: [Architecture](docs/architecture.md) · [Privacy](docs/privacy.md)
+Deeper notes: [Architecture](docs/architecture.md) · [Privacy](docs/privacy.md) · [Roadmap](ROADMAP.md)
 
 ---
 
@@ -209,6 +209,7 @@ TypeScript sources carry JSDoc (`@module`, `@author Jonathan Marien`, `@date`) o
 | Stale branch on the profile | Branch switches emit no host event | Wait for the 90 s heartbeat, or run **Show Status** / any toggle |
 | Presence lags during agent tool-use | Discord rate limit | Expected: at most one `SET_ACTIVITY` per 15 s; newest state wins |
 | Linux worker cannot find the socket | `XDG_RUNTIME_DIR` stripped from the worker env | Plugin reconstructs `/run/user/<uid>/` and Flatpak/Snap nests |
+| Vesktop Flatpak + arRPC, no presence | Socket is inside the Vesktop sandbox, not at `$XDG_RUNTIME_DIR/discord-ipc-0` | Enable **Rich Presence via arRPC** in Vesktop. The plugin also probes `$XDG_RUNTIME_DIR/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-*` (and `/run/user/<uid>/…` when XDG is missing). Keep the desktop client running. |
 | Wrong / missing art | Assets not yet propagated, or wrong Application ID | Confirm keys `orca`, `state-working`, `state-blocked`, `state-waiting`, `state-idle` |
 | `activate` killed at startup | Handshake blocked the ready timeout | First refresh is fire-and-forget; if you changed that, restore it |
 
@@ -220,7 +221,7 @@ TypeScript sources carry JSDoc (`@module`, `@author Jonathan Marien`, `@date`) o
 
 - No file-level presence (Orca host API v0 exposes none).
 - Machine name is the **Orca client** hostname (`os.hostname()` in the plugin worker), not an SSH remote host.
-- Requires the Discord desktop client.
+- Requires the Discord desktop client (or Vesktop + arRPC) **on the Orca host**, signed in. A remote UI (e.g. Windows → Omarchy) does not need its own plugin install; see [ROADMAP.md](ROADMAP.md).
 - Presence starts on the first agent/worktree event, command, or 90 s heartbeat — not at bare app launch.
 - Idle-reap survival depends on a 90 s `workspace.readContext` heartbeat (worker is reaped after 5 minutes of no host calls).
 - v0.2 has no settings panel; toggles are commands only.
@@ -235,7 +236,7 @@ TypeScript sources carry JSDoc (`@module`, `@author Jonathan Marien`, `@date`) o
 | Idle 7+ minutes with desktop client open | Presence still live (heartbeat) |
 | Quit then restart desktop client | Silent degrade; returns within one heartbeat (≤90 s) |
 | Agent tool-use burst | At most one `SET_ACTIVITY` per 15 s |
-| Linux env-stripped worker | Socket via `/run/user/<uid>/` (and Flatpak/Snap nests) |
+| Linux env-stripped worker | Socket via `/run/user/<uid>/` (official Discord Flatpak/Snap nests, plus Vesktop Flatpak arRPC) |
 | SSH workspace | Presence reflects workspace; machine name if enabled is local |
 
 Manual install/consent/live-presence checks need the desktop client. The Application ID in `src/presence/settings.ts` is already the shipped snowflake.

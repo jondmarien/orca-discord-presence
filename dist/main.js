@@ -10,7 +10,12 @@ import os from "node:os";
 
 // src/discord/ipc.ts
 var SOCKET_INDEX_LIMIT = 10;
-var SANDBOX_SUBDIRS = ["", "app/com.discordapp.Discord", "snap.discord"];
+var SANDBOX_SUBDIRS = [
+  "",
+  "app/com.discordapp.Discord",
+  "snap.discord",
+  ".flatpak/dev.vencord.Vesktop/xdg-run"
+];
 var OPCODE = {
   HANDSHAKE: 0,
   FRAME: 1,

@@ -28,6 +28,26 @@ test('linux covers flatpak and snap nesting', () => {
   expect(paths.includes('/run/user/1000/snap.discord/discord-ipc-0')).toBe(true)
 })
 
+test('linux covers Vesktop Flatpak arRPC nesting', () => {
+  const paths = discordIpcCandidates({ platform: 'linux', env: {}, uid: 1000 })
+  expect(paths.includes('/run/user/1000/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-0')).toBe(
+    true
+  )
+  expect(paths.includes('/run/user/1000/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-9')).toBe(
+    true
+  )
+  // Existing unsandboxed + official Discord / Snap candidates stay first.
+  expect(paths.indexOf('/run/user/1000/discord-ipc-0')).toBeLessThan(
+    paths.indexOf('/run/user/1000/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-0')
+  )
+  expect(paths.indexOf('/run/user/1000/app/com.discordapp.Discord/discord-ipc-0')).toBeLessThan(
+    paths.indexOf('/run/user/1000/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-0')
+  )
+  expect(paths.indexOf('/run/user/1000/snap.discord/discord-ipc-0')).toBeLessThan(
+    paths.indexOf('/run/user/1000/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-0')
+  )
+})
+
 test('an explicit XDG_RUNTIME_DIR wins over the reconstructed one', () => {
   const paths = discordIpcCandidates({
     platform: 'linux',
@@ -35,6 +55,7 @@ test('an explicit XDG_RUNTIME_DIR wins over the reconstructed one', () => {
     uid: 1000
   })
   expect(paths[0]).toBe('/custom/run/discord-ipc-0')
+  expect(paths.includes('/custom/run/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-0')).toBe(true)
 })
 
 test('trailing separators do not produce doubled slashes', () => {
