@@ -43,8 +43,8 @@ export type PresenceSettings = {
   detailLevel: DetailLevel
   /**
    * Discord Application ID (snowflake). Defaults to
-   * {@link SHIPPED_APPLICATION_ID}. v0.2 has no user-facing override UI;
-   * a 17–20 digit string is still accepted if persisted.
+   * {@link SHIPPED_APPLICATION_ID}. Override via **Configure**; empty
+   * restores the shipped id. A 17–20 digit string is accepted.
    */
   applicationId: string
   /**

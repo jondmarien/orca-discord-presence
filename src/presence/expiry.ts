@@ -1,12 +1,11 @@
 /**
- * Activity expiry windows for future focus / tool providers.
+ * Activity expiry windows for the agent table and future focus / tool
+ * providers.
  *
- * Issue encountered in a prior Discord RPC integration: sticky tool states
- * (short ~30s chatter vs long ~60s work) need an expiry so Discord does
- * not keep showing a surface the user already left. Same idea applies
- * here when focused-window/tab providers land (#7). This plugin does
- * **not** rotate providers yet — presence is still agent status +
- * workspace snapshot only. Wire {@link isActivityFresh} then.
+ * {@link AGENT_RETENTION_MS} drops stale multi-agent slots (#15).
+ * {@link ACTIVITY_EXPIRY_MS} (short ~30s / long ~60s) is the older
+ * helper for when focused-window/tab providers land (#7). This plugin
+ * does **not** rotate providers yet. Wire {@link isActivityFresh} then.
  *
  * @module presence/expiry
  * @author Jonathan Marien

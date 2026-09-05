@@ -80,8 +80,9 @@ export type DiscordActivity = {
 }
 
 /**
- * Allowed Orca agent states (`AGENT_STATUS_STATES`) and their Discord
- * labels / Rich Presence asset keys. Anything else is treated as idle so a
+ * Canonical agent states and their Discord labels / Rich Presence asset
+ * keys. Incoming host strings are folded through
+ * {@link canonicalizeAgentState} first; anything unknown becomes idle so a
  * future or malformed state can never be transmitted verbatim.
  */
 const AGENT_STATE_LABELS = {
@@ -90,8 +91,6 @@ const AGENT_STATE_LABELS = {
   waiting: { label: 'waiting for input', asset: 'state-waiting' },
   done: { label: 'idle', asset: 'state-idle' }
 } as const
-
-const IDLE = AGENT_STATE_LABELS.done
 
 /**
  * Truncate to Discord's 128-character text limit, appending an ellipsis.

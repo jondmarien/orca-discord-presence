@@ -43,6 +43,8 @@ export type PresencePanelFields = {
   showElapsed: boolean
   bridgeEnabled: boolean
   debugLogging: boolean
+  showOpenButton: boolean
+  showAgentCount: boolean
 }
 
 /**
@@ -122,7 +124,7 @@ export function formatPanelStatusToast(snapshot: PresencePanelSnapshot): string 
 
 /**
  * Build a redacted snapshot. `applicationId`, `bridgeToken`, `bridgeUrl`,
- * and `machineLabel` are intentionally omitted.
+ * `machineLabel`, and `openUrl` are intentionally omitted.
  */
 export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): PresencePanelSnapshot {
   const { version, status, settings, logs, now = new Date() } = input
@@ -147,7 +149,9 @@ export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): P
       showMachine: settings.showMachine,
       showElapsed: settings.showElapsed,
       bridgeEnabled: settings.bridgeEnabled,
-      debugLogging: settings.debugLogging
+      debugLogging: settings.debugLogging,
+      showOpenButton: settings.showOpenButton,
+      showAgentCount: settings.showAgentCount
     },
     logs: logs.map(redactPanelLogLine),
     logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT

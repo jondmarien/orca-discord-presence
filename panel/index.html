@@ -289,13 +289,17 @@
           <label><input type="checkbox" disabled id="f-elapsed" /> Elapsed timer</label>
           <label><input type="checkbox" disabled id="f-bridge" /> Companion bridge</label>
           <label><input type="checkbox" disabled id="f-debug" /> Debug logging</label>
+          <label><input type="checkbox" disabled id="f-open-button" /> Open button</label>
+          <label><input type="checkbox" disabled id="f-agent-count" /> Agent count</label>
         </div>
         <p class="hint">Palette commands</p>
         <ul class="palette note">
           <li>Discord Presence: Enable/Disable</li>
           <li>Discord Presence: Cycle Detail Level</li>
           <li>Discord Presence: Reload RPC</li>
-          <li>Discord Presence: Toggle Branch / Agent State / Terminals / Machine / Elapsed / Bridge / Debug</li>
+          <li>Discord Presence: Toggle Branch / Agent State / Terminals / Machine / Elapsed / Bridge / Debug / Open Button / Agent Count</li>
+          <li>Discord Presence: Clear — wipe presence without disabling</li>
+          <li>Discord Presence: Configure — Application ID, openUrl (invokeCommand args)</li>
         </ul>
       </div>
 
@@ -493,6 +497,8 @@
         setChecked('f-elapsed', fields.showElapsed)
         setChecked('f-bridge', fields.bridgeEnabled)
         setChecked('f-debug', fields.debugLogging)
+        setChecked('f-open-button', fields.showOpenButton)
+        setChecked('f-agent-count', fields.showAgentCount)
         var logView = $('log-view')
         if (snapshot.logs && snapshot.logs.length) {
           logView.textContent = snapshot.logs.join('\n')

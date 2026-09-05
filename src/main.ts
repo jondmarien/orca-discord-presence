@@ -15,7 +15,9 @@
 import os from 'node:os'
 import { inspectApplicationId } from './discord/app-id'
 import { createDiscordClient } from './discord/client'
+import { createAgentTable, parseAgentStatusPayload, parseWorktreeRemovedId } from './presence/agents'
 import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
+import { applyConfigure } from './presence/configure'
 import { createPresenceController, type PresenceController } from './presence/controller'
 import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
@@ -72,7 +74,9 @@ const TOGGLE_COMMANDS = {
   'presence.toggle-machine': 'showMachine',
   'presence.toggle-elapsed': 'showElapsed',
   'presence.toggle-bridge': 'bridgeEnabled',
-  'presence.debug-logging': 'debugLogging'
+  'presence.debug-logging': 'debugLogging',
+  'presence.toggle-open-button': 'showOpenButton',
+  'presence.toggle-agent-count': 'showAgentCount'
 } as const
 
 /**
@@ -91,6 +95,8 @@ type ToggleCommandId = keyof typeof TOGGLE_COMMANDS
 type AgentStatusPayload = {
   state: string
   receivedAt: number
+  worktreeId?: string
+  paneKey?: string
 }
 
 /**
@@ -113,8 +119,11 @@ export type OrcaHost = {
   /** Write a line to the plugin log (also used by **Show Status**). */
   log: (message: string) => void
   commands: {
-    /** Register a command contributed in `orca-plugin.json`. */
-    register: (id: string, handler: () => Promise<unknown>) => void
+    /**
+     * Register a command contributed in `orca-plugin.json`.
+     * Host `invokeCommand` may pass optional `args`.
+     */
+    register: (id: string, handler: (args?: Record<string, unknown>) => Promise<unknown>) => void
   }
   events: {
     /**
@@ -133,12 +142,27 @@ export type OrcaHost = {
 }
 
 let controller: PresenceController | null = null
+let agentTable: ReturnType<typeof createAgentTable> | null = null
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
 let logRing: LogRing | null = null
 let panelWriteTimer: ReturnType<typeof setTimeout> | null = null
 let panelWriteNoted = false
 let deactivated = false
+
+/**
+ * Public configure view (no bridge token). Used by **Configure** help/result.
+ */
+function publicConfigureView(settings: PresenceSettings) {
+  return {
+    applicationId: settings.applicationId,
+    shippedApplicationId: settings.applicationId === SHIPPED_APPLICATION_ID,
+    openUrl: settings.openUrl,
+    showOpenButton: settings.showOpenButton,
+    openButtonLabel: settings.openButtonLabel,
+    showAgentCount: settings.showAgentCount
+  }
+}
 
 /**
  * Embed a redacted snapshot into `panel/index.html` when the install is
@@ -249,24 +273,44 @@ export default async function activate(orca: OrcaHost) {
     })
   }
 
-  controller = createPresenceController({
-    client: createDiscordClient({
-      clientId: settings.applicationId,
-      log: (message, level = 'error') => diagnostics?.line(level, 'discord.client', { reason: message })
-    }),
-    bridge: createBridgeTransport({
-      log: (message) => diagnostics?.line('error', 'bridge.transport', { reason: message })
-    }),
-    settings,
-    diagnostics,
-    log: (message) => orca.log(message)
+  function createController(nextSettings: PresenceSettings): PresenceController {
+    return createPresenceController({
+      client: createDiscordClient({
+        clientId: nextSettings.applicationId,
+        log: (message, level = 'error') => diagnostics?.line(level, 'discord.client', { reason: message })
+      }),
+      bridge: createBridgeTransport({
+        log: (message) => diagnostics?.line('error', 'bridge.transport', { reason: message })
+      }),
+      settings: nextSettings,
+      diagnostics: diagnostics ?? undefined,
+      log: (message) => orca.log(message)
+    })
+  }
+
+  let pushAgentRefresh: () => void = () => {}
+  agentTable = createAgentTable({
+    now: () => Date.now(),
+    setTimer: (fn, ms) => {
+      const timer = setTimeout(fn, ms)
+      timer.unref?.()
+      return timer
+    },
+    onChange: () => {
+      pushAgentRefresh()
+    }
   })
+
+  controller = createController(settings)
 
   /**
    * Persist every settings field through `settings.set`, then push the
    * normalized object into the controller (which bypasses the debounce).
+   * A changed Application ID recreates the Discord client (handshake
+   * `client_id` is fixed at construct time).
    */
   async function persist(nextSettings: PresenceSettings) {
+    const applicationIdChanged = nextSettings.applicationId !== settings.applicationId
     settings = nextSettings
     diagnostics?.setDebugEnabled(nextSettings.debugLogging)
     for (const [key, value] of Object.entries(nextSettings)) {
@@ -275,46 +319,75 @@ export default async function activate(orca: OrcaHost) {
         orca.log(`failed to persist ${key}: ${message}`)
       })
     }
-    await controller?.setSettings(nextSettings)
+    if (applicationIdChanged) {
+      diagnostics?.line('info', 'discord.app_id_rebind', { applicationId: nextSettings.applicationId })
+      await controller?.stop()
+      controller = createController(nextSettings)
+    } else {
+      await controller?.setSettings(nextSettings)
+    }
     publishPanelSnapshot('immediate')
   }
 
   /**
-   * Merge workspace context (or a minimal snapshot) into the controller.
+   * Merge workspace context and the agent table into the controller.
    *
    * A missing `workspace.readContext` used to return without `update`, so
    * generic “Working in Orca” never appeared. We still publish a minimal
    * snapshot (`machineName` + optional agent fields) in that case.
    */
-  async function refresh(agentState?: AgentStatusPayload, options: { force?: boolean } = {}) {
+  async function refresh(
+    agentEvent?: AgentStatusPayload | null,
+    options: { force?: boolean; resume?: boolean } = {}
+  ) {
+    if (agentEvent) {
+      const parsed = parseAgentStatusPayload(agentEvent, Date.now())
+      if (parsed) {
+        agentTable?.upsert(parsed)
+      }
+    }
+    const summary = agentTable?.summarize() ?? {
+      agentCount: 0,
+      agentState: undefined,
+      stateStartedAtMs: undefined
+    }
     const context = (await orca.host.call('workspace.readContext').catch(() => null)) as
       | WorkspaceContext
       | null
     if (!context) {
       diagnostics?.line('debug', 'refresh.minimal', { reason: 'no workspace context' })
-    } else if (agentState) {
+    } else if (agentEvent) {
       diagnostics?.line('debug', 'refresh', {
         source: 'agent.status.changed',
-        agentState: agentState.state
+        agentState: summary.agentState ?? 'idle',
+        agents: summary.agentCount
       })
     }
-    await controller?.update({
-      machineName: os.hostname(),
-      ...(context
-        ? {
-            displayName: context.displayName,
-            branch: context.branch,
-            terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
-          }
-        : {}),
-      ...(agentState
-        ? { agentState: agentState.state, stateStartedAtMs: agentState.receivedAt }
-        : {})
-    })
+    const resume = Boolean(options.resume || agentEvent)
+    await controller?.update(
+      {
+        machineName: os.hostname(),
+        ...(context
+          ? {
+              displayName: context.displayName,
+              branch: context.branch,
+              terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
+            }
+          : {}),
+        agentState: summary.agentState,
+        stateStartedAtMs: summary.stateStartedAtMs,
+        agentCount: summary.agentCount
+      },
+      resume ? { resume: true } : undefined
+    )
     if (options.force) {
-      await controller?.forceTransmit()
+      await controller?.forceTransmit(resume)
     }
     publishPanelSnapshot('debounced')
+  }
+
+  pushAgentRefresh = () => {
+    void refresh()
   }
 
   orca.commands.register('presence.toggle', async () => {
@@ -341,7 +414,7 @@ export default async function activate(orca: OrcaHost) {
   }
 
   orca.commands.register('presence.status', async () => {
-    await refresh(undefined, { force: true })
+    await refresh(undefined, { force: true, resume: true })
     const status = controller?.status()
     const file = status?.logFile ?? diagnostics?.filePath ?? ''
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null)
@@ -384,13 +457,68 @@ export default async function activate(orca: OrcaHost) {
     return status
   })
 
+  orca.commands.register('presence.clear', async () => {
+    diagnostics?.line('info', 'discord.clear_command')
+    await controller?.clear()
+    const status = controller?.status()
+    const summary = `cleared enabled=${status?.enabled} heldClear=${status?.heldClear} sink=${status?.sink}`
+    diagnostics?.line('info', 'discord.clear_done', {
+      enabled: status?.enabled,
+      heldClear: status?.heldClear,
+      sink: status?.sink
+    })
+    await orca.host.call('notifications.show', {
+      title: 'Discord Rich Presence',
+      body: `${summary} Presence is cleared until the next agent event, Show Status, Reload RPC, or a settings change. enabled stays on.`
+    })
+    publishPanelSnapshot('immediate')
+    return status
+  })
+
+  orca.commands.register('presence.configure', async (args) => {
+    const result = applyConfigure(settings, args ?? {})
+    if (!result.ok) {
+      diagnostics?.line('error', 'presence.configure_failed', { reason: result.error })
+      await orca.host.call('notifications.show', {
+        title: 'Discord Rich Presence',
+        body: result.error
+      })
+      return result
+    }
+    if (result.changed.length === 0) {
+      const view = publicConfigureView(settings)
+      const hint =
+        'Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.'
+      const body = `applicationId=${view.shippedApplicationId ? 'shipped' : view.applicationId} openUrl=${view.openUrl || '(empty)'} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} label=${view.openButtonLabel}`
+      await orca.host.call('notifications.show', {
+        title: 'Discord Rich Presence',
+        body: `${body} ${hint}`
+      })
+      return { ok: true, ...view, hint, changed: [] }
+    }
+    await persist(result.settings)
+    await refresh(undefined, { resume: true })
+    const view = publicConfigureView(settings)
+    diagnostics?.line('info', 'presence.configure', { changed: result.changed })
+    await orca.host.call('notifications.show', {
+      title: 'Discord Rich Presence',
+      body: `updated ${result.changed.join(', ')}`
+    })
+    return { ok: true, changed: result.changed, ...view }
+  })
+
   orca.events.on('agent.status.changed', async (payload) => {
-    await refresh(payload as AgentStatusPayload)
+    const parsed = parseAgentStatusPayload(payload, Date.now())
+    await refresh(parsed ?? undefined)
   })
   orca.events.on('worktree.created', async () => {
     await refresh()
   })
-  orca.events.on('worktree.removed', async () => {
+  orca.events.on('worktree.removed', async (payload) => {
+    const worktreeId = parseWorktreeRemovedId(payload)
+    if (worktreeId) {
+      agentTable?.removeWorktree(worktreeId)
+    }
     await refresh()
   })
 
@@ -426,6 +554,8 @@ export async function deactivate() {
     panelWriteTimer = null
   }
   diagnostics?.line('info', 'deactivate')
+  agentTable?.clear()
+  agentTable = null
   await controller?.stop()
   controller = null
   diagnostics = null

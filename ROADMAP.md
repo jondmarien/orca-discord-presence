@@ -93,11 +93,12 @@ Closed [#3](https://github.com/jondmarien/orca-discord-presence/issues/3) was th
 - [x] Document the dual-host gap in README + ROADMAP
 - [x] Optional OS-agnostic companion + plugin HTTP bridge (privacy-first, default off) — [#6](https://github.com/jondmarien/orca-discord-presence/pull/6)
 - [x] Diagnostics panel MVP within today’s panel actions (v0.4)
+- [x] Clear, opt-in presence button, configure, multi-agent summary, retention, richer aliases — [#15](https://github.com/jondmarien/orca-discord-presence/issues/15) (v0.5)
 - [ ] Full Orca-native remote capability / host-mediated presence (PRs on `stablyai/orca`)
 - [ ] Richer host capability APIs (projections for where the worker runs, which machine owns Discord, optional off-box sink) — Track B in `PLAN.md`
 - [ ] Active-tab / focus events if the host ever exposes them (activity expiry helper is already in `src/presence/expiry.ts`; do not invent a second window) — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7)
 - [ ] Provider priority + rotation once multiple surfaces exist (#7 / #8 deferred)
 - [ ] Panel-callable `settings.*` / `storage.*` (B4) so the diagnostics panel can become a real settings + live log UI
-- [ ] Feature additions that still need host APIs — file-level presence; writable settings panel; user-facing Application ID override; SSH/runtime host labels instead of `os.hostname()`
+- [ ] Feature additions that still need host APIs — file-level presence; writable settings panel; SSH/runtime host labels instead of `os.hostname()`. Application ID override is command-first as of v0.5 ([#15](https://github.com/jondmarien/orca-discord-presence/issues/15)); a panel form still needs [#10](https://github.com/jondmarien/orca-discord-presence/issues/10).
 
 None of the remaining items is required for the companion MVP.
