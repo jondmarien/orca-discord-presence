@@ -12,7 +12,7 @@ Every identifying field is **opt-in**. The default detail level (`generic`) neve
 
 Browser Discord has **no** IPC socket. Presence will never appear if only the web client is open.
 
-Deeper notes: [Architecture](docs/architecture.md) · [Privacy](docs/privacy.md)
+Deeper notes: [Architecture](docs/architecture.md) · [Privacy](docs/privacy.md) · [Roadmap](ROADMAP.md)
 
 ---
 
@@ -221,7 +221,7 @@ TypeScript sources carry JSDoc (`@module`, `@author Jonathan Marien`, `@date`) o
 
 - No file-level presence (Orca host API v0 exposes none).
 - Machine name is the **Orca client** hostname (`os.hostname()` in the plugin worker), not an SSH remote host.
-- Requires the Discord desktop client.
+- Requires the Discord desktop client (or Vesktop + arRPC) **on the Orca host**, signed in. A remote UI (e.g. Windows → Omarchy) does not need its own plugin install; see [ROADMAP.md](ROADMAP.md).
 - Presence starts on the first agent/worktree event, command, or 90 s heartbeat — not at bare app launch.
 - Idle-reap survival depends on a 90 s `workspace.readContext` heartbeat (worker is reaped after 5 minutes of no host calls).
 - v0.2 has no settings panel; toggles are commands only.
