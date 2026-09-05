@@ -389,6 +389,7 @@ Authenticated requests send `Authorization: Bearer <token>`. `GET /health` is un
 | Presence vanished after ~5 minutes idle | Worker idle-reap (no host calls) | Heartbeat should prevent this; confirm the plugin is still enabled |
 | Stale branch on the profile | Branch switches emit no host event | Wait for the 90 s heartbeat, or run **Show Status** / any toggle |
 | Presence lags during agent tool-use | Discord rate limit | Expected: at most one `SET_ACTIVITY` per 15 s; newest state wins |
+| Manual smoke activity shows, live plugin does not stick | Another IPC client or Discord restart replaced our payload; we used to skip identical JSON | Fixed: heartbeat and **Show Status** force a re-`SET_ACTIVITY`. Run Show Status once to republish now. |
 | Linux worker cannot find the socket | `XDG_RUNTIME_DIR` stripped from the worker env | Plugin reconstructs `/run/user/<uid>/` and Flatpak/Snap nests |
 | Vesktop Flatpak + arRPC, no presence | Socket is inside the Vesktop sandbox, not at `$XDG_RUNTIME_DIR/discord-ipc-0` | Enable **Rich Presence via arRPC** in Vesktop. The plugin also probes `$XDG_RUNTIME_DIR/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-*` (and `/run/user/<uid>/…` when XDG is missing). Keep the desktop client running. |
 | Host has agents, Discord is on another OS, no presence | Local IPC cannot cross machines; bridge off by default | Run the companion on the Discord machine and enable the bridge — [Cross-machine companion](#cross-machine-companion-linux--macos--windows) |
