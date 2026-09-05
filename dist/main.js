@@ -1429,10 +1429,19 @@ function createLogRing(capacity = PANEL_LOG_RING_SIZE) {
 // src/presence/panel-html.ts
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+// src/version.ts
+var PLUGIN_VERSION = "0.5.0";
+
+// src/presence/panel-html.ts
 var PANEL_HTML_ENV = "ORCA_PRESENCE_PANEL_HTML";
 var PANEL_WRITE_SKIP_ENV = "ORCA_PRESENCE_SKIP_PANEL_WRITE";
 var PANEL_SNAPSHOT_SCRIPT_ID = "presence-snapshot";
+var PANEL_VERSION_SCRIPT_ID = "plugin-version";
 var SNAPSHOT_SCRIPT_RE = /<script id="presence-snapshot" type="application\/json">[\s\S]*?<\/script>/;
+var VERSION_SCRIPT_RE = /<script id="plugin-version" type="application\/json">[\s\S]*?<\/script>/;
+var VERSION_BADGE_RE = /(<[^>]*\bid="version-badge"[^>]*>)[\s\S]*?(<\/span>)/;
+var ABOUT_VERSION_RE = /(<[^>]*\bid="about-version"[^>]*>)[\s\S]*?(<\/dd>)/;
 function resolvePanelHtmlPath(env, metaUrl) {
   const skip = env[PANEL_WRITE_SKIP_ENV];
   if (skip === "1" || skip === "true") {
@@ -1451,12 +1460,26 @@ function resolvePanelHtmlPath(env, metaUrl) {
 function serializePanelSnapshot(snapshot) {
   return JSON.stringify(snapshot).replace(/</g, "\\u003c");
 }
+function stampPanelVersion(html, version) {
+  const script = `<script id="${PANEL_VERSION_SCRIPT_ID}" type="application/json">${JSON.stringify(version)}</script>`;
+  let next = html;
+  if (VERSION_SCRIPT_RE.test(next)) {
+    next = next.replace(VERSION_SCRIPT_RE, script);
+  } else if (SNAPSHOT_SCRIPT_RE.test(next)) {
+    next = next.replace(SNAPSHOT_SCRIPT_RE, (match) => `${match}
+    ${script}`);
+  }
+  next = next.replace(VERSION_BADGE_RE, `$1v${version}$2`);
+  next = next.replace(ABOUT_VERSION_RE, `$1${version}$2`);
+  return next;
+}
 function embedPanelSnapshot(html, snapshot) {
   if (!SNAPSHOT_SCRIPT_RE.test(html)) {
     throw new Error("panel snapshot marker missing");
   }
   const json = serializePanelSnapshot(snapshot);
-  return html.replace(SNAPSHOT_SCRIPT_RE, `<script id="${PANEL_SNAPSHOT_SCRIPT_ID}" type="application/json">${json}</script>`);
+  const replaced = html.replace(SNAPSHOT_SCRIPT_RE, `<script id="${PANEL_SNAPSHOT_SCRIPT_ID}" type="application/json">${json}</script>`);
+  return stampPanelVersion(replaced, snapshot?.version ?? PLUGIN_VERSION);
 }
 function writePanelSnapshot(filePath, snapshot) {
   try {
@@ -1527,9 +1550,6 @@ function buildPresencePanelSnapshot(input) {
     logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT
   };
 }
-
-// src/version.ts
-var PLUGIN_VERSION = "0.5.0";
 
 // src/main.ts
 var HEARTBEAT_MS = 90000;
