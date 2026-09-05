@@ -6,7 +6,7 @@
 
 **Workspace, branch, and agent state on your Discord profile — every identifying field is opt-in.**
 
-[![Version](https://img.shields.io/badge/v0.4.0-blue.svg)](orca-plugin.json)
+[![Version](https://img.shields.io/badge/v0.4.1-blue.svg)](orca-plugin.json)
 [![Latest release](https://img.shields.io/github/v/release/jondmarien/orca-discord-presence?label=latest%20release)](https://github.com/jondmarien/orca-discord-presence/releases/latest)
 [![Orca plugin](https://img.shields.io/badge/Orca-chron0.discord--presence-5c6bc0)](orca-plugin.json)
 [![Bun](https://img.shields.io/badge/Bun-1.4+-000000?logo=bun&logoColor=white)](https://bun.sh)
@@ -132,7 +132,7 @@ Direct download (filename is stable; contents change with each release):
 
 Unzip it. You need the folder that contains `orca-plugin.json` (and `dist/main.js`). Orca does **not** install from the `.zip` file itself.
 
-Each `main` push publishes a new release. The product version inside `orca-plugin.json` is `0.4.0`; GitHub tags look like `v0.4.0-<sha>` so every build is unique. Put `[skip release]` in a commit message to skip a release.
+Each `main` push publishes a new release. The product version inside `orca-plugin.json` is `0.4.1`; GitHub tags look like `v0.4.1-<sha>` so every build is unique. Put `[skip release]` in a commit message to skip a release.
 
 ### 3. Load the folder in Orca
 
@@ -177,7 +177,7 @@ Then load the **repository root** (the folder that contains `orca-plugin.json`) 
 
 - **Settings → Plugins → Install plugin → Local folder** — same as the zip, pointed at your checkout.
 - **Settings → Plugins → Development → Add path** — live `devPluginPaths` checkout (still requires consent).
-- **Settings → Plugins → Install plugin → Git URL** — pin a tag or commit: `https://github.com/jondmarien/orca-discord-presence.git#<tag>`. Copy the exact tag from [the latest release](https://github.com/jondmarien/orca-discord-presence/releases/latest) (after CI: `v0.4.0-<sha>`).
+- **Settings → Plugins → Install plugin → Git URL** — pin a tag or commit: `https://github.com/jondmarien/orca-discord-presence.git#<tag>`. Copy the exact tag from [the latest release](https://github.com/jondmarien/orca-discord-presence/releases/latest) (after CI: `v0.4.1-<sha>`).
 
 Commit `dist/main.js` when TypeScript sources change so a checkout or marketplace clone works without a local build.
 
@@ -324,11 +324,11 @@ v0.4 contributes one experimental panel:
 |---|---|
 | `id` | `presence` |
 | Title | Discord Presence |
-| Icon | Lucide `radio` |
+| Icon | Lucide `settings` |
 | Entry | `panel/index.html` |
 | Sidebar tab | `plugin:chron0.discord-presence/presence` |
 
-**Open it:** enable the plugin, then open Orca’s **right sidebar** and click the Discord Presence (radio) activity-bar icon.
+**Open it:** enable the plugin, then open Orca’s **right sidebar** and click the Discord Presence (settings / gear) activity-bar icon.
 
 The iframe is sandboxed. Host CSP is `default-src 'none'; connect-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:` (plus host extras). The panel cannot `fetch`, read files, or call `settings.*` / `storage.*` / `secrets.*` / `events.subscribe` / command invoke.
 
@@ -358,7 +358,7 @@ A real settings + live log panel still needs host work tracked on [#10](https://
 | `info` / `debug` | When `debugLogging` is on (default **on**) |
 
 ```
-[chron0.discord-presence] info activate version=0.4.0 debug=true file=/home/you/.local/state/chron0-discord-presence/plugin.log
+[chron0.discord-presence] info activate version=0.4.1 debug=true file=/home/you/.local/state/chron0-discord-presence/plugin.log
 [chron0.discord-presence] error discord.connect_failed reason="no discord ipc socket accepted a connection"
 [chron0.discord-presence] info discord.set_activity sink=local details="Working in Orca"
 ```
@@ -396,7 +396,7 @@ bun run build
 
 Commit `dist/main.js` when TypeScript sources change so a checkout or marketplace clone works without a local build. Zero production dependencies. File-level JSDoc only (`@module`, `@author Jonathan Marien`, `@date`).
 
-Each push to `main` (unless the commit message contains `[skip release]`) runs `bun test` + `bun run build` and publishes `chron0.discord-presence.zip` on [GitHub Releases](https://github.com/jondmarien/orca-discord-presence/releases/latest). Tags are `v{product-version}-{sha7}`; `orca-plugin.json` / `package.json` stay at the product version (`0.4.0` after this release). The zip includes `panel/` when that folder is present.
+Each push to `main` (unless the commit message contains `[skip release]`) runs `bun test` + `bun run build` and publishes `chron0.discord-presence.zip` on [GitHub Releases](https://github.com/jondmarien/orca-discord-presence/releases/latest). Tags are `v{product-version}-{sha7}`; `orca-plugin.json` / `package.json` stay at the product version (`0.4.1` after this release). The zip includes `panel/` when that folder is present.
 
 Module map, opcodes, and debounce: [docs/architecture.md](docs/architecture.md).
 

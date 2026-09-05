@@ -97,7 +97,7 @@ A user command that changes settings bypasses the debounce so the palette feels 
 
 ## Sidebar panel
 
-`orca-plugin.json` contributes one panel (`id: presence`, Lucide `radio`, `panel/index.html`). The host loads that HTML in a sandboxed iframe (`plugin:chron0.discord-presence/presence`).
+`orca-plugin.json` contributes one panel (`id: presence`, Lucide `settings`, `panel/index.html`). The host loads that HTML in a sandboxed iframe (`plugin:chron0.discord-presence/presence`).
 
 The panel talks to the host only through `postMessage`:
 

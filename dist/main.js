@@ -1151,7 +1151,7 @@ function toggleField(settings, field) {
 }
 
 // src/version.ts
-var PLUGIN_VERSION = "0.4.0";
+var PLUGIN_VERSION = "0.4.1";
 
 // src/main.ts
 var HEARTBEAT_MS = 90000;

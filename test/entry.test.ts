@@ -28,7 +28,7 @@ test('manifest identity is chron0.discord-presence', () => {
   expect(pkg.version).toBe(PLUGIN_VERSION)
   expect(manifest.id.includes('prescence')).toBe(false)
   expect(manifest.contributes.panels).toEqual([
-    { id: 'presence', title: 'Discord Presence', icon: 'radio', entry: 'panel/index.html' }
+    { id: 'presence', title: 'Discord Presence', icon: 'settings', entry: 'panel/index.html' }
   ])
   expect(manifest.contributes.commands.some((command) => command.id === 'presence.reload')).toBe(true)
   expect(manifest.capabilities.some((cap) => cap.kind === 'terminal:send')).toBe(false)
