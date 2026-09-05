@@ -72,7 +72,7 @@ Controlling Orca from another machine does **not** require installing this plugi
 
 ## What we do not detect
 
-No file-level presence. On the fork, focused surface is opt-in (`ui.focus.changed` + `readContext.focusedSurface`, plus feature-detected `ui.readFocus` and surface `worktreeId` / `agentId` when the host ships them). Join keys are never displayed. Remote UI focus is sampled on the UI machine and forwarded by the host. Stock `stablyai/orca` cannot load the 0.6.1 manifest. See [#7](https://github.com/jondmarien/orca-discord-presence/issues/7).
+No file-level presence. On [`jondmarien/orca`](https://github.com/jondmarien/orca) `main` as of [\#8](https://github.com/jondmarien/orca/pull/8) (`096f26bd`), focused surface is opt-in (`ui.focus.changed` + `readContext.focusedSurface` + `ui.readFocus`, with optional surface `worktreeId` / `agentId`). Join keys are never displayed. Remote UI focus is sampled on the UI machine and forwarded by the host. Stock `stablyai/orca` cannot load the 0.6.1 manifest. See [#7](https://github.com/jondmarien/orca-discord-presence/issues/7).
 
 ---
 
@@ -95,7 +95,7 @@ Closed [#3](https://github.com/jondmarien/orca-discord-presence/issues/3) was th
 - [x] Diagnostics panel MVP within today’s panel actions (v0.4)
 - [x] Clear, opt-in presence button, configure, multi-agent summary, retention, richer aliases — [#15](https://github.com/jondmarien/orca-discord-presence/issues/15) (v0.5)
 - [x] Consume fork Orca-1…5 (panel settings/storage, execution host + agent labels, focus, sidecar mailbox) — [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) (v0.6 on `develop`)
-- [x] Feature-detect host #8 focus join keys + `ui.readFocus` without blocking on that PR — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) (v0.6.1 on `develop`)
+- [x] Feature-detect host #8 focus join keys + `ui.readFocus` — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) (v0.6.1 on `develop`). Host side merged on fork `main` in [jondmarien/orca#8](https://github.com/jondmarien/orca/pull/8) (`096f26bd`)
 - [ ] Full Orca-native remote capability / UI Discord IPC executor (not this plugin repo)
 - [ ] Provider priority + rotation once multiple surfaces exist (#8 deferred)
 - [ ] File-level presence (host still does not expose the active file)

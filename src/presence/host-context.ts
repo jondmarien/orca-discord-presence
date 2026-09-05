@@ -1,8 +1,8 @@
 /**
  * Parse additive `workspace.readContext` / agent-identity fields from the
- * fork host (Orca-3 / Orca-4 / host #8). Missing keys stay undefined so
- * older hosts keep today's snapshot shape. Join keys on `focusedSurface`
- * are feature-detected and never copied into Discord strings.
+ * fork host (Orca-3 / Orca-4 / host #8 @ `096f26bd`). Missing keys stay
+ * undefined so older hosts keep today's snapshot shape. Join keys on
+ * `focusedSurface` are feature-detected and never copied into Discord strings.
  *
  * @module presence/host-context
  * @author Jonathan Marien

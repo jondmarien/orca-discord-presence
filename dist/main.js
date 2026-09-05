@@ -513,7 +513,7 @@ function parseFocusedSurfaceObject(raw) {
   }
   const title = source.title === null ? null : typeof source.title === "string" && source.title.trim() ? source.title.trim().slice(0, 80) : null;
   const worktreeId = parseOptionalHostJoinKey(source.worktreeId);
-  const agentId = parseOptionalHostJoinKey(source.agentId);
+  const agentId = source.kind === "agent" ? parseOptionalHostJoinKey(source.agentId) : undefined;
   return {
     kind: source.kind,
     title,
