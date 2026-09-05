@@ -3,6 +3,50 @@
 // src/main.ts
 import os2 from "node:os";
 
+// src/discord/app-id.ts
+var APPLICATION_ID_RE = /^\d{17,20}$/;
+function isPlausibleApplicationId(value) {
+  return APPLICATION_ID_RE.test(value.trim());
+}
+function inspectApplicationId(raw, shippedId) {
+  if (typeof raw !== "string") {
+    return {
+      applicationId: shippedId,
+      usedFallback: false,
+      rejectedRaw: null,
+      reason: null
+    };
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return {
+      applicationId: shippedId,
+      usedFallback: true,
+      rejectedRaw: "",
+      reason: "Application ID is empty (expected a 17–20 digit snowflake)"
+    };
+  }
+  if (isPlausibleApplicationId(trimmed) || trimmed === shippedId) {
+    return {
+      applicationId: trimmed,
+      usedFallback: false,
+      rejectedRaw: null,
+      reason: null
+    };
+  }
+  return {
+    applicationId: shippedId,
+    usedFallback: true,
+    rejectedRaw: trimmed,
+    reason: "Application ID is not a 17–20 digit snowflake"
+  };
+}
+function assertPlausibleApplicationId(clientId) {
+  if (!isPlausibleApplicationId(clientId)) {
+    throw new Error("Discord Application ID is invalid (expected a 17–20 digit snowflake). Check the id in settings or use the shipped default.");
+  }
+}
+
 // src/discord/client.ts
 import { randomUUID } from "node:crypto";
 import net from "node:net";
@@ -103,9 +147,44 @@ function createFrameDecoder(onFrame, onError = () => {}) {
   };
 }
 
+// src/discord/retry.ts
+var CONNECT_RETRY_ATTEMPTS = 3;
+var CONNECT_RETRY_INITIAL_MS = 3000;
+var CONNECT_RETRY_MAX_MS = 15000;
+
+class HandshakeNotReadyError extends Error {
+  constructor(message = "Discord IPC handshake returned null data — the client may not be fully initialized. Retry after Discord is fully loaded.") {
+    super(message);
+    this.name = "HandshakeNotReadyError";
+  }
+}
+function isFatalAppIdError(message) {
+  const lower = message.toLowerCase();
+  return lower.includes("404") || lower.includes("not found") || lower.includes("invalid application") || lower.includes("unknown application");
+}
+function isRetryableConnectError(error) {
+  if (error instanceof HandshakeNotReadyError) {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (isFatalAppIdError(message)) {
+    return false;
+  }
+  if (/no discord ipc socket/i.test(message)) {
+    return false;
+  }
+  if (/application id is invalid/i.test(message)) {
+    return false;
+  }
+  return /handshake timed out/i.test(message) || /handshake returned null data/i.test(message) || /not fully initialized/i.test(message) || /connection closed/i.test(message) || /econnreset/i.test(message) || /epipe/i.test(message);
+}
+
 // src/discord/client.ts
 var HANDSHAKE_TIMEOUT_MS = 5000;
 var COMMAND_TIMEOUT_MS = 5000;
+function isHandshakeReadyPayload(payload) {
+  return payload?.evt === "READY" && payload.data != null && typeof payload.data === "object";
+}
 function connectToFirstAvailable(candidates) {
   return new Promise((resolve, reject) => {
     let index = 0;
@@ -140,13 +219,19 @@ function createDiscordClient({
   clientId,
   candidates = defaultCandidates,
   onClose = () => {},
-  log = () => {}
+  log = () => {},
+  handshakeTimeoutMs = HANDSHAKE_TIMEOUT_MS,
+  connectAttempts = CONNECT_RETRY_ATTEMPTS,
+  retryInitialMs = CONNECT_RETRY_INITIAL_MS,
+  retryMaxMs = CONNECT_RETRY_MAX_MS,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 }) {
   let socket = null;
   let connected = false;
   let closeNotified = false;
+  let closed = false;
   const pending = new Map;
-  let onReady = null;
+  let handshakeWait = null;
   function teardown() {
     connected = false;
     for (const entry of pending.values()) {
@@ -164,6 +249,15 @@ function createDiscordClient({
       onClose();
     }
   }
+  function failHandshake(error) {
+    const wait = handshakeWait;
+    handshakeWait = null;
+    if (wait) {
+      clearTimeout(wait.timer);
+    }
+    teardown();
+    wait?.reject(error);
+  }
   function handleFrame(opcode, data) {
     if (opcode === OPCODE.PING) {
       socket?.write(encodeFrame(OPCODE.PONG, data));
@@ -171,7 +265,12 @@ function createDiscordClient({
     }
     const payload = data;
     if (opcode === OPCODE.CLOSE) {
-      log(`discord closed the connection: ${payload?.message ?? "no reason given"}`);
+      const reason = payload?.message ?? "no reason given";
+      log(`discord closed the connection: ${reason}`);
+      if (handshakeWait) {
+        failHandshake(new Error(`discord closed the connection: ${reason}`));
+        return;
+      }
       teardown();
       return;
     }
@@ -179,7 +278,22 @@ function createDiscordClient({
       return;
     }
     if (payload?.evt === "READY") {
-      onReady?.();
+      if (!isHandshakeReadyPayload(payload)) {
+        log("handshake not ready (READY data was null)", "warn");
+        failHandshake(new HandshakeNotReadyError);
+        return;
+      }
+      const wait = handshakeWait;
+      handshakeWait = null;
+      if (wait) {
+        clearTimeout(wait.timer);
+        connected = true;
+        wait.resolve();
+      }
+      return;
+    }
+    if (payload?.evt === "ERROR" && handshakeWait) {
+      failHandshake(new Error(payload.data?.message ?? "discord rejected the handshake"));
       return;
     }
     const entry = payload?.nonce ? pending.get(payload.nonce) : undefined;
@@ -194,36 +308,72 @@ function createDiscordClient({
       entry.resolve(payload.data ?? null);
     }
   }
-  async function connect() {
-    if (connected) {
-      return;
-    }
+  async function connectOnce() {
     closeNotified = false;
+    closed = false;
     socket = await connectToFirstAvailable(candidates());
     const decoder = createFrameDecoder(handleFrame, (error) => {
       const message = error instanceof Error ? error.message : String(error);
       log(`discord frame error: ${message}`);
+      if (handshakeWait) {
+        failHandshake(new Error(message));
+        return;
+      }
       teardown();
     });
     socket.on("data", (chunk) => decoder.push(chunk));
-    socket.on("close", teardown);
+    socket.on("close", () => {
+      if (handshakeWait) {
+        failHandshake(new Error("discord connection closed"));
+        return;
+      }
+      teardown();
+    });
     socket.on("error", (error) => {
       log(`discord socket error: ${error.message}`);
+      if (handshakeWait) {
+        failHandshake(error);
+        return;
+      }
       teardown();
     });
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        teardown();
-        reject(new Error("discord handshake timed out"));
-      }, HANDSHAKE_TIMEOUT_MS);
-      onReady = () => {
-        clearTimeout(timer);
-        onReady = null;
-        connected = true;
-        resolve();
+      handshakeWait = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          failHandshake(new Error("discord handshake timed out"));
+        }, handshakeTimeoutMs)
       };
       socket?.write(encodeFrame(OPCODE.HANDSHAKE, { v: 1, client_id: clientId }));
     });
+  }
+  async function connect() {
+    if (connected) {
+      return;
+    }
+    assertPlausibleApplicationId(clientId);
+    let lastError;
+    const attempts = Math.max(1, connectAttempts);
+    for (let attempt = 1;attempt <= attempts; attempt++) {
+      try {
+        await connectOnce();
+        if (attempt > 1) {
+          log(`connect succeeded on attempt ${attempt}/${attempts}`, "info");
+        }
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (!isRetryableConnectError(lastError) || attempt >= attempts) {
+          log(`connect failed: ${lastError.message}`, "error");
+          throw lastError;
+        }
+        const delay = Math.min(retryInitialMs * 2 ** (attempt - 1), retryMaxMs);
+        log(`connect attempt ${attempt}/${attempts} failed: ${lastError.message}; retrying in ${delay}ms`, "warn");
+        await sleep(delay);
+      }
+    }
+    throw lastError ?? new Error("discord connect failed");
   }
   function command(cmd, args) {
     if (!connected || !socket) {
@@ -245,6 +395,10 @@ function createDiscordClient({
     setActivity: (activity) => command("SET_ACTIVITY", { pid: process.pid, activity }),
     clearActivity: () => command("SET_ACTIVITY", { pid: process.pid, activity: null }),
     async close() {
+      if (closed) {
+        return;
+      }
+      closed = true;
       if (socket && connected) {
         try {
           await command("SET_ACTIVITY", { pid: process.pid, activity: null });
@@ -578,6 +732,7 @@ function createPresenceController({
   let lastSink = null;
   let lastBridgeUrl = null;
   let lastBridgeToken = null;
+  let stopped = false;
   function emit(level, event, detail) {
     if (diagnostics) {
       diagnostics.line(level, event, detail);
@@ -771,6 +926,27 @@ function createPresenceController({
       emit("info", "discord.force_transmit");
       await transmit(true);
     },
+    async reload() {
+      if (pendingTimer) {
+        clearTimer(pendingTimer);
+        pendingTimer = null;
+      }
+      lastSentSerialized = null;
+      stopped = false;
+      emit("info", "discord.reload");
+      try {
+        await client.close();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        emit("error", "discord.reload_close_failed", { reason: message });
+      }
+      await transmit(true);
+      if (!client.isConnected() && lastSink !== "bridge") {
+        emit("error", "discord.reload_failed", {
+          reason: "reconnect did not complete; see discord.connect_failed"
+        });
+      }
+    },
     settings: () => currentSettings,
     status: () => ({
       enabled: currentSettings.enabled && currentSettings.detailLevel !== "off",
@@ -782,6 +958,10 @@ function createPresenceController({
       logFile: diagnostics?.filePath ?? null
     }),
     async stop() {
+      if (stopped) {
+        return;
+      }
+      stopped = true;
       if (pendingTimer) {
         clearTimer(pendingTimer);
         pendingTimer = null;
@@ -811,7 +991,6 @@ var DEFAULT_SETTINGS = Object.freeze({
   debugLogging: true
 });
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
-var APPLICATION_ID_RE = /^\d{17,20}$/;
 function isDetailLevel(value) {
   return typeof value === "string" && DETAIL_LEVELS.includes(value);
 }
@@ -829,16 +1008,7 @@ function normalizeSettings(raw) {
   if (isDetailLevel(source.detailLevel)) {
     settings.detailLevel = source.detailLevel;
   }
-  if (typeof source.applicationId === "string") {
-    const trimmed = source.applicationId.trim();
-    if (APPLICATION_ID_RE.test(trimmed) || trimmed === SHIPPED_APPLICATION_ID) {
-      settings.applicationId = trimmed;
-    } else {
-      settings.applicationId = DEFAULT_SETTINGS.applicationId;
-    }
-  } else {
-    settings.applicationId = DEFAULT_SETTINGS.applicationId;
-  }
+  settings.applicationId = inspectApplicationId(source.applicationId, SHIPPED_APPLICATION_ID).applicationId;
   settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel;
   settings.bridgeUrl = normalizeBridgeUrl(source.bridgeUrl);
   settings.bridgeToken = normalizeBridgeToken(source.bridgeToken);
@@ -878,8 +1048,12 @@ var TOGGLE_COMMANDS = {
 var controller = null;
 var heartbeat = null;
 var diagnostics = null;
+var deactivated = false;
 async function activate(orca) {
+  deactivated = false;
   const stored = await orca.host.call("settings.get").catch(() => ({ settings: {} }));
+  const rawSettings = stored?.settings && typeof stored.settings === "object" ? stored.settings : {};
+  const appId = inspectApplicationId(rawSettings.applicationId, SHIPPED_APPLICATION_ID);
   let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env);
   const logFile = resolveLogFilePath(process.env, {
     homedir: os2.homedir(),
@@ -897,10 +1071,21 @@ async function activate(orca) {
     file: logFile,
     bridge: settings.bridgeEnabled
   });
+  if (appId.usedFallback) {
+    diagnostics.line("error", "discord.app_id_invalid", {
+      reason: appId.reason,
+      rejected: appId.rejectedRaw || "(empty)",
+      fallback: SHIPPED_APPLICATION_ID
+    });
+    orca.host.call("notifications.show", {
+      title: "Discord Rich Presence",
+      body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ""}. Using shipped id. ${appId.reason ?? ""}`
+    });
+  }
   controller = createPresenceController({
     client: createDiscordClient({
       clientId: settings.applicationId,
-      log: (message) => diagnostics?.line("error", "discord.client", { reason: message })
+      log: (message, level = "error") => diagnostics?.line(level, "discord.client", { reason: message })
     }),
     bridge: createBridgeTransport({
       log: (message) => diagnostics?.line("error", "bridge.transport", { reason: message })
@@ -982,6 +1167,24 @@ async function activate(orca) {
     });
     return status;
   });
+  orca.commands.register("presence.reload", async () => {
+    await refresh();
+    diagnostics?.line("info", "discord.reload_command");
+    await controller?.reload();
+    const status = controller?.status();
+    const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
+    const summary = `reloaded connected=${status?.connected} sink=${status?.sink} ${transmitting}`;
+    diagnostics?.line("info", "discord.reload_done", {
+      connected: status?.connected,
+      sink: status?.sink,
+      transmitting: JSON.stringify(status?.lastActivity)
+    });
+    await orca.host.call("notifications.show", {
+      title: "Discord Rich Presence",
+      body: summary
+    });
+    return status;
+  });
   orca.events.on("agent.status.changed", async (payload) => {
     await refresh(payload);
   });
@@ -998,6 +1201,10 @@ async function activate(orca) {
   refresh();
 }
 async function deactivate() {
+  if (deactivated) {
+    return;
+  }
+  deactivated = true;
   if (heartbeat) {
     clearInterval(heartbeat);
     heartbeat = null;
