@@ -1,23 +1,56 @@
-import { buildActivity } from './presence-activity.mjs'
+import { buildActivity, type DiscordActivity, type PresenceSnapshot } from './activity'
+import type { PresenceSettings } from './settings'
 
 // Discord throttles SET_ACTIVITY. Agent hooks fire far faster than that during
 // a tool-use run, so every write funnels through this window.
 export const MIN_UPDATE_INTERVAL_MS = 15_000
+
+export type PresenceClient = {
+  connect: () => Promise<void>
+  isConnected: () => boolean
+  setActivity: (activity: DiscordActivity) => Promise<unknown>
+  clearActivity: () => Promise<unknown>
+  close: () => Promise<void>
+}
+
+export type PresenceControllerOptions = {
+  client: PresenceClient
+  settings: PresenceSettings
+  now?: () => number
+  setTimer?: (fn: () => void, ms: number) => unknown
+  clearTimer?: (timer: unknown) => void
+  log?: (message: string) => void
+}
+
+export type PresenceStatus = {
+  enabled: boolean
+  connected: boolean
+  detailLevel: PresenceSettings['detailLevel']
+  lastActivity: DiscordActivity | null
+}
+
+export type PresenceController = {
+  update: (nextSnapshot: PresenceSnapshot) => Promise<void>
+  setSettings: (nextSettings: PresenceSettings) => Promise<void>
+  settings: () => PresenceSettings
+  status: () => PresenceStatus
+  stop: () => Promise<void>
+}
 
 export function createPresenceController({
   client,
   settings,
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
-  clearTimer = (timer) => clearTimeout(timer),
+  clearTimer = (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
   log = () => {}
-}) {
+}: PresenceControllerOptions): PresenceController {
   let currentSettings = settings
-  let snapshot = null
-  let lastSentSerialized = null
-  let lastActivity = null
+  let snapshot: PresenceSnapshot | null = null
+  let lastSentSerialized: string | null = null
+  let lastActivity: DiscordActivity | null = null
   let lastSentAt = 0
-  let pendingTimer = null
+  let pendingTimer: unknown = null
   let cleared = true
 
   async function ensureConnected() {
@@ -29,7 +62,8 @@ export function createPresenceController({
       return true
     } catch (error) {
       // Discord not running is the common case. Stay quiet; retry next update.
-      log(`discord unavailable: ${error.message}`)
+      const message = error instanceof Error ? error.message : String(error)
+      log(`discord unavailable: ${message}`)
       return false
     }
   }
@@ -58,7 +92,8 @@ export function createPresenceController({
       lastSentAt = now()
       cleared = false
     } catch (error) {
-      log(`failed to set activity: ${error.message}`)
+      const message = error instanceof Error ? error.message : String(error)
+      log(`failed to set activity: ${message}`)
       lastSentSerialized = null
     }
   }
@@ -76,7 +111,8 @@ export function createPresenceController({
     try {
       await client.clearActivity()
     } catch (error) {
-      log(`failed to clear activity: ${error.message}`)
+      const message = error instanceof Error ? error.message : String(error)
+      log(`failed to clear activity: ${message}`)
     }
   }
 

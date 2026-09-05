@@ -1,13 +1,14 @@
-import { test } from 'node:test'
-import assert from 'node:assert/strict'
+import { expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { OPCODE, encodeFrame, createFrameDecoder } from '../src/discord-frame.mjs'
-import { createDiscordClient } from '../src/discord-client.mjs'
+import { createDiscordClient } from '../src/discord/client'
+import { createFrameDecoder, encodeFrame, OPCODE } from '../src/discord/ipc'
 
-function fakeSocketPath() {
+type FakeTarget = string | { path: string; dir: string }
+
+function fakeSocketPath(): FakeTarget {
   if (process.platform === 'win32') {
     return `\\\\?\\pipe\\orca-presence-test-${process.pid}-${Math.floor(performance.now())}`
   }
@@ -15,9 +16,20 @@ function fakeSocketPath() {
   return { path: path.join(dir, 'sock'), dir }
 }
 
-function startFakeDiscord(socketPath, { onCommand }) {
+function targetPath(target: FakeTarget): string {
+  return typeof target === 'string' ? target : target.path
+}
+
+function cleanupTarget(target: FakeTarget) {
+  if (typeof target !== 'string') {
+    rmSync(target.dir, { recursive: true, force: true })
+  }
+}
+
+function startFakeDiscord(socketPath: string, { onCommand }: { onCommand: (data: Record<string, unknown>) => void }) {
   const server = net.createServer((socket) => {
     const decoder = createFrameDecoder((opcode, data) => {
+      const payload = data as Record<string, unknown>
       if (opcode === OPCODE.HANDSHAKE) {
         socket.write(
           encodeFrame(OPCODE.FRAME, { cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } })
@@ -29,19 +41,19 @@ function startFakeDiscord(socketPath, { onCommand }) {
         return
       }
       if (opcode === OPCODE.FRAME) {
-        onCommand(data)
-        socket.write(encodeFrame(OPCODE.FRAME, { cmd: data.cmd, nonce: data.nonce, data: {} }))
+        onCommand(payload)
+        socket.write(encodeFrame(OPCODE.FRAME, { cmd: payload.cmd, nonce: payload.nonce, data: {} }))
       }
     })
     socket.on('data', (chunk) => decoder.push(chunk))
   })
-  return new Promise((resolve) => server.listen(socketPath, () => resolve(server)))
+  return new Promise<net.Server>((resolve) => server.listen(socketPath, () => resolve(server)))
 }
 
 test('connects, handshakes, and sends SET_ACTIVITY with a pid and nonce', async () => {
   const target = fakeSocketPath()
-  const socketPath = typeof target === 'string' ? target : target.path
-  const commands = []
+  const socketPath = targetPath(target)
+  const commands: Record<string, unknown>[] = []
   const server = await startFakeDiscord(socketPath, {
     onCommand: (data) => commands.push(data)
   })
@@ -53,17 +65,16 @@ test('connects, handshakes, and sends SET_ACTIVITY with a pid and nonce', async 
   await client.connect()
   await client.setActivity({ details: 'orca', state: 'working' })
 
-  assert.equal(commands.length, 1)
-  assert.equal(commands[0].cmd, 'SET_ACTIVITY')
-  assert.equal(typeof commands[0].nonce, 'string')
-  assert.equal(commands[0].args.pid, process.pid)
-  assert.equal(commands[0].args.activity.details, 'orca')
+  expect(commands.length).toBe(1)
+  expect(commands[0]?.cmd).toBe('SET_ACTIVITY')
+  expect(typeof commands[0]?.nonce).toBe('string')
+  const args = commands[0]?.args as { pid: number; activity: { details: string } }
+  expect(args.pid).toBe(process.pid)
+  expect(args.activity.details).toBe('orca')
 
   await client.close()
   server.close()
-  if (typeof target !== 'string') {
-    rmSync(target.dir, { recursive: true, force: true })
-  }
+  cleanupTarget(target)
 })
 
 test('connect rejects when no candidate socket accepts', async () => {
@@ -71,13 +82,13 @@ test('connect rejects when no candidate socket accepts', async () => {
     clientId: '123456789012345678',
     candidates: () => ['/nonexistent/orca-presence-missing-socket']
   })
-  await assert.rejects(() => client.connect(), /no discord ipc socket/i)
+  await expect(client.connect()).rejects.toThrow(/no discord ipc socket/i)
 })
 
 test('clearActivity sends a null activity', async () => {
   const target = fakeSocketPath()
-  const socketPath = typeof target === 'string' ? target : target.path
-  const commands = []
+  const socketPath = targetPath(target)
+  const commands: Record<string, unknown>[] = []
   const server = await startFakeDiscord(socketPath, {
     onCommand: (data) => commands.push(data)
   })
@@ -87,17 +98,16 @@ test('clearActivity sends a null activity', async () => {
   })
   await client.connect()
   await client.clearActivity()
-  assert.equal(commands[0].args.activity, null)
+  const args = commands[0]?.args as { activity: unknown }
+  expect(args.activity).toBeNull()
   await client.close()
   server.close()
-  if (typeof target !== 'string') {
-    rmSync(target.dir, { recursive: true, force: true })
-  }
+  cleanupTarget(target)
 })
 
 test('a dropped socket marks the client disconnected and fires onClose once', async () => {
   const target = fakeSocketPath()
-  const socketPath = typeof target === 'string' ? target : target.path
+  const socketPath = targetPath(target)
   const server = await startFakeDiscord(socketPath, { onCommand: () => {} })
   let closes = 0
   const client = createDiscordClient({
@@ -111,9 +121,7 @@ test('a dropped socket marks the client disconnected and fires onClose once', as
   server.close()
   client.destroySocketForTest()
   await new Promise((resolve) => setTimeout(resolve, 50))
-  assert.equal(client.isConnected(), false)
-  assert.equal(closes, 1)
-  if (typeof target !== 'string') {
-    rmSync(target.dir, { recursive: true, force: true })
-  }
+  expect(client.isConnected()).toBe(false)
+  expect(closes).toBe(1)
+  cleanupTarget(target)
 })

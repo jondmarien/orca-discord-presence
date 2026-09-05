@@ -1,7 +1,7 @@
 import os from 'node:os'
-import { createDiscordClient } from './discord-client.mjs'
-import { createPresenceController } from './presence-controller.mjs'
-import { normalizeSettings, nextDetailLevel, toggleField } from './presence-settings.mjs'
+import { createDiscordClient } from './discord/client'
+import { createPresenceController, type PresenceController } from './presence/controller'
+import { normalizeSettings, nextDetailLevel, toggleField, type PresenceSettings } from './presence/settings'
 
 // Why: the worker is reaped after PLUGIN_WORKER_IDLE_REAP_MS (5 min) of no host
 // calls. This poll both refreshes that clock and catches branch switches, which
@@ -14,13 +14,41 @@ const TOGGLE_COMMANDS = {
   'presence.toggle-terminals': 'showTerminals',
   'presence.toggle-machine': 'showMachine',
   'presence.toggle-elapsed': 'showElapsed'
+} as const
+
+type ToggleCommandId = keyof typeof TOGGLE_COMMANDS
+
+type AgentStatusPayload = {
+  state: string
+  receivedAt: number
 }
 
-let controller = null
-let heartbeat = null
+type WorkspaceContext = {
+  displayName?: string
+  branch?: string
+  terminals: readonly unknown[]
+}
 
-export default async function activate(orca) {
-  const stored = await orca.host.call('settings.get').catch(() => ({ settings: {} }))
+export type OrcaHost = {
+  log: (message: string) => void
+  commands: {
+    register: (id: string, handler: () => Promise<unknown>) => void
+  }
+  events: {
+    on: (event: string, handler: (payload?: unknown) => Promise<void> | void) => void
+  }
+  host: {
+    call: (method: string, args?: Record<string, unknown>) => Promise<unknown>
+  }
+}
+
+let controller: PresenceController | null = null
+let heartbeat: ReturnType<typeof setInterval> | null = null
+
+export default async function activate(orca: OrcaHost) {
+  const stored = (await orca.host.call('settings.get').catch(() => ({ settings: {} }))) as {
+    settings?: unknown
+  }
   let settings = normalizeSettings(stored?.settings)
 
   controller = createPresenceController({
@@ -32,22 +60,25 @@ export default async function activate(orca) {
     log: (message) => orca.log(message)
   })
 
-  async function persist(nextSettings) {
+  async function persist(nextSettings: PresenceSettings) {
     settings = nextSettings
     for (const [key, value] of Object.entries(nextSettings)) {
-      await orca.host.call('settings.set', { key, value }).catch((error) => {
-        orca.log(`failed to persist ${key}: ${error.message}`)
+      await orca.host.call('settings.set', { key, value }).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        orca.log(`failed to persist ${key}: ${message}`)
       })
     }
-    await controller.setSettings(nextSettings)
+    await controller?.setSettings(nextSettings)
   }
 
-  async function refresh(agentState) {
-    const context = await orca.host.call('workspace.readContext').catch(() => null)
+  async function refresh(agentState?: AgentStatusPayload) {
+    const context = (await orca.host.call('workspace.readContext').catch(() => null)) as
+      | WorkspaceContext
+      | null
     if (!context) {
       return
     }
-    await controller.update({
+    await controller?.update({
       displayName: context.displayName,
       branch: context.branch,
       terminalCount: context.terminals.length,
@@ -70,7 +101,10 @@ export default async function activate(orca) {
     return { detailLevel: settings.detailLevel }
   })
 
-  for (const [commandId, field] of Object.entries(TOGGLE_COMMANDS)) {
+  for (const [commandId, field] of Object.entries(TOGGLE_COMMANDS) as [
+    ToggleCommandId,
+    (typeof TOGGLE_COMMANDS)[ToggleCommandId]
+  ][]) {
     orca.commands.register(commandId, async () => {
       await persist(toggleField(settings, field))
       await refresh()
@@ -79,9 +113,9 @@ export default async function activate(orca) {
   }
 
   orca.commands.register('presence.status', async () => {
-    const status = controller.status()
-    const summary = `enabled=${status.enabled} connected=${status.connected} detail=${status.detailLevel}`
-    orca.log(`${summary} transmitting=${JSON.stringify(status.lastActivity)}`)
+    const status = controller?.status()
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} detail=${status?.detailLevel}`
+    orca.log(`${summary} transmitting=${JSON.stringify(status?.lastActivity)}`)
     await orca.host.call('notifications.show', {
       title: 'Discord Rich Presence',
       body: summary
@@ -90,7 +124,7 @@ export default async function activate(orca) {
   })
 
   orca.events.on('agent.status.changed', async (payload) => {
-    await refresh(payload)
+    await refresh(payload as AgentStatusPayload)
   })
   orca.events.on('worktree.created', async () => {
     await refresh()

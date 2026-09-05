@@ -16,21 +16,23 @@ Every identifying field is opt-in; the default detail level (`generic`) never tr
 
 No Discord developer account is required for end users. The plugin ships its own Discord Application ID.
 
+Orca loads `dist/main.js` (see `orca-plugin.json` `main`). That file is Node/Electron-compatible ESM — you do **not** need Bun installed to run the plugin.
+
 ## Discord Application ID (maintainers)
 
-Until a real Discord application exists, the default is the literal placeholder:
+The plugin ships Application ID `1545653843239374848`. The Discord Developer Portal already has this application and the five Rich Presence art assets uploaded:
 
-```text
-1545653843239374848
-```
+| Asset key | Use |
+|---|---|
+| `orca` | Large image |
+| `state-working` | Small image |
+| `state-blocked` | Small image |
+| `state-waiting` | Small image |
+| `state-idle` | Small image |
 
-**Where to plug it in:**
+Source copies of those PNGs live in [`assets/`](assets/). Changing the Application ID requires a plugin release (v0.2 has no user-facing override; v1.0 will add one with a settings panel).
 
-1. Create an application at the Discord developer portal (name it **Orca** — that string is the game name Discord shows).
-2. Copy the Application ID (a 17–20 digit snowflake).
-3. Application ID is already set to `1545653843239374848` in [`src/presence-settings.mjs`](src/presence-settings.mjs).
-4. Under Rich Presence → Art Assets, upload five 512×512 PNGs with keys: `orca`, `state-working`, `state-blocked`, `state-waiting`, `state-idle`.
-5. Ship a new plugin release. Changing the ID requires a release (v0.1 has no user-facing override; v1.0 will add one with a settings panel).
+**Where the ID lives:** [`src/presence/settings.ts`](src/presence/settings.ts) (`SHIPPED_APPLICATION_ID`). Rebuild `dist/` after changing it.
 
 There is **no Discord bot token or client secret** in this plugin. The Application ID is public data (it appears in every presence payload).
 
@@ -90,22 +92,40 @@ Panels cannot call `settings.set` in Orca's current host API, so each toggle is 
 
 ## Development
 
+Bun is the package manager, test runner, and (optional) build tool. **Orca's plugin worker is Electron/Node**, not Bun — shipped code uses only `node:*` APIs (`net`, `os`, `crypto`, timers). Do not call `Bun.file` or other Bun-only APIs on the Discord IPC path.
+
 ```bash
-node --test test/
+bun install
+bun test
+bun run typecheck
+bun run build
 ```
 
-Zero runtime package dependencies. All modules are ESM (`.mjs`).
+`bun run build` emits Node-compatible ESM at `dist/main.js`. Commit that file when the TypeScript sources change so `devPluginPaths` and marketplace installs work without a local build.
+
+Zero production dependencies. Hand-rolled Discord IPC (same approach as Burpcord). Dev-only deps are TypeScript types.
+
+### Layout
+
+```
+src/main.ts                 activate / deactivate + command wiring
+src/discord/ipc.ts          socket path candidates + frame codec
+src/discord/client.ts       handshake, SET_ACTIVITY, reconnect seams
+src/presence/settings.ts    defaults, normalize, detail-level cycle
+src/presence/activity.ts    privacy-gated activity builder
+src/presence/controller.ts  snapshot cache, 15 s debounce, enable/disable
+dist/main.js                Orca entry (bundled Node ESM)
+```
 
 ## Verification matrix
 
-
 | Check | Expected |
 |---|---|
-| Unit suite | All pass (fake IPC for client tests) |
+| Unit suite | `bun test` all pass (fake IPC for client tests) |
 | Idle 7+ minutes with desktop client open | Presence still live (heartbeat) |
 | Quit then restart desktop client | Silent degrade; returns within one heartbeat (<=90 s) |
 | Agent tool-use burst | At most one SET_ACTIVITY per 15 s |
 | Linux env-stripped worker | Socket via /run/user/<uid>/ (and Flatpak/Snap nests) |
 | SSH workspace | Presence reflects workspace; machine name if enabled is local |
 
-Manual install/consent/live-presence checks need the desktop client and a real Application ID in src/presence-settings.mjs.
+Manual install/consent/live-presence checks need the desktop client. The Application ID in `src/presence/settings.ts` is already the shipped snowflake.

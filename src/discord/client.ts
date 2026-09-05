@@ -1,13 +1,41 @@
+import { randomUUID } from 'node:crypto'
 import net from 'node:net'
 import os from 'node:os'
-import { randomUUID } from 'node:crypto'
-import { OPCODE, encodeFrame, createFrameDecoder } from './discord-frame.mjs'
-import { discordIpcCandidates } from './discord-ipc-path.mjs'
+import { createFrameDecoder, discordIpcCandidates, encodeFrame, OPCODE } from './ipc'
 
 const HANDSHAKE_TIMEOUT_MS = 5_000
 const COMMAND_TIMEOUT_MS = 5_000
 
-function connectToFirstAvailable(candidates) {
+type RpcMessage = {
+  evt?: string
+  nonce?: string
+  message?: string
+  data?: { message?: string } | null
+}
+
+type PendingCommand = {
+  resolve: (value: unknown) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+export type DiscordClientOptions = {
+  clientId: string
+  candidates?: () => string[]
+  onClose?: () => void
+  log?: (message: string) => void
+}
+
+export type DiscordClient = {
+  connect: () => Promise<void>
+  isConnected: () => boolean
+  setActivity: (activity: object) => Promise<unknown>
+  clearActivity: () => Promise<unknown>
+  close: () => Promise<void>
+  destroySocketForTest: () => void
+}
+
+function connectToFirstAvailable(candidates: string[]): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     let index = 0
     const attempt = () => {
@@ -31,22 +59,25 @@ function connectToFirstAvailable(candidates) {
   })
 }
 
+function defaultCandidates(): string[] {
+  return discordIpcCandidates({
+    platform: process.platform,
+    env: process.env,
+    uid: typeof os.userInfo === 'function' ? os.userInfo().uid : undefined
+  })
+}
+
 export function createDiscordClient({
   clientId,
-  candidates = () =>
-    discordIpcCandidates({
-      platform: process.platform,
-      env: process.env,
-      uid: typeof os.userInfo === 'function' ? os.userInfo().uid : undefined
-    }),
+  candidates = defaultCandidates,
   onClose = () => {},
   log = () => {}
-}) {
-  let socket = null
+}: DiscordClientOptions): DiscordClient {
+  let socket: net.Socket | null = null
   let connected = false
   let closeNotified = false
-  const pending = new Map()
-  let onReady = null
+  const pending = new Map<string, PendingCommand>()
+  let onReady: (() => void) | null = null
 
   function teardown() {
     connected = false
@@ -66,33 +97,34 @@ export function createDiscordClient({
     }
   }
 
-  function handleFrame(opcode, data) {
+  function handleFrame(opcode: number, data: unknown) {
     if (opcode === OPCODE.PING) {
       socket?.write(encodeFrame(OPCODE.PONG, data))
       return
     }
+    const payload = data as RpcMessage | null
     if (opcode === OPCODE.CLOSE) {
-      log(`discord closed the connection: ${data?.message ?? 'no reason given'}`)
+      log(`discord closed the connection: ${payload?.message ?? 'no reason given'}`)
       teardown()
       return
     }
     if (opcode !== OPCODE.FRAME) {
       return
     }
-    if (data?.evt === 'READY') {
+    if (payload?.evt === 'READY') {
       onReady?.()
       return
     }
-    const entry = data?.nonce ? pending.get(data.nonce) : null
-    if (!entry) {
+    const entry = payload?.nonce ? pending.get(payload.nonce) : undefined
+    if (!entry || !payload?.nonce) {
       return
     }
     clearTimeout(entry.timer)
-    pending.delete(data.nonce)
-    if (data.evt === 'ERROR') {
-      entry.reject(new Error(data.data?.message ?? 'discord rejected the command'))
+    pending.delete(payload.nonce)
+    if (payload.evt === 'ERROR') {
+      entry.reject(new Error(payload.data?.message ?? 'discord rejected the command'))
     } else {
-      entry.resolve(data.data ?? null)
+      entry.resolve(payload.data ?? null)
     }
   }
 
@@ -103,7 +135,8 @@ export function createDiscordClient({
     closeNotified = false
     socket = await connectToFirstAvailable(candidates())
     const decoder = createFrameDecoder(handleFrame, (error) => {
-      log(`discord frame error: ${error.message}`)
+      const message = error instanceof Error ? error.message : String(error)
+      log(`discord frame error: ${message}`)
       teardown()
     })
     socket.on('data', (chunk) => decoder.push(chunk))
@@ -113,7 +146,7 @@ export function createDiscordClient({
       teardown()
     })
 
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         teardown()
         reject(new Error('discord handshake timed out'))
@@ -124,11 +157,11 @@ export function createDiscordClient({
         connected = true
         resolve()
       }
-      socket.write(encodeFrame(OPCODE.HANDSHAKE, { v: 1, client_id: clientId }))
+      socket?.write(encodeFrame(OPCODE.HANDSHAKE, { v: 1, client_id: clientId }))
     })
   }
 
-  function command(cmd, args) {
+  function command(cmd: string, args: object) {
     if (!connected || !socket) {
       return Promise.reject(new Error('not connected to discord'))
     }
@@ -139,7 +172,7 @@ export function createDiscordClient({
         reject(new Error(`discord ${cmd} timed out`))
       }, COMMAND_TIMEOUT_MS)
       pending.set(nonce, { resolve, reject, timer })
-      socket.write(encodeFrame(OPCODE.FRAME, { cmd, args, nonce }))
+      socket?.write(encodeFrame(OPCODE.FRAME, { cmd, args, nonce }))
     })
   }
 

@@ -1,0 +1,69 @@
+import { expect, test } from 'bun:test'
+import {
+  DEFAULT_SETTINGS,
+  DETAIL_LEVELS,
+  SHIPPED_APPLICATION_ID,
+  normalizeSettings,
+  nextDetailLevel,
+  toggleField
+} from '../src/presence/settings'
+
+test('defaults are privacy-preserving', () => {
+  expect(DEFAULT_SETTINGS.enabled).toBe(true)
+  expect(DEFAULT_SETTINGS.detailLevel).toBe('generic')
+  expect(DEFAULT_SETTINGS.showBranch).toBe(false)
+  expect(DEFAULT_SETTINGS.showMachine).toBe(false)
+  expect(DEFAULT_SETTINGS.showTerminals).toBe(false)
+  expect(DEFAULT_SETTINGS.showAgentState).toBe(true)
+  expect(DEFAULT_SETTINGS.showElapsed).toBe(true)
+})
+
+test('normalize fills gaps and drops unknown keys', () => {
+  const settings = normalizeSettings({ showBranch: true, nonsense: 42 })
+  expect(settings.showBranch).toBe(true)
+  expect(settings.detailLevel).toBe('generic')
+  expect('nonsense' in settings).toBe(false)
+})
+
+test('normalize rejects a non-boolean toggle and falls back to the default', () => {
+  expect(normalizeSettings({ showBranch: 'yes' }).showBranch).toBe(false)
+})
+
+test('normalize rejects an unknown detail level', () => {
+  expect(normalizeSettings({ detailLevel: 'everything' }).detailLevel).toBe('generic')
+})
+
+test('the plugin ships the Discord application id', () => {
+  expect(DEFAULT_SETTINGS.applicationId).toBe('1545653843239374848')
+  expect(SHIPPED_APPLICATION_ID).toBe('1545653843239374848')
+})
+
+test('an absent application id falls back to the shipped default', () => {
+  expect(normalizeSettings({}).applicationId).toBe(DEFAULT_SETTINGS.applicationId)
+})
+
+test('normalize accepts a plausible application id override and rejects junk', () => {
+  expect(normalizeSettings({ applicationId: '123456789012345678' }).applicationId).toBe(
+    '123456789012345678'
+  )
+  expect(normalizeSettings({ applicationId: 'not-a-snowflake' }).applicationId).toBe(
+    DEFAULT_SETTINGS.applicationId
+  )
+})
+
+test('detail level cycles in a fixed order and wraps', () => {
+  expect([...DETAIL_LEVELS]).toEqual(['off', 'generic', 'workspace', 'full'])
+  expect(nextDetailLevel('generic')).toBe('workspace')
+  expect(nextDetailLevel('full')).toBe('off')
+})
+
+test('toggleField flips exactly one boolean', () => {
+  const next = toggleField({ ...DEFAULT_SETTINGS }, 'showBranch')
+  expect(next.showBranch).toBe(true)
+  expect(next.showMachine).toBe(DEFAULT_SETTINGS.showMachine)
+  expect(next).not.toBe(DEFAULT_SETTINGS)
+})
+
+test('toggleField ignores a non-boolean field name', () => {
+  expect(toggleField({ ...DEFAULT_SETTINGS }, 'detailLevel')).toEqual({ ...DEFAULT_SETTINGS })
+})

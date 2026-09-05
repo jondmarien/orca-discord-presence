@@ -1,5 +1,8 @@
 # Orca Discord Rich Presence Implementation Plan
 
+> **Historical note (v0.2):** Track A source now lives in TypeScript under `src/discord/`, `src/presence/`, and `src/main.ts`. Bun is the package manager / test / build toolchain; Orca still loads Node-compatible ESM from `dist/main.js`. Paths below that mention `src/*.mjs` and `node --test` are the original v0.1 plan. Do not treat this file as the current layout.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a Discord Rich Presence plugin for Orca that reflects workspace, branch, and agent state — first as a zero-dependency marketplace plugin using only the existing plugin host API (Track A, MVP), then as a richer plugin unlocked by additive core PRs to Orca's plugin API (Track B).
