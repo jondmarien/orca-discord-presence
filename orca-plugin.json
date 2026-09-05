@@ -1,0 +1,35 @@
+{
+  "manifestVersion": 1,
+  "id": "discord-presence",
+  "publisher": "d-sports",
+  "name": "Discord Rich Presence",
+  "version": "0.1.0",
+  "description": "Shows your current Orca workspace, branch, and agent state as Discord Rich Presence. Every field is opt-in.",
+  "engines": { "orca": ">=1.4.0" },
+  "pluginApi": 1,
+  "main": "src/main.mjs",
+  "contributes": {
+    "commands": [
+      { "id": "presence.toggle", "title": "Discord Presence: Enable/Disable" },
+      { "id": "presence.status", "title": "Discord Presence: Show Status" },
+      { "id": "presence.detail-level", "title": "Discord Presence: Cycle Detail Level" },
+      { "id": "presence.toggle-branch", "title": "Discord Presence: Toggle Branch" },
+      { "id": "presence.toggle-agent-state", "title": "Discord Presence: Toggle Agent State" },
+      { "id": "presence.toggle-terminals", "title": "Discord Presence: Toggle Terminal Count" },
+      { "id": "presence.toggle-machine", "title": "Discord Presence: Toggle Machine Name" },
+      { "id": "presence.toggle-elapsed", "title": "Discord Presence: Toggle Elapsed Timer" }
+    ],
+    "events": [
+      { "on": "agent.status.changed" },
+      { "on": "worktree.created" },
+      { "on": "worktree.removed" }
+    ]
+  },
+  "capabilities": [
+    { "kind": "workspace:read" },
+    { "kind": "events:subscribe" },
+    { "kind": "storage" },
+    { "kind": "settings:own" },
+    { "kind": "notifications:show" }
+  ]
+}
