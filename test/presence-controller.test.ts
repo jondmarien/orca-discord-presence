@@ -1,13 +1,19 @@
-import { test } from 'node:test'
-import assert from 'node:assert/strict'
-import { createPresenceController, MIN_UPDATE_INTERVAL_MS } from '../src/presence-controller.mjs'
-import { DEFAULT_SETTINGS } from '../src/presence-settings.mjs'
+import { expect, test } from 'bun:test'
+import type { DiscordActivity } from '../src/presence/activity'
+import { createPresenceController, MIN_UPDATE_INTERVAL_MS, type PresenceClient } from '../src/presence/controller'
+import { DEFAULT_SETTINGS, type PresenceSettings } from '../src/presence/settings'
 
-function harness(overrides = {}) {
+type FakeTimer = {
+  fn: () => void | Promise<void>
+  at: number
+  cancelled: boolean
+}
+
+function harness(overrides: Partial<PresenceSettings> = {}) {
   let now = 1_000_000
-  const activities = []
-  const timers = []
-  const client = {
+  const activities: Array<DiscordActivity | null> = []
+  const timers: FakeTimer[] = []
+  const client: PresenceClient & { connected: boolean } = {
     connected: false,
     connect: async () => {
       client.connected = true
@@ -28,18 +34,18 @@ function harness(overrides = {}) {
     settings: { ...DEFAULT_SETTINGS, detailLevel: 'full', ...overrides },
     now: () => now,
     setTimer: (fn, ms) => {
-      const timer = { fn, at: now + ms, cancelled: false }
+      const timer: FakeTimer = { fn, at: now + ms, cancelled: false }
       timers.push(timer)
       return timer
     },
     clearTimer: (timer) => {
-      if (timer) {
-        timer.cancelled = true
+      if (timer && typeof timer === 'object' && 'cancelled' in timer) {
+        ;(timer as FakeTimer).cancelled = true
       }
     },
     log: () => {}
   })
-  const advance = async (ms) => {
+  const advance = async (ms: number) => {
     now += ms
     for (const timer of [...timers]) {
       if (!timer.cancelled && timer.at <= now) {
@@ -54,8 +60,8 @@ function harness(overrides = {}) {
 test('the first update writes through immediately', async () => {
   const { controller, activities } = harness()
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
-  assert.equal(activities.length, 1)
-  assert.equal(activities[0].details, 'repo')
+  expect(activities.length).toBe(1)
+  expect(activities[0] && 'details' in activities[0] ? activities[0].details : null).toBe('repo')
 })
 
 test('a burst inside the rate-limit window collapses to one deferred write', async () => {
@@ -63,11 +69,13 @@ test('a burst inside the rate-limit window collapses to one deferred write', asy
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
   await controller.update({ displayName: 'repo', agentState: 'blocked', terminalCount: 1 })
   await controller.update({ displayName: 'repo', agentState: 'waiting', terminalCount: 1 })
-  assert.equal(activities.length, 1)
+  expect(activities.length).toBe(1)
   await advance(MIN_UPDATE_INTERVAL_MS)
-  assert.equal(activities.length, 2)
+  expect(activities.length).toBe(2)
   // Coalesced to the newest state, not replayed in order.
-  assert.equal(activities[1].state, 'waiting for input')
+  expect(activities[1] && 'state' in activities[1] ? activities[1].state : null).toBe(
+    'waiting for input'
+  )
 })
 
 test('an identical snapshot does not schedule a redundant write', async () => {
@@ -76,23 +84,23 @@ test('an identical snapshot does not schedule a redundant write', async () => {
   await controller.update(snapshot)
   await controller.update({ ...snapshot })
   await advance(MIN_UPDATE_INTERVAL_MS * 2)
-  assert.equal(activities.length, 1)
+  expect(activities.length).toBe(1)
 })
 
 test('disabling clears the presence exactly once', async () => {
   const { controller, activities } = harness()
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
   await controller.setSettings({ ...DEFAULT_SETTINGS, enabled: false })
-  assert.equal(activities.at(-1), null)
+  expect(activities.at(-1)).toBeNull()
   await controller.setSettings({ ...DEFAULT_SETTINGS, enabled: false })
-  assert.equal(activities.filter((entry) => entry === null).length, 1)
+  expect(activities.filter((entry) => entry === null).length).toBe(1)
 })
 
 test('detail level off clears the presence like disabling does', async () => {
   const { controller, activities } = harness()
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
   await controller.setSettings({ ...DEFAULT_SETTINGS, detailLevel: 'off' })
-  assert.equal(activities.at(-1), null)
+  expect(activities.at(-1)).toBeNull()
 })
 
 test('a connect failure is swallowed and retried on the next update', async () => {
@@ -106,24 +114,24 @@ test('a connect failure is swallowed and retried on the next update', async () =
     client.connected = true
   }
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
-  assert.equal(activities.length, 0)
+  expect(activities.length).toBe(0)
   await controller.update({ displayName: 'repo', agentState: 'blocked', terminalCount: 1 })
-  assert.equal(activities.length, 1)
+  expect(activities.length).toBe(1)
 })
 
 test('status reports connection state and the last transmitted activity', async () => {
   const { controller } = harness()
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
   const status = controller.status()
-  assert.equal(status.connected, true)
-  assert.equal(status.enabled, true)
-  assert.equal(status.lastActivity.details, 'repo')
+  expect(status.connected).toBe(true)
+  expect(status.enabled).toBe(true)
+  expect(status.lastActivity?.details).toBe('repo')
 })
 
 test('stop clears presence and closes the client', async () => {
   const { controller, client, activities } = harness()
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
   await controller.stop()
-  assert.equal(activities.at(-1), null)
-  assert.equal(client.isConnected(), false)
+  expect(activities.at(-1)).toBeNull()
+  expect(client.isConnected()).toBe(false)
 })

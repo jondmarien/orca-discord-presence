@@ -1,5 +1,8 @@
 # Orca Discord Rich Presence Implementation Plan
 
+> **Historical note (v0.2):** Track A source now lives in TypeScript under `src/discord/`, `src/presence/`, and `src/main.ts`. Bun is the package manager / test / build toolchain; Orca still loads Node-compatible ESM from `dist/main.js`. Paths below that mention `src/*.mjs` and `node --test` are the original v0.1 plan. Do not treat this file as the current layout.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a Discord Rich Presence plugin for Orca that reflects workspace, branch, and agent state — first as a zero-dependency marketplace plugin using only the existing plugin host API (Track A, MVP), then as a richer plugin unlocked by additive core PRs to Orca's plugin API (Track B).
@@ -37,7 +40,7 @@ Read these before Task 1. They are the whole contract:
 
 - **`$PLUGIN_ROOT`** = `J:/projects/orca-discord-presence` — a **new, separate git repository**, not part of the Orca repo. Every Track A path below is relative to it. If you put it somewhere else, substitute consistently.
 - **`$ORCA`** = `J:/projects/cloned-projects/orca/.claude/worktrees/orca-discord-rich-presence-fb5d8c` — this worktree. Every Track B path is relative to it.
-- Plugin identity: publisher `d-sports`, id `discord-presence`, qualified key **`d-sports.discord-presence`**. Do not use the `orca-` id prefix with a non-`stablyai` publisher — [plugin-marketplace.ts:9-10](../../../src/shared/plugins/plugin-marketplace.ts) reserves that shape for official listings.
+- Plugin identity: publisher `chron0`, id `discord-presence`, qualified key **`chron0.discord-presence`**. Do not use the `orca-` id prefix with a non-`stablyai` publisher — [plugin-marketplace.ts:9-10](../../../src/shared/plugins/plugin-marketplace.ts) reserves that shape for official listings.
 
 ### Prerequisites (human, before Task 1)
 
@@ -133,7 +136,7 @@ Capabilities are deliberately minimal: no `secrets` (the Discord application ID 
 {
   "manifestVersion": 1,
   "id": "discord-presence",
-  "publisher": "d-sports",
+  "publisher": "chron0",
   "name": "Discord Rich Presence",
   "version": "0.1.0",
   "description": "Shows your current Orca workspace, branch, and agent state as Discord Rich Presence. Every field is opt-in.",
@@ -1807,11 +1810,11 @@ A separate repo containing one file, `orca-marketplace.json`:
 
 ```json
 {
-  "name": "d-sports Orca plugins",
-  "owner": "d-sports",
+  "name": "chron0 Orca plugins",
+  "owner": "chron0",
   "plugins": [
     {
-      "id": "d-sports.discord-presence",
+      "id": "chron0.discord-presence",
       "source": {
         "kind": "git",
         "url": "https://github.com/<your-org>/orca-discord-presence.git",
@@ -1828,7 +1831,7 @@ Constraints from the schema: `id` must be a valid qualified key and must match t
 
 - [ ] **Step 3: Add the marketplace in Orca and install**
 
-Add your index repo as a marketplace source, remove the `devPluginPaths` entry, restart, and install `d-sports.discord-presence` from the marketplace UI.
+Add your index repo as a marketplace source, remove the `devPluginPaths` entry, restart, and install `chron0.discord-presence` from the marketplace UI.
 
 - [ ] **Step 4: Verify the installed copy**
 
