@@ -111,7 +111,7 @@ The panel talks to the host only through `postMessage`:
 - `{ type: 'orca-panel-action-result', requestId, ok, value?, error? }`
 - Watchdog: `orca-panel-ping` / `orca-panel-pong`
 
-It cannot persist settings or read the log file. The worker optionally rewrites `#presence-snapshot` in `panel/index.html` (activate, Show Status, Reload RPC, debounced heartbeat) when the install directory is writable. Immutable marketplace copies keep the committed `null` snapshot and still get live workspace via the bridge.
+It cannot persist settings or read the log file. The worker optionally rewrites `#presence-snapshot` in `panel/index.html` (activate, Show Status, Reload RPC, debounced heartbeat) when the install directory is writable. The same rewrite stamps `#plugin-version`, `#version-badge`, and About from `PLUGIN_VERSION` (or the snapshot’s `version`) so the shell cannot drift from `package.json` / `orca-plugin.json`. Immutable marketplace copies keep the committed `null` snapshot — the shipped `#plugin-version` JSON still paints the current badge / About — and still get live workspace via the bridge.
 
 ## Activity expiry (future providers)
 

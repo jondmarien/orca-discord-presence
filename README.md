@@ -354,7 +354,7 @@ The iframe is sandboxed. Host CSP is `default-src 'none'; connect-src 'none'; sc
 | Collapsible logs | Ring-buffer lines the worker embeds when it can rewrite `panel/index.html` |
 | Reload RPC / Cycle Detail / Enable | Command palette only. The panel **Reload RPC (palette)** button is a reminder toast, not a reconnect |
 
-1. `panel/index.html` is a **static shell**. Marketplace / immutable installs still show live workspace + empty logs + the conventional log path and “run Show Status” copy.
+1. `panel/index.html` is a **static shell**. Marketplace / immutable installs still show live workspace + empty logs + the conventional log path and “run Show Status” copy. Badge / About version comes from `PLUGIN_VERSION` (`#plugin-version` JSON + stamped text), not a hand-edited fallback. A bump that forgets the panel fails `bun test`.
 2. On a **writable** install (`devPluginPaths`), the worker keeps an in-memory log ring and, on activate / Show Status / Reload RPC / heartbeat (debounced), rewrites a `#presence-snapshot` JSON blob (`window.__PRESENCE_PANEL__`). Reopen the tab to load a newer rewrite.
 3. Override path: `ORCA_PRESENCE_PANEL_HTML`. Skip writes: `ORCA_PRESENCE_SKIP_PANEL_WRITE=1`.
 4. The Discord Application ID and bridge token are **never** written into the panel. Log lines are redacted (`token=***`).
