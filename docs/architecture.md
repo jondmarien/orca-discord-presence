@@ -27,6 +27,7 @@ activate (src/main.ts)
   ├─ commands → persist (settings.set) → controller.setSettings → refresh
   ├─ presence.reload → refresh → controller.reload (close + reconnect + SET_ACTIVITY)
   ├─ events / heartbeat → workspace.readContext (or minimal snapshot) → update + forceTransmit on heartbeat/status
+  ├─ panel snapshot → log ring + redacted JSON embedded in panel/index.html (writable installs)
   └─ deactivate → controller.stop → clear local + remote + close socket (idempotent)
 ```
 
@@ -42,7 +43,11 @@ activate (src/main.ts)
 | [`src/presence/controller.ts`](../src/presence/controller.ts) | Snapshot merge, 15 s debounce, reconnect, **local-then-bridge** publish, **Reload RPC**. |
 | [`src/presence/expiry.ts`](../src/presence/expiry.ts) | Activity-window helper for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). Not wired into live presence yet. |
 | [`src/presence/bridge.ts`](../src/presence/bridge.ts) | Companion URL/token hygiene + `POST`/`DELETE /activity`. |
-| [`src/presence/log.ts`](../src/presence/log.ts) | Structured `orca.log` + capped state-dir file. |
+| [`src/presence/log.ts`](../src/presence/log.ts) | Structured `orca.log` + capped state-dir file. Optional `onEmit` feeds the panel ring. |
+| [`src/presence/log-ring.ts`](../src/presence/log-ring.ts) | Bounded in-memory tail for the sidebar snapshot. |
+| [`src/presence/panel-snapshot.ts`](../src/presence/panel-snapshot.ts) | Redacted panel JSON (no App ID, no token, no bridge URL). |
+| [`src/presence/panel-html.ts`](../src/presence/panel-html.ts) | Embed / write `panel/index.html` when the install is writable. |
+| [`panel/index.html`](../panel/index.html) | Sandboxed sidebar UI. Official `orca-panel-action` bridge only. |
 | [`companion/`](../companion/) | OS-agnostic HTTP listener → same Discord IPC client (Linux/macOS/Windows). |
 
 Tests live under `test/` and use Bun’s test runner. Client tests stand up a fake IPC server; controller tests inject a fake clock and client.
@@ -90,6 +95,18 @@ A user command that changes settings bypasses the debounce so the palette feels 
 
 `stop()` / disable / `detailLevel: 'off'` clear presence **once** (no duplicate `activity: null` spam), including `DELETE /activity` when the last sink was the bridge. A second `stop()` / `deactivate()` is a no-op.
 
+## Sidebar panel
+
+`orca-plugin.json` contributes one panel (`id: presence`, Lucide `radio`, `panel/index.html`). The host loads that HTML in a sandboxed iframe (`plugin:chron0.discord-presence/presence`).
+
+The panel talks to the host only through `postMessage`:
+
+- `{ type: 'orca-panel-action', requestId, action, params }` → `workspace.readContext` or `notifications.show`
+- `{ type: 'orca-panel-action-result', requestId, ok, value?, error? }`
+- Watchdog: `orca-panel-ping` / `orca-panel-pong`
+
+It cannot persist settings or read the log file. The worker optionally rewrites `#presence-snapshot` in `panel/index.html` (activate, Show Status, Reload RPC, debounced heartbeat) when the install directory is writable. Immutable marketplace copies keep the committed `null` snapshot and still get live workspace via the bridge.
+
 ## Activity expiry (future providers)
 
 [`src/presence/expiry.ts`](../src/presence/expiry.ts) exports `ACTIVITY_EXPIRY_MS` (`short` 30s, `long` 60s) and `isActivityFresh()`. A prior Discord RPC integration used those windows so tool-specific states die after the user leaves a surface. This plugin does **not** rotate providers yet — only agent status + workspace snapshot. When [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) (focused window/tab) lands, providers should call `isActivityFresh` instead of inventing a new clock. Full priority + round-robin rotation stays deferred.
@@ -113,5 +130,6 @@ Text fields are clamped to 128 characters. See [privacy.md](privacy.md) for whic
 - **Authoring / CI:** Bun (`bun install`, `bun test`, `bun run typecheck`, `bun run build`).
 - **Runtime:** Node/Electron plugin worker. `dist/main.js` must stay free of `Bun.file` / `Bun.spawn`.
 - **Identity:** `orca-plugin.json` `publisher` + `id` → `chron0.discord-presence`. Do not rename.
+- **Panel:** `contributes.panels[0]` id `presence`, sidebar key `plugin:chron0.discord-presence/presence`. The iframe may call only `workspace.readContext` and `notifications.show`. It replies to `orca-panel-ping` with `orca-panel-pong`. Settings writes and live file logs wait on host B4.
 - **Companion:** `bun run companion` / `bun run start` in `companion/`. Runs on Linux, macOS, or Windows. Optional `bun build companion/main.ts --compile`. Zero extra production dependencies; Node `http` + shared IPC modules.
 - **Focus:** the worker does not subscribe to UI focus/tab events (none are exposed). Snapshot sources are `agent.status.changed` and `workspace.readContext` only.

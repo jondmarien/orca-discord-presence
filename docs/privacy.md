@@ -81,11 +81,11 @@ Only these Orca states have labels. Anything else becomes idle so a future or ma
 - `bridgeToken` is trimmed and capped at 256 characters.
 - A non-loopback `bridgeUrl` without a token is not used (`resolveBridgeTarget` returns `null`).
 
-Commands persist the full normalized object via `settings.set` (one key per field). There is no settings panel in v0.3.
+Commands persist the full normalized object via `settings.set` (one key per field). v0.4 ships a **diagnostics** panel that displays a redacted snapshot; it cannot call `settings.set`. The panel never includes `applicationId`, `bridgeToken`, or `bridgeUrl`.
 
 ## Capabilities
 
-The consent dialog lists `workspace:read`, `events:subscribe`, `storage`, `settings:own`, and `notifications:show`. There is no `secrets` capability.
+The consent dialog lists `workspace:read`, `events:subscribe`, `storage`, `settings:own`, and `notifications:show`. There is no `secrets` capability. The sidebar panel only uses `workspace:read` and `notifications:show`.
 
 ## Operator advice
 

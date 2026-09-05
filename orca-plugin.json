@@ -3,12 +3,20 @@
   "id": "discord-presence",
   "publisher": "chron0",
   "name": "Discord Rich Presence",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Shows your current Orca workspace, branch, and agent state as Discord Rich Presence. Every field is opt-in.",
   "engines": { "orca": ">=1.4.0" },
   "pluginApi": 1,
   "main": "dist/main.js",
   "contributes": {
+    "panels": [
+      {
+        "id": "presence",
+        "title": "Discord Presence",
+        "icon": "radio",
+        "entry": "panel/index.html"
+      }
+    ],
     "commands": [
       { "id": "presence.toggle", "title": "Discord Presence: Enable/Disable" },
       { "id": "presence.status", "title": "Discord Presence: Show Status" },

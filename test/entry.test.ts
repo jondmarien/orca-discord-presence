@@ -1,9 +1,11 @@
 import { expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { formatStatusTransmitting, type OrcaHost } from '../src/main'
+import { extractPanelSnapshot } from '../src/presence/panel-html'
+import { PLUGIN_VERSION } from '../src/version'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -11,11 +13,28 @@ test('manifest identity is chron0.discord-presence', () => {
   const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')) as {
     id: string
     publisher: string
+    version: string
+    contributes: {
+      panels: Array<{ id: string; title: string; icon?: string; entry: string }>
+      commands: Array<{ id: string }>
+    }
+    capabilities: Array<{ kind: string }>
   }
   expect(manifest.publisher).toBe('chron0')
   expect(manifest.id).toBe('discord-presence')
   expect(`${manifest.publisher}.${manifest.id}`).toBe('chron0.discord-presence')
+  expect(manifest.version).toBe(PLUGIN_VERSION)
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string }
+  expect(pkg.version).toBe(PLUGIN_VERSION)
   expect(manifest.id.includes('prescence')).toBe(false)
+  expect(manifest.contributes.panels).toEqual([
+    { id: 'presence', title: 'Discord Presence', icon: 'radio', entry: 'panel/index.html' }
+  ])
+  expect(manifest.contributes.commands.some((command) => command.id === 'presence.reload')).toBe(true)
+  expect(manifest.capabilities.some((cap) => cap.kind === 'terminal:send')).toBe(false)
+  expect(readFileSync(join(root, manifest.contributes.panels[0]!.entry), 'utf8').includes('orca-panel-action')).toBe(
+    true
+  )
 })
 
 test('activate and deactivate exports are functions', async () => {
@@ -27,8 +46,12 @@ test('activate and deactivate exports are functions', async () => {
 test('activate registers commands and events; deactivate is safe to call', async () => {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-entry-'))
   const logFile = join(dir, 'plugin.log')
+  const panelFile = join(dir, 'index.html')
+  copyFileSync(join(root, 'panel/index.html'), panelFile)
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousPanel = process.env.ORCA_PRESENCE_PANEL_HTML
   process.env.ORCA_PRESENCE_LOG_FILE = logFile
+  process.env.ORCA_PRESENCE_PANEL_HTML = panelFile
   const { default: activate, deactivate } = await import('../src/main')
   const commands: string[] = []
   const events: string[] = []
@@ -89,12 +112,26 @@ test('activate registers commands and events; deactivate is safe to call', async
   await handlers.get('presence.reload')?.()
   expect(hostLines.some((line) => line.includes('discord.reload'))).toBe(true)
   expect(notifications.some((body) => body.includes('reloaded'))).toBe(true)
+  const embedded = extractPanelSnapshot(readFileSync(panelFile, 'utf8')) as {
+    version: string
+    status: { detailLevel: string }
+    logs: string[]
+  }
+  expect(embedded.version).toBe(PLUGIN_VERSION)
+  expect(embedded.status.detailLevel).toBe('generic')
+  expect(embedded.logs.some((line) => line.includes('activate'))).toBe(true)
+  expect(JSON.stringify(embedded).includes('bridgeToken')).toBe(false)
   await deactivate()
   await deactivate()
   if (previous === undefined) {
     delete process.env.ORCA_PRESENCE_LOG_FILE
   } else {
     process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  if (previousPanel === undefined) {
+    delete process.env.ORCA_PRESENCE_PANEL_HTML
+  } else {
+    process.env.ORCA_PRESENCE_PANEL_HTML = previousPanel
   }
   rmSync(dir, { recursive: true, force: true })
 })
@@ -103,7 +140,9 @@ test('an invalid persisted Application ID is logged and toasted', async () => {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-appid-'))
   const logFile = join(dir, 'plugin.log')
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
   process.env.ORCA_PRESENCE_LOG_FILE = logFile
+  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
   const { default: activate, deactivate } = await import('../src/main')
   const hostLines: string[] = []
   const notifications: string[] = []
@@ -139,6 +178,11 @@ test('an invalid persisted Application ID is logged and toasted', async () => {
   } else {
     process.env.ORCA_PRESENCE_LOG_FILE = previous
   }
+  if (previousSkip === undefined) {
+    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  } else {
+    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
+  }
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -160,6 +204,7 @@ test('shipped dist entry is Node-compatible ESM with the same exports', async ()
   expect(shipped.includes('from "node:net"') || shipped.includes("from 'node:net'")).toBe(true)
   expect(shipped.includes('presence.reload')).toBe(true)
   expect(shipped.includes('discord.app_id_invalid')).toBe(true)
+  expect(shipped.includes('presence-snapshot') || shipped.includes('panel.snapshot')).toBe(true)
   const entry = new URL('../dist/main.js', import.meta.url).href
   const mod = (await import(entry)) as { default: unknown; deactivate: unknown }
   expect(typeof mod.default).toBe('function')
