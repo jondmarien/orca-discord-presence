@@ -38,6 +38,7 @@ import { parseWorkspaceContext, resolveMachineName } from './presence/host-conte
 import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
 import { resolvePanelHtmlPath, writePanelSnapshot } from './presence/panel-html'
+import { shouldRewritePanelHtml } from './presence/panel-live'
 import { buildPresencePanelSnapshot, type PresencePanelHost } from './presence/panel-snapshot'
 import {
   normalizeSettings,
@@ -146,6 +147,7 @@ let diagnostics: DiagnosticSink | null = null
 let logRing: LogRing | null = null
 let panelWriteTimer: ReturnType<typeof setTimeout> | null = null
 let panelWriteNoted = false
+let panelStorageNoted = false
 let deactivated = false
 
 /**
@@ -201,6 +203,7 @@ export default async function activate(orca: OrcaHost) {
   })
   logRing = createLogRing()
   panelWriteNoted = false
+  panelStorageNoted = false
   diagnostics = createDiagnosticSink({
     hostLog: (message) => orca.log(message),
     filePath: logFile,
@@ -265,7 +268,16 @@ export default async function activate(orca: OrcaHost) {
         logs: logRing.lines(),
         host: { ...hostCaps }
       })
-      await writeDiagnosticsSnapshot((method, args) => orca.host.call(method, args), snapshot)
+      const stored = await writeDiagnosticsSnapshot((method, args) => orca.host.call(method, args), snapshot)
+      if (stored) {
+        if (!panelStorageNoted) {
+          panelStorageNoted = true
+          diagnostics?.line('debug', 'panel.snapshot_stored', { lines: snapshot.logs.length })
+        }
+      }
+      if (!shouldRewritePanelHtml(stored)) {
+        return
+      }
       const target = resolvePanelHtmlPath(process.env, import.meta.url)
       if (!target) {
         return

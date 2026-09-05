@@ -3,7 +3,7 @@
   "id": "discord-presence",
   "publisher": "chron0",
   "name": "Discord Rich Presence",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Shows your current Orca workspace, branch, agent, and optional focused surface as Discord Rich Presence. Every identifying field is opt-in.",
   "engines": { "orca": ">=1.4.0" },
   "pluginApi": 1,

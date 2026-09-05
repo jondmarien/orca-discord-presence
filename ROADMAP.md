@@ -82,7 +82,7 @@ Burpcord-inspired sidebar IA (status bar, Settings / About / Help, read-only fie
 
 **Works on the fork (`jondmarien/orca`):** panel `settings.get` / `settings.set`, `storage.get` of `diagnostics.snapshot`, live workspace extras, writable toggles.
 
-**Stock `stablyai/orca`:** `workspace.readContext`, `notifications.show`, optional worker rewrite of `panel/index.html`. Toggles stay on the command palette. The 0.6.1 manifest is rejected.
+**Stock `stablyai/orca`:** `workspace.readContext`, `notifications.show`, optional worker rewrite of `panel/index.html`. Toggles stay on the command palette. The 0.6.2 manifest is rejected.
 
 ---
 

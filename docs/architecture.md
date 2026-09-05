@@ -13,7 +13,7 @@ Orca starts a trusted plugin worker and calls `export default function activate(
 
 The worker is **idle-reaped after 5 minutes** of no host calls. An open Discord socket does not count as activity. A 90 s `workspace.readContext` heartbeat (`HEARTBEAT_MS` in `src/main.ts`) both keeps the worker alive and picks up branch changes, which emit no event.
 
-Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`, `ui.focus.changed`) also wake a sleeping worker. Dynamic-only subscriptions would not. Stock `stablyai/orca` rejects `ui.focus.changed` / `ui:focus` / `sidecar`; this 0.6.1 line targets [`jondmarien/orca`](https://github.com/jondmarien/orca).
+Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`, `ui.focus.changed`) also wake a sleeping worker. Dynamic-only subscriptions would not. Stock `stablyai/orca` rejects `ui.focus.changed` / `ui:focus` / `sidecar`; this 0.6.2 line targets [`jondmarien/orca`](https://github.com/jondmarien/orca).
 
 ## Module map
 
@@ -50,6 +50,7 @@ activate (src/main.ts)
 | [`src/presence/focus.ts`](../src/presence/focus.ts) | `ui.focus.changed` / `ui.readFocus` parse + privacy-gated labels. Join keys never enter Discord copy. |
 | [`src/presence/sidecar.ts`](../src/presence/sidecar.ts) | Try-call `sidecar.resolvePlacement` / `sidecar.publish`. |
 | [`src/presence/diagnostics-store.ts`](../src/presence/diagnostics-store.ts) | Cap + write `diagnostics.snapshot`. |
+| [`src/presence/panel-live.ts`](../src/presence/panel-live.ts) | Live-poll policy: skip HTML rewrite when storage works; panel JS mirrors this so polls do not reset Settings. |
 | [`src/presence/expiry.ts`](../src/presence/expiry.ts) | `AGENT_RETENTION_MS` (30m stale / 60s done) plus older 30s/60s helpers for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). |
 | [`src/presence/agent-state.ts`](../src/presence/agent-state.ts) | Alias table → `working` / `blocked` / `waiting` / `done`. |
 | [`src/presence/agents.ts`](../src/presence/agents.ts) | Multi-agent table keyed by `worktreeId` + `paneKey`. Identity can join optional focus keys; count/state stay global. |
@@ -117,7 +118,7 @@ The panel talks to the host only through `postMessage`:
 - `{ type: 'orca-panel-action-result', requestId, ok, value?, error? }`
 - Watchdog: `orca-panel-ping` / `orca-panel-pong`
 
-The worker writes a redacted snapshot to `storage.set` (`diagnostics.snapshot`) and optionally rewrites `#presence-snapshot` in `panel/index.html` when the install is writable. The same rewrite stamps `#plugin-version`, `#version-badge`, and About from `PLUGIN_VERSION`. Stock hosts that forbid panel settings/storage keep the v0.5 read-only fallback.
+The worker writes a redacted snapshot to `storage.set` (`diagnostics.snapshot`). The panel polls that mailbox for status and logs without re-applying field toggles or forcing Extension Logs open. The worker rewrites `#presence-snapshot` in `panel/index.html` only when storage is unavailable (stock / method miss). When a rewrite does happen it stamps `#plugin-version`, `#version-badge`, and About from `PLUGIN_VERSION`.
 
 ## Activity expiry (future providers)
 
