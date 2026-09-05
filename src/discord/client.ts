@@ -29,22 +29,16 @@ import {
 
 /**
  * How long to wait for a `READY` dispatch after sending the handshake.
- *
- * @author Jonathan Marien
  */
 const HANDSHAKE_TIMEOUT_MS = 5_000
 
 /**
  * How long to wait for a SET_ACTIVITY (or other RPC) reply nonce.
- *
- * @author Jonathan Marien
  */
 const COMMAND_TIMEOUT_MS = 5_000
 
 /**
  * Minimal Discord RPC JSON body this client inspects on inbound frames.
- *
- * @author Jonathan Marien
  */
 type RpcMessage = {
   evt?: string
@@ -56,8 +50,6 @@ type RpcMessage = {
 /**
  * Discord's READY dispatch is usable only when `data` is a non-null object.
  * A null `data` means the pipe opened before the client finished auth.
- *
- * @author Jonathan Marien
  */
 function isHandshakeReadyPayload(payload: RpcMessage | null): boolean {
   return payload?.evt === 'READY' && payload.data != null && typeof payload.data === 'object'
@@ -65,8 +57,6 @@ function isHandshakeReadyPayload(payload: RpcMessage | null): boolean {
 
 /**
  * In-flight RPC command waiting on a matching `nonce`.
- *
- * @author Jonathan Marien
  */
 type PendingCommand = {
   resolve: (value: unknown) => void
@@ -76,15 +66,11 @@ type PendingCommand = {
 
 /**
  * Diagnostic severity for {@link DiscordClientOptions.log}.
- *
- * @author Jonathan Marien
  */
 export type DiscordClientLogLevel = 'info' | 'warn' | 'error'
 
 /**
  * Construction options for {@link createDiscordClient}.
- *
- * @author Jonathan Marien
  */
 export type DiscordClientOptions = {
   /** Discord Application ID sent in the handshake `client_id`. */
@@ -107,7 +93,7 @@ export type DiscordClientOptions = {
    */
   handshakeTimeoutMs?: number
   /**
-   * Retryable-handshake attempts (Burpcord: 3). Missing-socket failures
+   * Retryable-handshake attempts (default 3). Missing-socket failures
    * still fail on the first try so the companion bridge can fail over.
    */
   connectAttempts?: number
@@ -121,8 +107,6 @@ export type DiscordClientOptions = {
 
 /**
  * Stateful Discord IPC client used by the presence controller.
- *
- * @author Jonathan Marien
  */
 export type DiscordClient = {
   /** Connect to the first accepting IPC socket and complete the handshake. */
@@ -192,7 +176,6 @@ function defaultCandidates(): string[] {
  *
  * @param options - Application id, optional path override, close/log hooks.
  * @returns A {@link DiscordClient} bound to those options.
- * @author Jonathan Marien
  */
 export function createDiscordClient({
   clientId,

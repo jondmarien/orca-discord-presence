@@ -22,8 +22,6 @@ import type { PresenceSettings } from './settings'
  * Last successful publish path. `null` after a clear or before the first
  * successful write. Local IPC wins when connected; the HTTP bridge is the
  * fallback when Discord is not running on the Orca host.
- *
- * @author Jonathan Marien
  */
 export type PresenceSink = 'local' | 'bridge'
 
@@ -33,15 +31,11 @@ export type PresenceSink = 'local' | 'bridge'
  * The first update after a quiet period transmits immediately. Later
  * updates inside the window coalesce to a single deferred write of the
  * newest snapshot.
- *
- * @author Jonathan Marien
  */
 export const MIN_UPDATE_INTERVAL_MS = 15_000
 
 /**
  * Discord client surface the controller depends on (real or test fake).
- *
- * @author Jonathan Marien
  */
 export type PresenceClient = {
   connect: () => Promise<void>
@@ -56,8 +50,6 @@ export type PresenceClient = {
  *
  * Timer and clock hooks are injectable so unit tests can advance time
  * without real `setTimeout`.
- *
- * @author Jonathan Marien
  */
 export type PresenceControllerOptions = {
   client: PresenceClient
@@ -88,8 +80,6 @@ export type PresenceControllerOptions = {
  * `enabled` is true only when the master switch is on **and**
  * `detailLevel !== 'off'`. `lastActivity` is the last payload successfully
  * sent to Discord (or `null` after a clear).
- *
- * @author Jonathan Marien
  */
 export type PresenceStatus = {
   enabled: boolean
@@ -107,8 +97,6 @@ export type PresenceStatus = {
 
 /**
  * Stateful presence coordinator used by the plugin worker.
- *
- * @author Jonathan Marien
  */
 export type PresenceController = {
   /** Merge a partial snapshot and schedule or skip a Discord write. */
@@ -147,7 +135,6 @@ export type PresenceController = {
  *
  * @param options - Client, initial settings, optional clock/timer/log.
  * @returns A {@link PresenceController}.
- * @author Jonathan Marien
  */
 export function createPresenceController({
   client,

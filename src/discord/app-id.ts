@@ -13,15 +13,11 @@
 
 /**
  * Discord snowflakes are 17–20 digits today; accept that range and nothing else.
- *
- * @author Jonathan Marien
  */
 export const APPLICATION_ID_RE = /^\d{17,20}$/
 
 /**
  * Result of coercing a persisted or constructed Application ID.
- *
- * @author Jonathan Marien
  */
 export type ApplicationIdInspection = {
   /** Id to send in the handshake (`client_id`). */
@@ -39,8 +35,6 @@ export type ApplicationIdInspection = {
 
 /**
  * True when `value` looks like a Discord Application ID snowflake.
- *
- * @author Jonathan Marien
  */
 export function isPlausibleApplicationId(value: string): boolean {
   return APPLICATION_ID_RE.test(value.trim())
@@ -56,7 +50,6 @@ export function isPlausibleApplicationId(value: string): boolean {
  * @param raw - Value from settings or constructor.
  * @param shippedId - Plugin default (public snowflake, not a secret).
  * @returns Normalized id plus whether we rejected the input.
- * @author Jonathan Marien
  */
 export function inspectApplicationId(raw: unknown, shippedId: string): ApplicationIdInspection {
   if (typeof raw !== 'string') {
@@ -94,8 +87,6 @@ export function inspectApplicationId(raw: unknown, shippedId: string): Applicati
 
 /**
  * Throw if `clientId` is obviously not a Discord snowflake.
- *
- * @author Jonathan Marien
  */
 export function assertPlausibleApplicationId(clientId: string): void {
   if (!isPlausibleApplicationId(clientId)) {

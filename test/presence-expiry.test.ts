@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { ACTIVITY_EXPIRY_MS, isActivityFresh } from '../src/presence/expiry'
 
-test('Burpcord-style windows are 30s short and 60s long', () => {
+test('short and long expiry windows are 30s and 60s', () => {
   expect(ACTIVITY_EXPIRY_MS.short).toBe(30_000)
   expect(ACTIVITY_EXPIRY_MS.long).toBe(60_000)
 })

@@ -1,9 +1,11 @@
 /**
  * Discord IPC connect retry: capped exponential backoff and error classes.
  *
- * Burpcord (Java / DiscordIPC) retries 3 times with 3s → 15s capped
- * backoff when Discord is slow to READY. We apply the same policy to the
- * hand-rolled Node client without pulling DiscordIPC.
+ * The same class of Discord IPC pitfall showed up in another Discord Rich
+ * Presence app (Java / Burp Suite): Discord can be slow to READY, and a
+ * pipe-open-but-not-ready handshake should be retried, not treated as fatal.
+ * Same hardening here — 3 attempts, 3s → 15s capped backoff. This client
+ * does not use DiscordIPC or any Java library.
  *
  * Missing-socket failures are **not** retried here so the opt-in companion
  * bridge (#6) still fails over immediately when no local Discord is present.
@@ -15,22 +17,16 @@
 
 /**
  * How many `connect()` attempts to make when the handshake is retryable.
- *
- * @author Jonathan Marien
  */
 export const CONNECT_RETRY_ATTEMPTS = 3
 
 /**
  * Delay after the first failed retryable attempt (milliseconds).
- *
- * @author Jonathan Marien
  */
 export const CONNECT_RETRY_INITIAL_MS = 3_000
 
 /**
  * Cap for the exponential backoff (milliseconds).
- *
- * @author Jonathan Marien
  */
 export const CONNECT_RETRY_MAX_MS = 15_000
 
@@ -38,10 +34,8 @@ export const CONNECT_RETRY_MAX_MS = 15_000
  * Handshake completed with `evt: READY` but `data` was null/missing.
  *
  * Discord can accept the pipe before the user session is authenticated.
- * Burpcord filed this as an upstream DiscordIPC NPE; we treat it as
- * retryable instead of fatal.
- *
- * @author Jonathan Marien
+ * A prior Discord RPC integration hit a null `data` crash on that race;
+ * we treat it as retryable instead of fatal.
  */
 export class HandshakeNotReadyError extends Error {
   constructor(
@@ -53,12 +47,11 @@ export class HandshakeNotReadyError extends Error {
 }
 
 /**
- * Backoff delay after a failed attempt, matching Burpcord:
- * `min(INITIAL * 2^(attempt-1), MAX)`.
+ * Backoff delay after a failed attempt:
+ * `min(INITIAL * 2^(attempt-1), MAX)` (3s → 15s cap).
  *
  * @param failedAttempt - 1-based attempt that just failed (1 → 3s, 2 → 6s).
  * @returns Delay in milliseconds before the next attempt.
- * @author Jonathan Marien
  */
 export function connectRetryDelayMs(failedAttempt: number): number {
   const shift = Math.max(0, failedAttempt - 1)
@@ -69,8 +62,6 @@ export function connectRetryDelayMs(failedAttempt: number): number {
  * Discord rejected the Application ID (unregistered / HTTP 404).
  *
  * Do not retry — the next attempt will fail the same way.
- *
- * @author Jonathan Marien
  */
 export function isFatalAppIdError(message: string): boolean {
   const lower = message.toLowerCase()
@@ -87,8 +78,6 @@ export function isFatalAppIdError(message: string): boolean {
  *
  * Retry: handshake not ready, handshake timeout, peer close during handshake.
  * Do not retry: missing IPC socket (bridge failover), invalid App ID, 404.
- *
- * @author Jonathan Marien
  */
 export function isRetryableConnectError(error: unknown): boolean {
   if (error instanceof HandshakeNotReadyError) {

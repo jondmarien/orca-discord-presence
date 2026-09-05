@@ -70,7 +70,7 @@ Each frame is:
 | 3 | PING | Heartbeat from Discord |
 | 4 | PONG | Reply to PING |
 
-Handshake waits up to 5 s for `evt: READY`. `READY` with a **null / missing `data`** is retryable (Discord accepted the pipe before the user session is ready — the Burpcord DiscordIPC NPE case). Handshake timeout is also retryable. The client tries up to **3** times with capped exponential backoff (**3s → 15s**). A missing IPC socket is **not** retried so the companion bridge can fail over immediately. An obvious bad Application ID (not a 17–20 digit snowflake) or a 404 / “not found” handshake error fails fast and is not retried.
+Handshake waits up to 5 s for `evt: READY`. `READY` with a **null / missing `data`** is retryable (Discord accepted the pipe before the user session is ready — a race seen in a prior Discord RPC integration). Handshake timeout is also retryable. The client tries up to **3** times with capped exponential backoff (**3s → 15s**). A missing IPC socket is **not** retried so the companion bridge can fail over immediately. An obvious bad Application ID (not a 17–20 digit snowflake) or a 404 / “not found” handshake error fails fast and is not retried.
 
 Commands carry a UUID `nonce` and wait up to 5 s for a matching reply. Declared body lengths over 1 MiB are rejected so a desynced stream cannot grow the buffer without bound.
 
@@ -92,7 +92,7 @@ A user command that changes settings bypasses the debounce so the palette feels 
 
 ## Activity expiry (future providers)
 
-[`src/presence/expiry.ts`](../src/presence/expiry.ts) exports `ACTIVITY_EXPIRY_MS` (`short` 30s, `long` 60s) and `isActivityFresh()`. Burpcord uses those windows so Proxy/Scanner/Repeater states die after the user leaves a tool. This plugin does **not** rotate providers yet — only agent status + workspace snapshot. When [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) (focused window/tab) lands, providers should call `isActivityFresh` instead of inventing a new clock. Full priority + round-robin rotation stays deferred.
+[`src/presence/expiry.ts`](../src/presence/expiry.ts) exports `ACTIVITY_EXPIRY_MS` (`short` 30s, `long` 60s) and `isActivityFresh()`. A prior Discord RPC integration used those windows so tool-specific states die after the user leaves a surface. This plugin does **not** rotate providers yet — only agent status + workspace snapshot. When [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) (focused window/tab) lands, providers should call `isActivityFresh` instead of inventing a new clock. Full priority + round-robin rotation stays deferred.
 
 ## Activity fields
 

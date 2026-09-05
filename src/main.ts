@@ -32,23 +32,17 @@ import {
  * Why: the worker is reaped after `PLUGIN_WORKER_IDLE_REAP_MS` (5 min) of no
  * host calls. This poll both refreshes that clock and catches branch
  * switches, which emit no event.
- *
- * @author Jonathan Marien
  */
 const HEARTBEAT_MS = 90_000
 
 /**
  * Notification / log budget for the `transmitting=` JSON. Discord toasts
  * truncate; keep enough of `details` / `state` to confirm what was sent.
- *
- * @author Jonathan Marien
  */
 const TRANSMITTING_TOAST_MAX = 180
 
 /**
  * Compact `transmitting=…` fragment for **Show Status** (toast + log).
- *
- * @author Jonathan Marien
  */
 export function formatStatusTransmitting(activity: unknown): string {
   const json = JSON.stringify(activity) ?? 'null'
@@ -61,8 +55,6 @@ export function formatStatusTransmitting(activity: unknown): string {
 /**
  * Command palette ids mapped to the boolean {@link PresenceSettings} field
  * each toggle flips. Command titles live in `orca-plugin.json`.
- *
- * @author Jonathan Marien
  */
 const TOGGLE_COMMANDS = {
   'presence.toggle-branch': 'showBranch',
@@ -76,8 +68,6 @@ const TOGGLE_COMMANDS = {
 
 /**
  * Command id keys of {@link TOGGLE_COMMANDS}.
- *
- * @author Jonathan Marien
  */
 type ToggleCommandId = keyof typeof TOGGLE_COMMANDS
 
@@ -88,8 +78,6 @@ type ToggleCommandId = keyof typeof TOGGLE_COMMANDS
  * or an unrecognized future value). `receivedAt` is the host timestamp in
  * milliseconds; the activity builder may convert it to a Discord start
  * timestamp when `showElapsed` is on.
- *
- * @author Jonathan Marien
  */
 type AgentStatusPayload = {
   state: string
@@ -101,8 +89,6 @@ type AgentStatusPayload = {
  *
  * `terminals` is only used for its length. Missing `displayName` / `branch`
  * are treated as absent by the activity builder.
- *
- * @author Jonathan Marien
  */
 type WorkspaceContext = {
   displayName?: string
@@ -113,8 +99,6 @@ type WorkspaceContext = {
 /**
  * Host object Orca injects into `activate`. This is the subset of the
  * plugin worker API this plugin actually calls — not the full host surface.
- *
- * @author Jonathan Marien
  */
 export type OrcaHost = {
   /** Write a line to the plugin log (also used by **Show Status**). */
@@ -151,7 +135,6 @@ let deactivated = false
  * `refresh` is deferred so activate can return before the handshake timeout.
  *
  * @param orca - Host API injected by the Orca plugin worker.
- * @author Jonathan Marien
  */
 export default async function activate(orca: OrcaHost) {
   deactivated = false
@@ -349,8 +332,6 @@ export default async function activate(orca: OrcaHost) {
  * Plugin shutdown. Stops the heartbeat, clears Discord activity, and
  * closes the IPC socket. Idempotent — safe if called twice or when
  * activate never finished wiring.
- *
- * @author Jonathan Marien
  */
 export async function deactivate() {
   if (deactivated) {

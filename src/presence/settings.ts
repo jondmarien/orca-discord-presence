@@ -24,23 +24,17 @@ import { normalizeBridgeToken, normalizeBridgeUrl } from './bridge'
  * | `generic` | Non-identifying copy + optional agent / terminals / elapsed |
  * | `workspace` | Workspace display name; still no branch |
  * | `full` | Workspace + optional branch, machine, etc. |
- *
- * @author Jonathan Marien
  */
 export const DETAIL_LEVELS = ['off', 'generic', 'workspace', 'full'] as const
 
 /**
  * One of {@link DETAIL_LEVELS}.
- *
- * @author Jonathan Marien
  */
 export type DetailLevel = (typeof DETAIL_LEVELS)[number]
 
 /**
  * Persisted plugin settings. Every identifying field is opt-in except the
  * non-identifying defaults (`enabled`, `generic` detail, agent state, elapsed).
- *
- * @author Jonathan Marien
  */
 export type PresenceSettings = {
   /** Master switch. When false, activity is cleared regardless of detail. */
@@ -94,8 +88,6 @@ export type PresenceSettings = {
 
 /**
  * Boolean keys of {@link PresenceSettings} (the fields {@link toggleField} flips).
- *
- * @author Jonathan Marien
  */
 type BooleanSetting = {
   [K in keyof PresenceSettings]: PresenceSettings[K] extends boolean ? K : never
@@ -106,8 +98,6 @@ type BooleanSetting = {
  * payload. The Discord Developer Portal already has this application and the
  * five Rich Presence assets uploaded (`orca`, `state-working`,
  * `state-blocked`, `state-waiting`, `state-idle`).
- *
- * @author Jonathan Marien
  */
 export const SHIPPED_APPLICATION_ID = '1545653843239374848'
 
@@ -115,8 +105,6 @@ export const SHIPPED_APPLICATION_ID = '1545653843239374848'
  * Privacy-first defaults applied to every missing or invalid field.
  *
  * `detailLevel: 'generic'` never transmits a repo, branch, or machine name.
- *
- * @author Jonathan Marien
  */
 export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   enabled: true,
@@ -165,7 +153,6 @@ function normalizeLabel(value: unknown): string | null {
  *
  * @param raw - Value from `settings.get` (or `{}` / `undefined`).
  * @returns A fully populated settings object.
- * @author Jonathan Marien
  */
 export function normalizeSettings(raw: unknown): PresenceSettings {
   const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
@@ -199,7 +186,6 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
  *
  * @param current - Current level string (typically already normalized).
  * @returns The next {@link DetailLevel}.
- * @author Jonathan Marien
  */
 export function nextDetailLevel(current: string): DetailLevel {
   const index = (DETAIL_LEVELS as readonly string[]).indexOf(current)
@@ -213,7 +199,6 @@ export function nextDetailLevel(current: string): DetailLevel {
  * @param settings - Current settings.
  * @param field - A boolean key of {@link PresenceSettings}.
  * @returns A shallow copy with that field inverted, or `settings` unchanged.
- * @author Jonathan Marien
  */
 export function toggleField(settings: PresenceSettings, field: string): PresenceSettings {
   if (!BOOLEAN_FIELDS.includes(field as BooleanSetting)) {

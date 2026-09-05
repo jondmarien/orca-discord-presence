@@ -1,11 +1,12 @@
 /**
  * Activity expiry windows for future focus / tool providers.
  *
- * Burpcord expires sticky tool states (Proxy/WebSocket 30s; Scanner,
- * Repeater, Intruder 60s) so Discord does not keep showing a surface the
- * user already left. This plugin does **not** rotate providers yet —
- * presence is still agent status + workspace snapshot only. Wire
- * {@link isActivityFresh} when focused-window/tab providers land (#7).
+ * Issue encountered in a prior Discord RPC integration: sticky tool states
+ * (short ~30s chatter vs long ~60s work) need an expiry so Discord does
+ * not keep showing a surface the user already left. Same idea applies
+ * here when focused-window/tab providers land (#7). This plugin does
+ * **not** rotate providers yet — presence is still agent status +
+ * workspace snapshot only. Wire {@link isActivityFresh} then.
  *
  * @module presence/expiry
  * @author Jonathan Marien
@@ -13,9 +14,7 @@
  */
 
 /**
- * Named windows matching Burpcord's short vs long tool activity.
- *
- * @author Jonathan Marien
+ * Named windows: short (30s) vs long (60s) tool activity.
  */
 export const ACTIVITY_EXPIRY_MS = {
   /** Proxy / WebSocket-style chatter. */
@@ -26,8 +25,6 @@ export const ACTIVITY_EXPIRY_MS = {
 
 /**
  * One of {@link ACTIVITY_EXPIRY_MS}.
- *
- * @author Jonathan Marien
  */
 export type ActivityExpiryMs = (typeof ACTIVITY_EXPIRY_MS)[keyof typeof ACTIVITY_EXPIRY_MS]
 
@@ -41,7 +38,6 @@ export type ActivityExpiryMs = (typeof ACTIVITY_EXPIRY_MS)[keyof typeof ACTIVITY
  * @param nowMs - Clock (usually `Date.now()`).
  * @param windowMs - Expiry window; see {@link ACTIVITY_EXPIRY_MS}.
  * @returns True only when the event is strictly inside the window.
- * @author Jonathan Marien
  */
 export function isActivityFresh(lastSeenAtMs: number, nowMs: number, windowMs: number): boolean {
   if (!Number.isFinite(lastSeenAtMs) || !Number.isFinite(nowMs) || !Number.isFinite(windowMs)) {

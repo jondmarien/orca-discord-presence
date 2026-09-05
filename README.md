@@ -129,7 +129,7 @@ Panels cannot call `settings.set` in Orca’s current host API, so each toggle i
 |---|---|
 | Discord Presence: Enable/Disable | Master switch (`enabled`) |
 | Discord Presence: Show Status | Force refresh + re-`SET_ACTIVITY`; toast includes `transmitting=…` (truncated last activity) |
-| Discord Presence: Reload RPC | Close + reconnect Discord IPC, then re-`SET_ACTIVITY` (Burpcord “Reload RPC”) |
+| Discord Presence: Reload RPC | Close + reconnect Discord IPC, then re-`SET_ACTIVITY` |
 | Discord Presence: Cycle Detail Level | `off` → `generic` → `workspace` → `full` → … |
 | Discord Presence: Toggle Branch | `showBranch` |
 | Discord Presence: Toggle Agent State | `showAgentState` |
@@ -224,9 +224,9 @@ bun run build
 
 `bun run build` emits Node-compatible ESM at `dist/main.js`. Commit that file when the TypeScript sources change so `devPluginPaths` and marketplace installs work without a local build.
 
-Zero production dependencies. Hand-rolled Discord IPC (same approach as Burpcord). Dev-only deps are TypeScript and `@types/bun`.
+Zero production dependencies. Hand-rolled Discord IPC over `node:net`. Dev-only deps are TypeScript and `@types/bun`.
 
-TypeScript sources carry JSDoc (`@module`, `@author Jonathan Marien`, `@date`) on modules and significant exports.
+TypeScript sources carry JSDoc (`@module`, `@author Jonathan Marien`, `@date`) on the file-level module header only.
 
 ---
 
@@ -423,7 +423,7 @@ Authenticated requests send `Authorization: Bearer <token>`. `GET /health` is un
 - Presence starts on the first agent/worktree event, command, or 90 s heartbeat — not at bare app launch.
 - Idle-reap survival depends on a 90 s `workspace.readContext` heartbeat (worker is reaped after 5 minutes of no host calls).
 - v0.3 has no settings panel; toggles are commands only. `bridgeUrl` / `bridgeToken` are persisted settings or env overlays.
-- Activity **expiry windows** (Burpcord 30s/60s sticky-state reap) are documented in [`src/presence/expiry.ts`](src/presence/expiry.ts) for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). They are not applied to today’s agent/workspace snapshot.
+- Activity **expiry windows** (30s/60s sticky-state reap — same Discord IPC lesson as a prior Rich Presence integration) are documented in [`src/presence/expiry.ts`](src/presence/expiry.ts) for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). They are not applied to today’s agent/workspace snapshot.
 
 ---
 
