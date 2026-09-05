@@ -4,7 +4,8 @@
  * The host already truncates titles and strips paths/URLs. This module
  * decides whether Discord may see a kind (and optionally that title).
  * Optional `worktreeId` / `agentId` are join keys only — never formatted
- * into Discord copy and never shown in the panel.
+ * into Discord copy and never shown in the panel. Host contract:
+ * `jondmarien/orca` `main` @ `096f26bd` (PR #8).
  *
  * @module presence/focus
  * @author Jonathan Marien
@@ -146,7 +147,8 @@ export function parseFocusedSurfaceObject(raw: unknown): FocusedSurfaceObject | 
         ? source.title.trim().slice(0, 80)
         : null
   const worktreeId = parseOptionalHostJoinKey(source.worktreeId)
-  const agentId = parseOptionalHostJoinKey(source.agentId)
+  const agentId =
+    source.kind === 'agent' ? parseOptionalHostJoinKey(source.agentId) : undefined
   return {
     kind: source.kind,
     title,

@@ -72,6 +72,32 @@ test('parseWorkspaceContext feature-detects focusedSurface join keys', () => {
   expect(parsed?.focusedSurfacePresent).toBe(true)
 })
 
+test('parseWorkspaceContext drops a non-agent agentId and null join keys', () => {
+  const withNulls = parseWorkspaceContext({
+    displayName: 'acme',
+    branch: 'feat',
+    terminals: [],
+    focusedSurface: { kind: 'terminal', title: 'zsh', worktreeId: null, agentId: null }
+  })
+  expect(withNulls?.focusedSurface).toEqual({ kind: 'terminal', title: 'zsh' })
+  const terminal = parseWorkspaceContext({
+    displayName: 'acme',
+    branch: 'feat',
+    terminals: [],
+    focusedSurface: {
+      kind: 'terminal',
+      title: 'zsh',
+      worktreeId: 'repo-1::/Users/private/orca',
+      agentId: 'tab-must-drop'
+    }
+  })
+  expect(terminal?.focusedSurface).toEqual({
+    kind: 'terminal',
+    title: 'zsh',
+    worktreeId: 'repo-1::/Users/private/orca'
+  })
+})
+
 test('parseWorkspaceContext treats an explicit null focusedSurface as present', () => {
   const parsed = parseWorkspaceContext({
     displayName: 'acme',

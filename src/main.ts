@@ -132,7 +132,7 @@ export type OrcaHost = {
     /**
      * Invoke a host method. This plugin uses `settings.*`,
      * `workspace.readContext`, `notifications.show`, `storage.*`,
-     * `sidecar.*` (try-call), and `ui.readFocus` (try-call; host #8).
+     * `sidecar.*` (try-call), and `ui.readFocus` (try-call; fork host #8).
      */
     call: (method: string, args?: Record<string, unknown>) => Promise<unknown>
   }

@@ -69,11 +69,29 @@ test('parseUiReadFocus reads { focusedSurface } and rejects a missing key', () =
   })
   expect(
     parseUiReadFocus({
-      focusedSurface: { kind: 'editor', title: 'app.ts', worktreeId: 'wt', agentId: 'ag' }
+      focusedSurface: { kind: 'agent', title: 'Claude', worktreeId: 'wt', agentId: 'ag' }
     })
   ).toEqual({
-    focusedSurface: { kind: 'editor', title: 'app.ts', worktreeId: 'wt', agentId: 'ag' }
+    focusedSurface: { kind: 'agent', title: 'Claude', worktreeId: 'wt', agentId: 'ag' }
   })
+  expect(
+    parseUiReadFocus({
+      focusedSurface: {
+        kind: 'editor',
+        title: 'app.ts',
+        worktreeId: 'repo-1::/Users/private/orca',
+        agentId: 'tab-must-drop',
+        leftover: true
+      }
+    })
+  ).toEqual({
+    focusedSurface: { kind: 'editor', title: 'app.ts', worktreeId: 'repo-1::/Users/private/orca' }
+  })
+  expect(
+    parseUiReadFocus({
+      focusedSurface: { kind: 'terminal', title: 'zsh', worktreeId: null, agentId: null }
+    })
+  ).toEqual({ focusedSurface: { kind: 'terminal', title: 'zsh' } })
   expect(parseUiReadFocus({ focusedSurface: null })).toEqual({ focusedSurface: null })
   expect(parseUiReadFocus({ focusedSurface: { kind: 'nope', title: 'x' } })).toBeUndefined()
   expect(parseUiReadFocus({})).toBeUndefined()
@@ -85,6 +103,34 @@ test('parseOptionalHostJoinKey drops empty and over-length keys', () => {
   expect(parseOptionalHostJoinKey('')).toBeUndefined()
   expect(parseOptionalHostJoinKey(null)).toBeUndefined()
   expect(parseOptionalHostJoinKey('x'.repeat(FOCUS_JOIN_KEY_MAX + 1))).toBeUndefined()
+})
+
+test('host #8 join keys never enter Discord focus copy', () => {
+  const parsed = parseUiReadFocus({
+    focusedSurface: {
+      kind: 'agent',
+      title: 'Claude',
+      worktreeId: 'repo-1::/Users/private/orca',
+      agentId: 'tab-agent-1'
+    }
+  })
+  const formatted = formatFocusedSurface(
+    {
+      focusedSurfaceKind: parsed?.focusedSurface?.kind,
+      focusedSurfaceTitle: parsed?.focusedSurface?.title,
+      focusedSurfaceAtMs: NOW
+    },
+    settingsWith({
+      showFocusedSurface: true,
+      focusedSurfaceDetail: 'kind+title',
+      detailLevel: 'full'
+    }),
+    NOW
+  )
+  expect(formatted).toBe('Agent · Claude')
+  expect(formatted?.includes('/Users/private')).toBe(false)
+  expect(formatted?.includes('tab-agent-1')).toBe(false)
+  expect(formatted?.includes('repo-1')).toBe(false)
 })
 
 test('formatFocusedSurface never includes join keys', () => {
@@ -123,12 +169,12 @@ test('pickFocusedSurface prefers readContext, then ui.readFocus, then the event'
   expect(
     pickFocusedSurface({
       context: { focusedSurfacePresent: false },
-      readFocus: { focusedSurface: { kind: 'editor', title: 'app.ts', agentId: 'a1' } },
+      readFocus: { focusedSurface: { kind: 'agent', title: 'Claude', agentId: 'a1' } },
       lastEvent: { focusedSurface: { kind: 'browser', title: 'x' }, receivedAt: 1 },
       nowMs
     })
   ).toEqual({
-    surface: { kind: 'editor', title: 'app.ts', agentId: 'a1' },
+    surface: { kind: 'agent', title: 'Claude', agentId: 'a1' },
     atMs: nowMs,
     source: 'readFocus'
   })
