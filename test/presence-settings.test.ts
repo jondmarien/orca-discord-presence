@@ -1,8 +1,11 @@
 import { expect, test } from 'bun:test'
 import {
+  DEFAULT_OPEN_BUTTON_LABEL,
   DEFAULT_SETTINGS,
   DETAIL_LEVELS,
   SHIPPED_APPLICATION_ID,
+  normalizeOpenButtonLabel,
+  normalizeOpenUrl,
   normalizeSettings,
   nextDetailLevel,
   toggleField
@@ -20,6 +23,10 @@ test('defaults are privacy-preserving', () => {
   expect(DEFAULT_SETTINGS.bridgeUrl).toBe('')
   expect(DEFAULT_SETTINGS.bridgeToken).toBe('')
   expect(DEFAULT_SETTINGS.debugLogging).toBe(true)
+  expect(DEFAULT_SETTINGS.openUrl).toBe('')
+  expect(DEFAULT_SETTINGS.showOpenButton).toBe(false)
+  expect(DEFAULT_SETTINGS.openButtonLabel).toBe(DEFAULT_OPEN_BUTTON_LABEL)
+  expect(DEFAULT_SETTINGS.showAgentCount).toBe(false)
 })
 
 test('normalize fills gaps and drops unknown keys', () => {
@@ -96,4 +103,32 @@ test('toggleField flips bridgeEnabled', () => {
 
 test('toggleField flips debugLogging', () => {
   expect(toggleField({ ...DEFAULT_SETTINGS }, 'debugLogging').debugLogging).toBe(false)
+})
+
+test('toggleField flips showOpenButton and showAgentCount', () => {
+  expect(toggleField({ ...DEFAULT_SETTINGS }, 'showOpenButton').showOpenButton).toBe(true)
+  expect(toggleField({ ...DEFAULT_SETTINGS }, 'showAgentCount').showAgentCount).toBe(true)
+})
+
+test('normalizeOpenUrl keeps https and rejects everything else', () => {
+  expect(normalizeOpenUrl('https://orca.example/docs')).toBe('https://orca.example/docs')
+  expect(normalizeOpenUrl('  https://orca.example/docs  ')).toBe('https://orca.example/docs')
+  expect(normalizeOpenUrl('http://orca.example/docs')).toBe('')
+  expect(normalizeOpenUrl('javascript:alert(1)')).toBe('')
+  expect(normalizeOpenUrl('https://user:pass@orca.example/docs')).toBe('')
+  expect(normalizeOpenUrl('not a url')).toBe('')
+  expect(normalizeOpenUrl('')).toBe('')
+})
+
+test('normalizeOpenButtonLabel defaults and clamps to 32 characters', () => {
+  expect(normalizeOpenButtonLabel('')).toBe(DEFAULT_OPEN_BUTTON_LABEL)
+  expect(normalizeOpenButtonLabel(' Docs ')).toBe('Docs')
+  expect(normalizeOpenButtonLabel('x'.repeat(40))).toBe('x'.repeat(32))
+})
+
+test('normalizeSettings accepts openUrl and drops an invalid one', () => {
+  expect(normalizeSettings({ openUrl: 'https://example.com/x', showOpenButton: true }).openUrl).toBe(
+    'https://example.com/x'
+  )
+  expect(normalizeSettings({ openUrl: 'http://example.com' }).openUrl).toBe('')
 })
