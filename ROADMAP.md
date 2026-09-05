@@ -5,68 +5,82 @@ Date: 2026-09-05
 
 Known limits of `chron0.discord-presence` and the Orca host work that would unlock richer presence. This is not a schedule.
 
-Presence today is **local Discord IPC only**. The Vesktop Flatpak path in `src/discord/ipc.ts` does not change that: it only finds the socket on the same machine as the plugin worker.
+Presence today is **local Discord IPC first**. The Vesktop Flatpak path in `src/discord/ipc.ts` only finds a socket on the same machine as the plugin worker. An **opt-in HTTP companion** (Linux, macOS, or Windows) can publish that same privacy-gated activity on another machine (issue [#3](https://github.com/jondmarien/orca-discord-presence/issues/3) plugin MVP). A native Orca remote-presence API is still future work.
 
 See also [README](README.md), [Architecture](docs/architecture.md), [Privacy](docs/privacy.md). Tracked in [#3](https://github.com/jondmarien/orca-discord-presence/issues/3).
 
 ---
 
-## Local IPC only
+## Local IPC (still the primary path)
 
-The plugin worker talks to Discord / Vesktop over a Unix socket or Windows named pipe on **this** machine. Browser Discord has no IPC.
+The plugin worker talks to Discord / Vesktop over a Unix socket or Windows named pipe on **this** machine when one accepts a handshake. Browser Discord has no IPC.
 
-For presence to show:
+For **local** presence:
 
-1. The plugin must run in the Orca **host / runtime** process (the machine that forks the trusted Node worker).
+1. The plugin must run in the Orca **host / runtime** process (Linux, macOS, or Windows — the machine that forks the trusted Node worker).
 2. Discord desktop or Vesktop (with arRPC if Flatpak) must be installed, **running**, and **signed in** on that same host.
 3. The worker must be able to open `discord-ipc-*` (unsandboxed, official Flatpak/Snap, or Vesktop Flatpak — see README troubleshooting).
 
-There is no HTTP client, no Discord bot, and no remote RPC. Closing or signing out of Vesktop/Discord on the host stops presence until the client is back; the plugin retries on the next update or 90 s heartbeat.
+If **Show Status** reports `enabled=true connected=true`, this path is working. Closing or signing out of Vesktop/Discord on the host stops the local path; the plugin retries on the next update or 90 s heartbeat, and will use the companion if the bridge is enabled.
 
 ---
 
-## Dual-host case that does not work (confirmed)
+## Cross-machine case — plugin MVP (done)
 
-User-confirmed split ([#3](https://github.com/jondmarien/orca-discord-presence/issues/3)):
+User-confirmed split ([#3](https://github.com/jondmarien/orca-discord-presence/issues/3)) — one configuration among several:
 
 | Machine | Role | Discord / Vesktop |
 |---|---|---|
-| **Omarchy** | Orca host running the project and agents | None |
-| **Windows** | Full Orca install used as the UI, also talking to Omarchy projects | Discord + Vencord, local and signed in |
+| **Omarchy (Arch)** | Orca host running the project and agents | Often none |
+| **Windows** | UI / remote to Omarchy; Discord + Vencord signed in | Yes |
 
-**Why it fails.** Presence IPC is local to Discord on that OS.
+The same design applies to any pair: host on Linux/macOS/Windows, companion on Linux/macOS/Windows.
 
-- Omarchy has the agent truth but **no** Discord socket.
-- Windows has Discord, but the plugin only sees whatever **local** Orca host process loads it. Remote Omarchy agent events are **not** bridged to a Windows-local plugin for `SET_ACTIVITY`.
+**Why local IPC alone fails.** Presence IPC is local to Discord on that OS.
 
-Installing the plugin on **both** machines does **not** create a bridge. A Windows-only install also does not help unless that Windows box is the Orca host for those agents *and* has Discord/Vesktop.
+- The host has the agent truth but **no** Discord socket.
+- The Discord machine has a client, but installing this plugin there does not see remote-host agent events. Dual plugin install is not a bridge.
 
-**What would be needed.** An Orca-level (or companion) cross-machine presence bridge / remote capability so host-side activity can drive Discord IPC on another machine. That is an upstream Orca PR candidate, not something this plugin can do alone with local IPC.
+**What shipped (plugin-only, no Orca core changes):**
 
----
+- OS-agnostic **companion** under `companion/` — same Discord IPC client as the plugin (win32 pipes + POSIX sockets, including Vesktop Flatpak). HTTP `POST /activity` + `DELETE /activity`.
+- Opt-in plugin settings `bridgeEnabled` / `bridgeUrl` / `bridgeToken` (default **off**).
+- Publish policy: **prefer local IPC if connected, else bridge**. No dual-publish. Disable/stop clears remote activity.
+- Token required for non-loopback bind/URL. Tailscale and SSH-tunnel documented in the README.
 
-## Remote UI and the valid smoke test
-
-Controlling Orca from another machine does **not** require installing this plugin on the UI machine. Presence still depends on Vesktop or Discord **on the host**.
-
-| Machine | Needs this plugin? | Needs Discord / Vesktop? |
-|---|---|---|
-| Orca **host** (Omarchy) | Yes — the worker runs here | Yes — signed-in desktop client / Vesktop + arRPC |
-| Orca **UI** (Windows) | No | No, unless that box is also a host that should publish |
-
-**Smoke test that works today:** run the Orca host + Vesktop (signed in, arRPC enabled) on Omarchy with this plugin. Confirm Rich Presence on the Discord user account. You can *see* that activity from Windows Discord / Vencord as profile status even though Windows Discord is **not** the IPC publisher — Discord’s servers fan the host-published activity out to every client.
-
-If Vesktop/Discord on the host is closed or signed out, there is **no** presence. Two UI-only installs cannot reach the host socket.
+**Still future (Orca-native):** a host-mediated remote capability so this does not require a sidecar process or operator-set URL/token. That remains an upstream Orca PR candidate.
 
 ---
 
-## Future / Orca PR topics
+## Remote UI and smoke tests
 
-Plugin-only work cannot invent a socket on a different machine. These belong as additive Orca (or companion) changes — see [#3](https://github.com/jondmarien/orca-discord-presence/issues/3):
+Controlling Orca from another machine does **not** require installing this plugin on the UI machine. Presence still depends on either Vesktop/Discord **on the host**, or the companion on the machine that has Discord.
 
-- **Cross-machine presence bridge** — host-mediated path so a signed-in Discord/Vesktop on a *different* machine can publish Omarchy (or other remote-host) activity. Required for the dual-host case above.
-- **Optional Windows-side companion** — a small host-local helper on a Windows Orca host (named pipe `\\?\pipe\discord-ipc-N`) when that box, not Omarchy, is the runtime.
-- **Richer host capability APIs** — projections and capabilities that make remote Discord / multi-host presence possible without dual installs (where the worker runs, which machine owns Discord, optional off-box presence sink). Track B in `PLAN.md` (agent type/model, execution host, terminal shell, panel-callable settings) is the same class of additive `pluginApi` work.
-- **Feature additions that serve this plugin’s ideas** — file-level or buffer presence if the host ever exposes it; settings panel (today each toggle is a command); user-facing Application ID override; SSH/runtime host labels instead of `os.hostname()`.
+| Machine | Needs this plugin? | Needs Discord / Vesktop? | Needs companion? |
+|---|---|---|---|
+| Orca **host / runtime** | Yes — the worker runs here | Yes for local IPC; no if using the bridge | No |
+| Other OS with Discord (publisher) | No | Yes | Yes, when the host has no Discord |
+| Other OS viewing profile only | No | No | No |
 
-None of the above is required for the current local-IPC MVP, including Vesktop Flatpak discovery.
+**Smoke test (local IPC):** Orca host + Vesktop/Discord signed in on **that same host**. **Show Status** → `connected=true` (example: `enabled=true connected=true detail=generic`). Presence is visible on the Discord account from every client — Discord’s servers fan it out.
+
+**Smoke test (companion MVP):** Host plugin + `bridgeEnabled` / URL / token; companion on the Discord machine (Tailscale, LAN, or SSH tunnel); Discord/Vesktop/Vencord signed in there. **Show Status** on the host → `connected=false sink=bridge` when the host has no local Discord.
+
+---
+
+## What we do not detect
+
+No focused Orca window/tab (terminal vs agent UI). Inputs are `agent.status.changed` + `workspace.readContext` only. Subscribe to host focus/tab events **if Orca adds them** — do not invent.
+
+---
+
+## Issue #3 checklist
+
+- [x] Document the dual-host gap in README + ROADMAP
+- [x] Optional OS-agnostic companion + plugin HTTP bridge (privacy-first, default off)
+- [ ] Full Orca-native remote capability / host-mediated presence (upstream Orca)
+- [ ] Richer host capability APIs (projections for where the worker runs, which machine owns Discord, optional off-box sink) — Track B in `PLAN.md`
+- [ ] Active-tab / focus events if the host ever exposes them
+- [ ] Feature additions that still need host APIs — file-level presence; settings panel; user-facing Application ID override; SSH/runtime host labels instead of `os.hostname()`
+
+None of the remaining items is required for the companion MVP.

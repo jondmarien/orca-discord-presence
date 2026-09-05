@@ -256,6 +256,152 @@ function createDiscordClient({
   };
 }
 
+// src/presence/bridge.ts
+var BRIDGE_TIMEOUT_MS = 5000;
+var MAX_BRIDGE_URL_LENGTH = 512;
+var MAX_BRIDGE_TOKEN_LENGTH = 256;
+var BRIDGE_ENV = {
+  ENABLED: "ORCA_PRESENCE_BRIDGE_ENABLED",
+  URL: "ORCA_PRESENCE_BRIDGE_URL",
+  TOKEN: "ORCA_PRESENCE_BRIDGE_TOKEN",
+  BIND: "ORCA_PRESENCE_BIND",
+  PORT: "ORCA_PRESENCE_PORT",
+  CLIENT_ID: "ORCA_PRESENCE_CLIENT_ID"
+};
+function isLoopbackHost(host) {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (normalized === "localhost" || normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+  if (normalized.startsWith("127.")) {
+    return true;
+  }
+  if (normalized.startsWith("::ffff:")) {
+    return isLoopbackHost(normalized.slice("::ffff:".length));
+  }
+  return false;
+}
+function normalizeBridgeUrl(raw) {
+  if (typeof raw !== "string") {
+    return "";
+  }
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_BRIDGE_URL_LENGTH) {
+    return "";
+  }
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return "";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "";
+  }
+  if (parsed.username || parsed.password) {
+    return "";
+  }
+  let pathname = parsed.pathname.replace(/\/+$/, "");
+  if (pathname.endsWith("/activity")) {
+    pathname = pathname.slice(0, -"/activity".length);
+  }
+  return `${parsed.origin}${pathname}`;
+}
+function normalizeBridgeToken(raw) {
+  return typeof raw === "string" ? raw.trim().slice(0, MAX_BRIDGE_TOKEN_LENGTH) : "";
+}
+function bridgeUrlAllowsEmptyToken(url) {
+  try {
+    return isLoopbackHost(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+function resolveBridgeTarget(settings) {
+  if (!settings.bridgeEnabled) {
+    return null;
+  }
+  const url = normalizeBridgeUrl(settings.bridgeUrl);
+  if (!url) {
+    return null;
+  }
+  const token = normalizeBridgeToken(settings.bridgeToken);
+  if (!token && !bridgeUrlAllowsEmptyToken(url)) {
+    return null;
+  }
+  return { url, token };
+}
+function applyBridgeEnvOverrides(settings, env) {
+  const next = { ...settings };
+  const url = normalizeBridgeUrl(env[BRIDGE_ENV.URL]);
+  if (url) {
+    next.bridgeUrl = url;
+  }
+  const token = normalizeBridgeToken(env[BRIDGE_ENV.TOKEN]);
+  if (token) {
+    next.bridgeToken = token;
+  }
+  const flag = env[BRIDGE_ENV.ENABLED];
+  if (flag === "1" || flag === "true") {
+    next.bridgeEnabled = true;
+  } else if (flag === "0" || flag === "false") {
+    next.bridgeEnabled = false;
+  }
+  return next;
+}
+async function bridgeRequest(fetchFn, url, token, method, body) {
+  const headers = { accept: "application/json" };
+  if (token) {
+    headers.authorization = `Bearer ${token}`;
+  }
+  let payload;
+  if (method === "POST") {
+    headers["content-type"] = "application/json";
+    payload = JSON.stringify(body);
+  }
+  const controller = new AbortController;
+  const timer = setTimeout(() => controller.abort(), BRIDGE_TIMEOUT_MS);
+  try {
+    const response = await fetchFn(`${url}/activity`, {
+      method,
+      headers,
+      body: payload,
+      redirect: "error",
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`bridge ${method} ${response.status}`);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function createBridgeTransport({
+  fetch: fetchFn = fetch,
+  log = () => {}
+} = {}) {
+  return {
+    async publish(url, token, activity) {
+      try {
+        await bridgeRequest(fetchFn, url, token, "POST", activity);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`bridge publish failed: ${message}`);
+        throw error;
+      }
+    },
+    async clear(url, token) {
+      try {
+        await bridgeRequest(fetchFn, url, token, "DELETE");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`bridge clear failed: ${message}`);
+        throw error;
+      }
+    }
+  };
+}
+
 // src/presence/activity.ts
 var DISCORD_TEXT_MAX = 128;
 var AGENT_STATE_LABELS = {
@@ -321,15 +467,106 @@ function buildActivity(snapshot, settings, nowMs) {
   return activity;
 }
 
+// src/presence/log.ts
+import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+var LOG_PLUGIN_ID = "chron0.discord-presence";
+var LOG_DIR_NAME = "chron0-discord-presence";
+var LOG_FILE_NAME = "plugin.log";
+var MAX_LOG_BYTES = 256 * 1024;
+var LOG_FILE_ENV = "ORCA_PRESENCE_LOG_FILE";
+var REDACTED_KEYS = new Set(["token", "bridgetoken", "authorization", "password", "secret"]);
+function resolveLogFilePath(env, { homedir, tmpdir, platform }) {
+  const override = env[LOG_FILE_ENV];
+  if (typeof override === "string" && override.trim()) {
+    return override.trim();
+  }
+  const xdg = env.XDG_STATE_HOME;
+  if (typeof xdg === "string" && xdg.trim()) {
+    return join(xdg.trim(), LOG_DIR_NAME, LOG_FILE_NAME);
+  }
+  if (platform === "win32") {
+    const local = env.LOCALAPPDATA;
+    if (typeof local === "string" && local.trim()) {
+      return join(local.trim(), LOG_DIR_NAME, LOG_FILE_NAME);
+    }
+    return join(tmpdir, LOG_DIR_NAME, LOG_FILE_NAME);
+  }
+  if (homedir) {
+    return join(homedir, ".local", "state", LOG_DIR_NAME, LOG_FILE_NAME);
+  }
+  return join(tmpdir, LOG_DIR_NAME, LOG_FILE_NAME);
+}
+function formatLogLine(level, event, detail = {}) {
+  const parts = [`[${LOG_PLUGIN_ID}]`, level, event];
+  for (const [key, value] of Object.entries(detail)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (REDACTED_KEYS.has(key.toLowerCase())) {
+      parts.push(`${key}=***`);
+      continue;
+    }
+    const rendered = typeof value === "string" && /[\s=]/.test(value) ? JSON.stringify(value) : String(value);
+    parts.push(`${key}=${rendered}`);
+  }
+  return parts.join(" ");
+}
+function appendCappedLog(filePath, line, maxBytes = MAX_LOG_BYTES) {
+  mkdirSync(dirname(filePath), { recursive: true });
+  let size = 0;
+  try {
+    size = statSync(filePath).size;
+  } catch {
+    size = 0;
+  }
+  const payload = line.endsWith(`
+`) ? line : `${line}
+`;
+  if (size + Buffer.byteLength(payload) > maxBytes) {
+    try {
+      renameSync(filePath, `${filePath}.1`);
+    } catch {}
+  }
+  appendFileSync(filePath, payload, "utf8");
+}
+function createDiagnosticSink({
+  hostLog,
+  filePath,
+  debugEnabled,
+  append = appendCappedLog
+}) {
+  let debug = debugEnabled;
+  return {
+    filePath,
+    setDebugEnabled(enabled) {
+      debug = enabled;
+    },
+    line(level, event, detail) {
+      const always = level === "error" || level === "warn";
+      if (!debug && !always) {
+        return;
+      }
+      const formatted = formatLogLine(level, event, detail);
+      hostLog(formatted);
+      try {
+        append(filePath, formatted);
+      } catch {}
+    }
+  };
+}
+
 // src/presence/controller.ts
 var MIN_UPDATE_INTERVAL_MS = 15000;
 function createPresenceController({
   client,
   settings,
+  bridge,
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer),
-  log = () => {}
+  log = () => {},
+  diagnostics
 }) {
   let currentSettings = settings;
   let snapshot = null;
@@ -338,20 +575,59 @@ function createPresenceController({
   let lastSentAt = 0;
   let pendingTimer = null;
   let cleared = true;
+  let lastSink = null;
+  let lastBridgeUrl = null;
+  let lastBridgeToken = null;
+  function emit(level, event, detail) {
+    if (diagnostics) {
+      diagnostics.line(level, event, detail);
+      return;
+    }
+    log(formatLogLine(level, event, detail));
+  }
+  function bridgeOrigin(url) {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return "(invalid)";
+    }
+  }
   async function ensureConnected() {
     if (client.isConnected()) {
       return true;
     }
     try {
       await client.connect();
+      emit("info", "discord.connect_ok");
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log(`discord unavailable: ${message}`);
+      emit("error", "discord.connect_failed", { reason: message });
       return false;
     }
   }
-  async function transmit() {
+  async function tryClearBridge(url, token) {
+    if (!bridge) {
+      return;
+    }
+    try {
+      emit("info", "bridge.clear", { url: bridgeOrigin(url) });
+      await bridge.clear(url, token);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      emit("error", "bridge.clear_failed", { url: bridgeOrigin(url), reason: message });
+    }
+  }
+  async function forgetBridge(clearRemote) {
+    const url = lastBridgeUrl;
+    const token = lastBridgeToken ?? "";
+    lastBridgeUrl = null;
+    lastBridgeToken = null;
+    if (clearRemote && url) {
+      await tryClearBridge(url, token);
+    }
+  }
+  async function transmit(force = false) {
     pendingTimer = null;
     if (!snapshot) {
       return;
@@ -362,21 +638,53 @@ function createPresenceController({
       return;
     }
     const serialized = JSON.stringify(activity);
-    if (serialized === lastSentSerialized) {
+    if (!force && serialized === lastSentSerialized) {
       return;
     }
-    if (!await ensureConnected()) {
+    if (await ensureConnected()) {
+      try {
+        await client.setActivity(activity);
+        emit("info", "discord.set_activity", { sink: "local", details: activity.details });
+        if (lastSink === "bridge") {
+          await forgetBridge(true);
+        }
+        lastSentSerialized = serialized;
+        lastActivity = activity;
+        lastSentAt = now();
+        lastSink = "local";
+        cleared = false;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        emit("error", "discord.set_activity_failed", { reason: message });
+        lastSentSerialized = null;
+      }
+      return;
+    }
+    const target = resolveBridgeTarget(currentSettings);
+    if (!target) {
+      if (currentSettings.bridgeEnabled) {
+        emit("warn", "bridge.skipped", { reason: "url/token is not usable" });
+      }
+      return;
+    }
+    if (!bridge) {
+      emit("warn", "bridge.skipped", { reason: "no transport is configured" });
       return;
     }
     try {
-      await client.setActivity(activity);
+      emit("info", "bridge.publish", { url: bridgeOrigin(target.url) });
+      await bridge.publish(target.url, target.token, activity);
+      emit("info", "discord.set_activity", { sink: "bridge", details: activity.details });
       lastSentSerialized = serialized;
       lastActivity = activity;
       lastSentAt = now();
+      lastSink = "bridge";
+      lastBridgeUrl = target.url;
+      lastBridgeToken = target.token;
       cleared = false;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log(`failed to set activity: ${message}`);
+      emit("error", "bridge.publish_failed", { url: bridgeOrigin(target.url), reason: message });
       lastSentSerialized = null;
     }
   }
@@ -387,14 +695,21 @@ function createPresenceController({
     cleared = true;
     lastSentSerialized = null;
     lastActivity = null;
-    if (!client.isConnected()) {
-      return;
+    const sink = lastSink;
+    lastSink = null;
+    if (sink === "local" || client.isConnected()) {
+      try {
+        await client.clearActivity();
+        emit("info", "discord.clear", { sink: "local" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        emit("error", "discord.clear_failed", { reason: message });
+      }
     }
-    try {
-      await client.clearActivity();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      log(`failed to clear activity: ${message}`);
+    if (sink === "bridge") {
+      await forgetBridge(true);
+    } else {
+      await forgetBridge(false);
     }
   }
   async function schedule() {
@@ -424,6 +739,7 @@ function createPresenceController({
       await schedule();
     },
     async setSettings(nextSettings) {
+      const previousBridge = lastSink === "bridge" && lastBridgeUrl != null ? { url: lastBridgeUrl, token: lastBridgeToken ?? "" } : null;
       currentSettings = nextSettings;
       if (!currentSettings.enabled || currentSettings.detailLevel === "off") {
         if (pendingTimer) {
@@ -433,15 +749,37 @@ function createPresenceController({
         await clearPresence();
         return;
       }
+      const nextTarget = resolveBridgeTarget(currentSettings);
+      if (previousBridge && (!nextTarget || nextTarget.url !== previousBridge.url)) {
+        await tryClearBridge(previousBridge.url, previousBridge.token);
+        lastSink = null;
+        lastActivity = null;
+        lastSentSerialized = null;
+        lastBridgeUrl = null;
+        lastBridgeToken = null;
+        cleared = true;
+      }
       lastSentSerialized = null;
       await transmit();
+    },
+    async forceTransmit() {
+      if (pendingTimer) {
+        clearTimer(pendingTimer);
+        pendingTimer = null;
+      }
+      lastSentSerialized = null;
+      emit("info", "discord.force_transmit");
+      await transmit(true);
     },
     settings: () => currentSettings,
     status: () => ({
       enabled: currentSettings.enabled && currentSettings.detailLevel !== "off",
       connected: client.isConnected(),
+      bridgeEnabled: currentSettings.bridgeEnabled,
+      sink: lastSink,
       detailLevel: currentSettings.detailLevel,
-      lastActivity
+      lastActivity,
+      logFile: diagnostics?.filePath ?? null
     }),
     async stop() {
       if (pendingTimer) {
@@ -466,7 +804,11 @@ var DEFAULT_SETTINGS = Object.freeze({
   showAgentState: true,
   showTerminals: false,
   showMachine: false,
-  showElapsed: true
+  showElapsed: true,
+  bridgeEnabled: false,
+  bridgeUrl: "",
+  bridgeToken: "",
+  debugLogging: true
 });
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
 var APPLICATION_ID_RE = /^\d{17,20}$/;
@@ -498,6 +840,8 @@ function normalizeSettings(raw) {
     settings.applicationId = DEFAULT_SETTINGS.applicationId;
   }
   settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel;
+  settings.bridgeUrl = normalizeBridgeUrl(source.bridgeUrl);
+  settings.bridgeToken = normalizeBridgeToken(source.bridgeToken);
   return settings;
 }
 function nextDetailLevel(current) {
@@ -514,28 +858,60 @@ function toggleField(settings, field) {
 
 // src/main.ts
 var HEARTBEAT_MS = 90000;
+var TRANSMITTING_TOAST_MAX = 180;
+function formatStatusTransmitting(activity) {
+  const json = JSON.stringify(activity) ?? "null";
+  if (json.length <= TRANSMITTING_TOAST_MAX) {
+    return `transmitting=${json}`;
+  }
+  return `transmitting=${json.slice(0, TRANSMITTING_TOAST_MAX - 1)}…`;
+}
 var TOGGLE_COMMANDS = {
   "presence.toggle-branch": "showBranch",
   "presence.toggle-agent-state": "showAgentState",
   "presence.toggle-terminals": "showTerminals",
   "presence.toggle-machine": "showMachine",
-  "presence.toggle-elapsed": "showElapsed"
+  "presence.toggle-elapsed": "showElapsed",
+  "presence.toggle-bridge": "bridgeEnabled",
+  "presence.debug-logging": "debugLogging"
 };
 var controller = null;
 var heartbeat = null;
+var diagnostics = null;
 async function activate(orca) {
   const stored = await orca.host.call("settings.get").catch(() => ({ settings: {} }));
-  let settings = normalizeSettings(stored?.settings);
+  let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env);
+  const logFile = resolveLogFilePath(process.env, {
+    homedir: os2.homedir(),
+    tmpdir: os2.tmpdir(),
+    platform: process.platform
+  });
+  diagnostics = createDiagnosticSink({
+    hostLog: (message) => orca.log(message),
+    filePath: logFile,
+    debugEnabled: settings.debugLogging
+  });
+  diagnostics.line("info", "activate", {
+    version: "0.3.0",
+    debug: settings.debugLogging,
+    file: logFile,
+    bridge: settings.bridgeEnabled
+  });
   controller = createPresenceController({
     client: createDiscordClient({
       clientId: settings.applicationId,
-      log: (message) => orca.log(message)
+      log: (message) => diagnostics?.line("error", "discord.client", { reason: message })
+    }),
+    bridge: createBridgeTransport({
+      log: (message) => diagnostics?.line("error", "bridge.transport", { reason: message })
     }),
     settings,
+    diagnostics,
     log: (message) => orca.log(message)
   });
   async function persist(nextSettings) {
     settings = nextSettings;
+    diagnostics?.setDebugEnabled(nextSettings.debugLogging);
     for (const [key, value] of Object.entries(nextSettings)) {
       await orca.host.call("settings.set", { key, value }).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -544,18 +920,28 @@ async function activate(orca) {
     }
     await controller?.setSettings(nextSettings);
   }
-  async function refresh(agentState) {
+  async function refresh(agentState, options = {}) {
     const context = await orca.host.call("workspace.readContext").catch(() => null);
     if (!context) {
-      return;
+      diagnostics?.line("debug", "refresh.minimal", { reason: "no workspace context" });
+    } else if (agentState) {
+      diagnostics?.line("debug", "refresh", {
+        source: "agent.status.changed",
+        agentState: agentState.state
+      });
     }
     await controller?.update({
-      displayName: context.displayName,
-      branch: context.branch,
-      terminalCount: context.terminals.length,
       machineName: os2.hostname(),
+      ...context ? {
+        displayName: context.displayName,
+        branch: context.branch,
+        terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
+      } : {},
       ...agentState ? { agentState: agentState.state, stateStartedAtMs: agentState.receivedAt } : {}
     });
+    if (options.force) {
+      await controller?.forceTransmit();
+    }
   }
   orca.commands.register("presence.toggle", async () => {
     await persist({ ...settings, enabled: !settings.enabled });
@@ -575,12 +961,24 @@ async function activate(orca) {
     });
   }
   orca.commands.register("presence.status", async () => {
+    await refresh(undefined, { force: true });
     const status = controller?.status();
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} detail=${status?.detailLevel}`;
-    orca.log(`${summary} transmitting=${JSON.stringify(status?.lastActivity)}`);
+    const file = status?.logFile ?? diagnostics?.filePath ?? "";
+    const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel} debug=${settings.debugLogging}`;
+    diagnostics?.line("info", "status", {
+      enabled: status?.enabled,
+      connected: status?.connected,
+      sink: status?.sink,
+      bridge: status?.bridgeEnabled,
+      detail: status?.detailLevel,
+      debug: settings.debugLogging,
+      file,
+      transmitting: JSON.stringify(status?.lastActivity)
+    });
     await orca.host.call("notifications.show", {
       title: "Discord Rich Presence",
-      body: summary
+      body: `${summary} ${transmitting}`
     });
     return status;
   });
@@ -594,7 +992,7 @@ async function activate(orca) {
     await refresh();
   });
   heartbeat = setInterval(() => {
-    refresh();
+    refresh(undefined, { force: true });
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
   refresh();
@@ -604,10 +1002,13 @@ async function deactivate() {
     clearInterval(heartbeat);
     heartbeat = null;
   }
+  diagnostics?.line("info", "deactivate");
   await controller?.stop();
   controller = null;
+  diagnostics = null;
 }
 export {
   deactivate,
-  activate as default
+  activate as default,
+  formatStatusTransmitting
 };

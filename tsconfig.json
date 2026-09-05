@@ -12,5 +12,5 @@
     "noUnusedParameters": true,
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "companion/**/*.ts"]
 }

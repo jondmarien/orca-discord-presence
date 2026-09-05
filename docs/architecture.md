@@ -13,28 +13,33 @@ Orca starts a trusted plugin worker and calls `export default function activate(
 
 The worker is **idle-reaped after 5 minutes** of no host calls. An open Discord socket does not count as activity. A 90 s `workspace.readContext` heartbeat (`HEARTBEAT_MS` in `src/main.ts`) both keeps the worker alive and picks up branch changes, which emit no event.
 
-Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`) also wake a sleeping worker. Dynamic-only subscriptions would not.
+Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`) also wake a sleeping worker. Dynamic-only subscriptions would not. There is **no** focused-window or active-tab event in the host API this plugin uses.
 
 ## Module map
 
 ```
 activate (src/main.ts)
-  ├─ normalizeSettings(settings.get)
+  ├─ normalizeSettings(settings.get) + applyBridgeEnvOverrides
+  ├─ createDiagnosticSink (orca.log + state-dir file)
   ├─ createDiscordClient({ clientId: applicationId })
-  ├─ createPresenceController({ client, settings })
+  ├─ createBridgeTransport()
+  ├─ createPresenceController({ client, bridge, settings, diagnostics })
   ├─ commands → persist (settings.set) → controller.setSettings → refresh
-  ├─ events / heartbeat → workspace.readContext + os.hostname → controller.update
-  └─ deactivate → controller.stop → clear activity + close socket
+  ├─ events / heartbeat → workspace.readContext (or minimal snapshot) → update + forceTransmit on heartbeat/status
+  └─ deactivate → controller.stop → clear local + remote + close socket
 ```
 
 | Path | Role |
 |---|---|
 | [`src/main.ts`](../src/main.ts) | Host wiring only. No Discord framing, no activity field policy. |
-| [`src/discord/ipc.ts`](../src/discord/ipc.ts) | Pure path table + frame encode/decode. |
-| [`src/discord/client.ts`](../src/discord/client.ts) | The only module that opens a `node:net` socket. |
+| [`src/discord/ipc.ts`](../src/discord/ipc.ts) | Pure path table + frame encode/decode. Shared with the companion. |
+| [`src/discord/client.ts`](../src/discord/client.ts) | The only module that opens a `node:net` Discord socket (plugin + companion). |
 | [`src/presence/settings.ts`](../src/presence/settings.ts) | Defaults, coerce-from-storage, cycle/toggle helpers. |
 | [`src/presence/activity.ts`](../src/presence/activity.ts) | **Privacy boundary.** Snapshot + settings → activity or `null`. |
-| [`src/presence/controller.ts`](../src/presence/controller.ts) | Snapshot merge, 15 s debounce, reconnect, clear-once. |
+| [`src/presence/controller.ts`](../src/presence/controller.ts) | Snapshot merge, 15 s debounce, reconnect, **local-then-bridge** publish. |
+| [`src/presence/bridge.ts`](../src/presence/bridge.ts) | Companion URL/token hygiene + `POST`/`DELETE /activity`. |
+| [`src/presence/log.ts`](../src/presence/log.ts) | Structured `orca.log` + capped state-dir file. |
+| [`companion/`](../companion/) | OS-agnostic HTTP listener → same Discord IPC client (Linux/macOS/Windows). |
 
 Tests live under `test/` and use Bun’s test runner. Client tests stand up a fake IPC server; controller tests inject a fake clock and client.
 
@@ -69,11 +74,15 @@ Handshake waits up to 5 s for `evt: READY`. Commands carry a UUID `nonce` and wa
 
 `MIN_UPDATE_INTERVAL_MS` is 15_000. The first transmit after a quiet period goes through immediately. Further `update()` calls inside the window schedule **one** deferred write of the **latest** merged snapshot (not a replay of every state).
 
-If the rendered activity JSON equals the last successful send, the controller skips the write entirely.
+If the rendered activity JSON equals the last successful send, `update()` skips the write so a chatty event stream is cheap. **Heartbeat and Show Status call `forceTransmit()`**, which re-sends even when unchanged — Discord or another IPC client can replace our activity after we recorded a successful send.
 
-Connect failures (Discord not running) are logged and swallowed. The next `update` or heartbeat retries. A user command that changes settings bypasses the debounce so the palette feels immediate.
+A missing `workspace.readContext` still applies a minimal snapshot so `detailLevel: generic` can publish `Working in Orca`.
 
-`stop()` / disable / `detailLevel: 'off'` clear presence **once** (no duplicate `activity: null` spam).
+Connect failures (Discord not running) are logged and swallowed. The next `update` or heartbeat retries. If local IPC is down and `resolveBridgeTarget` is set, the controller POSTs to the companion instead of giving up. It does **not** write both sinks. A successful later local handshake clears the remote activity.
+
+A user command that changes settings bypasses the debounce so the palette feels immediate.
+
+`stop()` / disable / `detailLevel: 'off'` clear presence **once** (no duplicate `activity: null` spam), including `DELETE /activity` when the last sink was the bridge.
 
 ## Activity fields
 
@@ -94,3 +103,5 @@ Text fields are clamped to 128 characters. See [privacy.md](privacy.md) for whic
 - **Authoring / CI:** Bun (`bun install`, `bun test`, `bun run typecheck`, `bun run build`).
 - **Runtime:** Node/Electron plugin worker. `dist/main.js` must stay free of `Bun.file` / `Bun.spawn`.
 - **Identity:** `orca-plugin.json` `publisher` + `id` → `chron0.discord-presence`. Do not rename.
+- **Companion:** `bun run companion` / `bun run start` in `companion/`. Runs on Linux, macOS, or Windows. Optional `bun build companion/main.ts --compile`. Zero extra production dependencies; Node `http` + shared IPC modules.
+- **Focus:** the worker does not subscribe to UI focus/tab events (none are exposed). Snapshot sources are `agent.status.changed` and `workspace.readContext` only.

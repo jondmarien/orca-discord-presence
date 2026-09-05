@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { DiscordActivity } from '../src/presence/activity'
+import type { PresenceBridge } from '../src/presence/bridge'
 import { createPresenceController, MIN_UPDATE_INTERVAL_MS, type PresenceClient } from '../src/presence/controller'
 import { DEFAULT_SETTINGS, type PresenceSettings } from '../src/presence/settings'
 
@@ -12,6 +13,8 @@ type FakeTimer = {
 function harness(overrides: Partial<PresenceSettings> = {}) {
   let now = 1_000_000
   const activities: Array<DiscordActivity | null> = []
+  const bridged: Array<DiscordActivity | 'clear'> = []
+  const logs: string[] = []
   const timers: FakeTimer[] = []
   const client: PresenceClient & { connected: boolean } = {
     connected: false,
@@ -29,8 +32,17 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
       client.connected = false
     }
   }
+  const bridge: PresenceBridge = {
+    publish: async (_url, _token, activity) => {
+      bridged.push(activity)
+    },
+    clear: async () => {
+      bridged.push('clear')
+    }
+  }
   const controller = createPresenceController({
     client,
+    bridge,
     settings: { ...DEFAULT_SETTINGS, detailLevel: 'full', ...overrides },
     now: () => now,
     setTimer: (fn, ms) => {
@@ -43,7 +55,9 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
         ;(timer as FakeTimer).cancelled = true
       }
     },
-    log: () => {}
+    log: (message) => {
+      logs.push(message)
+    }
   })
   const advance = async (ms: number) => {
     now += ms
@@ -54,7 +68,7 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
       }
     }
   }
-  return { controller, client, activities, advance, nowRef: () => now }
+  return { controller, client, activities, bridged, logs, advance, nowRef: () => now }
 }
 
 test('the first update writes through immediately', async () => {
@@ -87,6 +101,25 @@ test('an identical snapshot does not schedule a redundant write', async () => {
   expect(activities.length).toBe(1)
 })
 
+test('forceTransmit re-sends an unchanged activity', async () => {
+  const { controller, activities } = harness()
+  const snapshot = { displayName: 'repo', agentState: 'working', terminalCount: 1 }
+  await controller.update(snapshot)
+  expect(activities.length).toBe(1)
+  await controller.forceTransmit()
+  expect(activities.length).toBe(2)
+  expect(activities[1] && 'details' in activities[1] ? activities[1].details : null).toBe('repo')
+})
+
+test('an empty snapshot still publishes generic Working in Orca', async () => {
+  const { controller, activities } = harness({ detailLevel: 'generic' })
+  await controller.update({})
+  expect(activities.length).toBe(1)
+  expect(activities[0] && 'details' in activities[0] ? activities[0].details : null).toBe(
+    'Working in Orca'
+  )
+})
+
 test('disabling clears the presence exactly once', async () => {
   const { controller, activities } = harness()
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
@@ -104,7 +137,7 @@ test('detail level off clears the presence like disabling does', async () => {
 })
 
 test('a connect failure is swallowed and retried on the next update', async () => {
-  const { controller, client, activities } = harness()
+  const { controller, client, activities, logs } = harness()
   let attempts = 0
   client.connect = async () => {
     attempts++
@@ -115,6 +148,7 @@ test('a connect failure is swallowed and retried on the next update', async () =
   }
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
   expect(activities.length).toBe(0)
+  expect(logs.some((line) => line.includes('discord.connect_failed'))).toBe(true)
   await controller.update({ displayName: 'repo', agentState: 'blocked', terminalCount: 1 })
   expect(activities.length).toBe(1)
 })
@@ -135,3 +169,70 @@ test('stop clears presence and closes the client', async () => {
   expect(activities.at(-1)).toBeNull()
   expect(client.isConnected()).toBe(false)
 })
+
+test('prefers local IPC and does not dual-publish when Discord is connected', async () => {
+  const { controller, activities, bridged } = harness({
+    bridgeEnabled: true,
+    bridgeUrl: 'http://127.0.0.1:3848',
+    bridgeToken: 'tok'
+  })
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  expect(activities.length).toBe(1)
+  expect(bridged.length).toBe(0)
+  expect(controller.status().sink).toBe('local')
+  expect(controller.status().bridgeEnabled).toBe(true)
+})
+
+test('falls back to the companion when local Discord IPC is unavailable', async () => {
+  const { controller, client, activities, bridged } = harness({
+    bridgeEnabled: true,
+    bridgeUrl: 'http://100.64.1.2:3848',
+    bridgeToken: 'tok'
+  })
+  client.connect = async () => {
+    throw new Error('no discord ipc socket accepted a connection')
+  }
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  expect(activities.length).toBe(0)
+  expect(bridged.length).toBe(1)
+  expect(bridged[0] && bridged[0] !== 'clear' ? bridged[0].details : null).toBe('repo')
+  expect(controller.status().connected).toBe(false)
+  expect(controller.status().sink).toBe('bridge')
+})
+
+test('stop after a bridge publish clears the remote activity', async () => {
+  const { controller, client, bridged } = harness({
+    bridgeEnabled: true,
+    bridgeUrl: 'http://100.64.1.2:3848',
+    bridgeToken: 'tok'
+  })
+  client.connect = async () => {
+    throw new Error('no discord ipc socket accepted a connection')
+  }
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.stop()
+  expect(bridged.at(-1)).toBe('clear')
+  expect(controller.status().sink).toBeNull()
+})
+
+test('disabling the bridge after a remote publish clears the companion', async () => {
+  const { controller, client, bridged } = harness({
+    bridgeEnabled: true,
+    bridgeUrl: 'http://100.64.1.2:3848',
+    bridgeToken: 'tok'
+  })
+  client.connect = async () => {
+    throw new Error('no discord ipc socket accepted a connection')
+  }
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.setSettings({
+    ...DEFAULT_SETTINGS,
+    detailLevel: 'full',
+    bridgeEnabled: false,
+    bridgeUrl: 'http://100.64.1.2:3848',
+    bridgeToken: 'tok'
+  })
+  expect(bridged.filter((entry) => entry === 'clear').length).toBe(1)
+  expect(controller.status().sink).toBeNull()
+})
+

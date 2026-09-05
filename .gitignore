@@ -1,3 +1,5 @@
 node_modules/
 *.log
 *.tsbuildinfo
+companion/orca-presence-companion
+companion/orca-presence-companion.exe

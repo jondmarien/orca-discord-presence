@@ -1,8 +1,9 @@
 import { expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import os from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { OrcaHost } from '../src/main'
+import { formatStatusTransmitting, type OrcaHost } from '../src/main'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -24,14 +25,24 @@ test('activate and deactivate exports are functions', async () => {
 })
 
 test('activate registers commands and events; deactivate is safe to call', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-entry-'))
+  const logFile = join(dir, 'plugin.log')
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  process.env.ORCA_PRESENCE_LOG_FILE = logFile
   const { default: activate, deactivate } = await import('../src/main')
   const commands: string[] = []
   const events: string[] = []
+  const hostLines: string[] = []
+  const notifications: string[] = []
+  const handlers = new Map<string, () => Promise<unknown>>()
   const orca: OrcaHost = {
-    log: () => {},
+    log: (message) => {
+      hostLines.push(message)
+    },
     commands: {
-      register: (id) => {
+      register: (id, handler) => {
         commands.push(id)
+        handlers.set(id, handler)
       }
     },
     events: {
@@ -40,11 +51,15 @@ test('activate registers commands and events; deactivate is safe to call', async
       }
     },
     host: {
-      call: async (method) => {
+      call: async (method, args) => {
         if (method === 'settings.get') {
           return { settings: {} }
         }
-        // No workspace context: refresh returns before opening Discord IPC.
+        if (method === 'notifications.show') {
+          notifications.push(String(args?.body ?? ''))
+          return null
+        }
+        // Missing workspace context: refresh still applies a minimal snapshot.
         return null
       }
     }
@@ -58,10 +73,36 @@ test('activate registers commands and events; deactivate is safe to call', async
     'presence.toggle-terminals',
     'presence.toggle-machine',
     'presence.toggle-elapsed',
+    'presence.toggle-bridge',
+    'presence.debug-logging',
     'presence.status'
   ])
   expect(events).toEqual(['agent.status.changed', 'worktree.created', 'worktree.removed'])
+  expect(hostLines.some((line) => line.includes('activate') && line.includes('chron0.discord-presence'))).toBe(
+    true
+  )
+  const onDisk = readFileSync(logFile, 'utf8')
+  expect(onDisk.includes('activate')).toBe(true)
+  await handlers.get('presence.status')?.()
+  expect(notifications.some((body) => body.includes('transmitting='))).toBe(true)
   await deactivate()
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('formatStatusTransmitting includes lastActivity and truncates long JSON', () => {
+  expect(formatStatusTransmitting(null)).toBe('transmitting=null')
+  expect(formatStatusTransmitting({ details: 'Working in Orca' })).toBe(
+    'transmitting={"details":"Working in Orca"}'
+  )
+  const long = formatStatusTransmitting({ details: 'x'.repeat(400) })
+  expect(long.startsWith('transmitting=')).toBe(true)
+  expect(long.endsWith('…')).toBe(true)
+  expect(long.length <= 200).toBe(true)
 })
 
 test('shipped dist entry is Node-compatible ESM with the same exports', async () => {
