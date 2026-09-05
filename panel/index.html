@@ -524,6 +524,8 @@
 
       function renderSnapshot(snapshot, mode) {
         var policy = panelRenderPolicy(mode || 'bootstrap')
+        var pageRoot = document.scrollingElement || document.documentElement || document.body
+        var pageTop = pageRoot && typeof pageRoot.scrollTop === 'number' ? pageRoot.scrollTop : 0
         var bar = $('status-bar')
         bar.className = 'status-bar ' + indicatorClass(snapshot)
         setText('indicator-label', indicatorLabel(snapshot))
@@ -596,6 +598,9 @@
             logView.textContent = nextLogs
             logView.scrollTop = stickToEnd ? logView.scrollHeight : prevTop
           }
+        }
+        if (pageRoot && (mode === 'live' || mode === 'refresh')) {
+          pageRoot.scrollTop = pageTop
         }
       }
 

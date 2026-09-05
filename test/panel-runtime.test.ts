@@ -116,6 +116,7 @@ function loadPanelRuntime() {
     throw new Error('panel runtime script not found')
   }
   let active: FakeEl | { tagName: string } = { tagName: 'BODY' }
+  const scrollingElement = { scrollTop: 0 }
   const document = {
     getElementById: (id: string) => parsed.byId.get(id) ?? null,
     querySelectorAll: (selector: string) => {
@@ -135,7 +136,10 @@ function loadPanelRuntime() {
     },
     setActive(el: FakeEl | { tagName: string }) {
       active = el
-    }
+    },
+    scrollingElement,
+    documentElement: scrollingElement,
+    body: scrollingElement
   }
   const window = {
     parent: null as unknown,
@@ -237,6 +241,18 @@ test('storage poll updates status and logs without resetting Settings chrome', (
   expect(byId.get('st-enabled')!.textContent).toBe('true')
   expect(byId.get('st-activity')!.textContent).toBe('testing · Idle')
   expect(logView.textContent.includes('panel.snapshot_written')).toBe(true)
+})
+
+test('live snapshot updates restore the Settings page scroll position', () => {
+  const { api, document } = loadPanelRuntime()
+  document.scrollingElement.scrollTop = 140
+  api.applyStorageSnapshot({
+    value: liveSnapshot({
+      generatedAt: '2026-09-05T09:14:00.000Z',
+      logs: ['[chron0.discord-presence] info activate', 'later line']
+    })
+  })
+  expect(document.scrollingElement.scrollTop).toBe(140)
 })
 
 test('generatedAt-only snapshot rewrites do not re-render the Settings surface', () => {
