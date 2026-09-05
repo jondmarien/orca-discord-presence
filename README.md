@@ -4,13 +4,13 @@ Shows your current Orca workspace, branch, and agent state as Discord Rich Prese
 
 Every identifying field is opt-in; the default detail level (`generic`) never transmits a repo, branch, or machine name.
 
-**Plugin id:** `d-sports.discord-presence`  
+**Plugin id:** `chron0.discord-presence`  
 **Requires:** Orca `>=1.4.0`, Discord **desktop** client (browser Discord has no IPC socket)
 
 ## Install
 
 1. Enable the plugin system in Orca (`pluginSystemEnabled: true`).
-2. Load this repo as a dev plugin via `devPluginPaths`, or install from a marketplace that lists `d-sports.discord-presence`.
+2. Load this repo as a dev plugin via `devPluginPaths`, or install from a marketplace that lists `chron0.discord-presence`.
 3. Approve the consent dialog (workspace read, events, storage, own settings, notifications).
 4. Run **Discord Presence: Show Status** from the command palette. Presence starts on the first agent event, worktree event, command, or heartbeat — not necessarily at app launch.
 

@@ -6,6 +6,17 @@ import type { OrcaHost } from '../src/main'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
+test('manifest identity is chron0.discord-presence', () => {
+  const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')) as {
+    id: string
+    publisher: string
+  }
+  expect(manifest.publisher).toBe('chron0')
+  expect(manifest.id).toBe('discord-presence')
+  expect(`${manifest.publisher}.${manifest.id}`).toBe('chron0.discord-presence')
+  expect(manifest.id.includes('prescence')).toBe(false)
+})
+
 test('activate and deactivate exports are functions', async () => {
   const mod = await import('../src/main')
   expect(typeof mod.default).toBe('function')

@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "discord-presence",
-  "publisher": "d-sports",
+  "publisher": "chron0",
   "name": "Discord Rich Presence",
   "version": "0.2.0",
   "description": "Shows your current Orca workspace, branch, and agent state as Discord Rich Presence. Every field is opt-in.",
