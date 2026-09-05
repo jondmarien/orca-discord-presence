@@ -93,14 +93,22 @@ export type PresenceStatus = {
   lastActivity: DiscordActivity | null
   /** On-disk log path when a diagnostic sink is wired (Show Status). */
   logFile: string | null
+  /**
+   * True after {@link PresenceController.clear} until the next resume
+   * (agent event, Show Status, Reload RPC, or a settings write).
+   */
+  heldClear: boolean
 }
 
 /**
  * Stateful presence coordinator used by the plugin worker.
  */
 export type PresenceController = {
-  /** Merge a partial snapshot and schedule or skip a Discord write. */
-  update: (nextSnapshot: PresenceSnapshot) => Promise<void>
+  /**
+   * Merge a partial snapshot and schedule or skip a Discord write.
+   * Pass `{ resume: true }` to lift a {@link PresenceController.clear} hold.
+   */
+  update: (nextSnapshot: PresenceSnapshot, options?: { resume?: boolean }) => Promise<void>
   /**
    * Replace settings. Disable / `off` clears immediately. Other changes
    * transmit at once (debounce bypass) so a command feels instant.
@@ -113,12 +121,24 @@ export type PresenceController = {
    * recorded a successful send. The 90 s heartbeat and **Show Status** use
    * this so a later client does not leave a stale “already sent” skip.
    */
-  forceTransmit: () => Promise<void>
+  /**
+   * Re-`SET_ACTIVITY` even when the rendered JSON is unchanged.
+   *
+   * `resume` (Show Status) lifts a Clear hold. The 90 s heartbeat must
+   * call this without `resume` so a transient clear stays clear.
+   */
+  forceTransmit: (resume?: boolean) => Promise<void>
   /**
    * Close the IPC socket (clears activity first), reconnect, and
    * re-`SET_ACTIVITY`. Palette: **Discord Presence: Reload RPC**.
    */
   reload: () => Promise<void>
+  /**
+   * Clear local IPC + bridge activity without flipping `enabled`.
+   * Holds automatic republish until {@link update} `{ resume: true }`,
+   * {@link forceTransmit}(true), {@link setSettings}, or {@link reload}.
+   */
+  clear: () => Promise<void>
   /** Current settings object (same reference the controller holds). */
   settings: () => PresenceSettings
   /** Connection + last transmitted activity + log path for the status command. */
@@ -157,6 +177,7 @@ export function createPresenceController({
   let lastBridgeUrl: string | null = null
   let lastBridgeToken: string | null = null
   let stopped = false
+  let holdClear = false
 
   function emit(
     level: 'debug' | 'info' | 'warn' | 'error',
@@ -324,10 +345,21 @@ export function createPresenceController({
   }
 
   return {
-    async update(nextSnapshot) {
+    async update(nextSnapshot, options) {
+      if (options?.resume) {
+        holdClear = false
+      }
       snapshot = { ...snapshot, ...nextSnapshot }
+      if (holdClear) {
+        return
+      }
       if (!currentSettings.enabled || currentSettings.detailLevel === 'off') {
         await clearPresence()
+        return
+      }
+      if (options?.resume) {
+        lastSentSerialized = null
+        await transmit()
         return
       }
       // Cheap pre-check: skip scheduling when the rendered activity is
@@ -339,6 +371,7 @@ export function createPresenceController({
       await schedule()
     },
     async setSettings(nextSettings) {
+      holdClear = false
       const previousBridge =
         lastSink === 'bridge' && lastBridgeUrl != null
           ? { url: lastBridgeUrl, token: lastBridgeToken ?? '' }
@@ -366,7 +399,13 @@ export function createPresenceController({
       lastSentSerialized = null
       await transmit()
     },
-    async forceTransmit() {
+    async forceTransmit(resume = false) {
+      if (resume) {
+        holdClear = false
+      }
+      if (holdClear) {
+        return
+      }
       if (pendingTimer) {
         clearTimer(pendingTimer)
         pendingTimer = null
@@ -375,7 +414,17 @@ export function createPresenceController({
       emit('info', 'discord.force_transmit')
       await transmit(true)
     },
+    async clear() {
+      if (pendingTimer) {
+        clearTimer(pendingTimer)
+        pendingTimer = null
+      }
+      holdClear = true
+      emit('info', 'discord.clear_hold')
+      await clearPresence()
+    },
     async reload() {
+      holdClear = false
       if (pendingTimer) {
         clearTimer(pendingTimer)
         pendingTimer = null
@@ -404,7 +453,8 @@ export function createPresenceController({
       sink: lastSink,
       detailLevel: currentSettings.detailLevel,
       lastActivity,
-      logFile: diagnostics?.filePath ?? null
+      logFile: diagnostics?.filePath ?? null,
+      heldClear: holdClear
     }),
     async stop() {
       if (stopped) {
