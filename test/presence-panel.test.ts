@@ -8,8 +8,10 @@ import { createLogRing } from '../src/presence/log-ring'
 import {
   embedPanelSnapshot,
   extractPanelSnapshot,
+  extractPanelVersion,
   resolvePanelHtmlPath,
   serializePanelSnapshot,
+  stampPanelVersion,
   writePanelSnapshot
 } from '../src/presence/panel-html'
 import {
@@ -165,4 +167,41 @@ test('shipped panel HTML is CSP-safe and speaks the official bridge', () => {
   expect(html.includes('window.__PRESENCE_PANEL__')).toBe(true)
   expect(html.includes('id="presence-snapshot"')).toBe(true)
   expect(extractPanelSnapshot(html)).toBe(null)
+})
+
+test('shipped panel HTML version markers match PLUGIN_VERSION', () => {
+  const html = readFileSync(panelHtmlPath, 'utf8')
+  expect(extractPanelVersion(html)).toBe(PLUGIN_VERSION)
+  expect(html.includes(`id="version-badge">v${PLUGIN_VERSION}<`)).toBe(true)
+  expect(html.includes(`id="about-version">${PLUGIN_VERSION}<`)).toBe(true)
+})
+
+test('stampPanelVersion rewrites stale badge, About, and version script', () => {
+  const stale = [
+    '<script id="plugin-version" type="application/json">"0.4.0"</script>',
+    '<span class="badge" id="version-badge">v0.4.0</span>',
+    '<dd id="about-version">0.4.0</dd>'
+  ].join('')
+  const stamped = stampPanelVersion(stale, PLUGIN_VERSION)
+  expect(extractPanelVersion(stamped)).toBe(PLUGIN_VERSION)
+  expect(stamped.includes(`id="version-badge">v${PLUGIN_VERSION}<`)).toBe(true)
+  expect(stamped.includes(`id="about-version">${PLUGIN_VERSION}<`)).toBe(true)
+  expect(stamped.includes('0.4.0')).toBe(false)
+})
+
+test('embedPanelSnapshot stamps snapshot.version and null uses PLUGIN_VERSION', () => {
+  const html = readFileSync(panelHtmlPath, 'utf8')
+  const snapshot = buildPresencePanelSnapshot({
+    version: '9.9.9',
+    status: statusWith(),
+    settings: DEFAULT_SETTINGS,
+    logs: []
+  })
+  const withSnap = embedPanelSnapshot(html, snapshot)
+  expect(extractPanelVersion(withSnap)).toBe('9.9.9')
+  expect(withSnap.includes('id="version-badge">v9.9.9<')).toBe(true)
+  expect(withSnap.includes('id="about-version">9.9.9<')).toBe(true)
+  const withNull = embedPanelSnapshot(html, null)
+  expect(extractPanelVersion(withNull)).toBe(PLUGIN_VERSION)
+  expect(withNull.includes(`id="version-badge">v${PLUGIN_VERSION}<`)).toBe(true)
 })
