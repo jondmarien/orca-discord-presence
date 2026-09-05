@@ -25,7 +25,7 @@ activate (src/main.ts)
   ├─ createBridgeTransport()
   ├─ createPresenceController({ client, bridge, settings, diagnostics })
   ├─ commands → persist (settings.set) → controller.setSettings → refresh
-  ├─ events / heartbeat → workspace.readContext + os.hostname → controller.update
+  ├─ events / heartbeat → workspace.readContext (or minimal snapshot) → update + forceTransmit on heartbeat/status
   └─ deactivate → controller.stop → clear local + remote + close socket
 ```
 
@@ -74,7 +74,9 @@ Handshake waits up to 5 s for `evt: READY`. Commands carry a UUID `nonce` and wa
 
 `MIN_UPDATE_INTERVAL_MS` is 15_000. The first transmit after a quiet period goes through immediately. Further `update()` calls inside the window schedule **one** deferred write of the **latest** merged snapshot (not a replay of every state).
 
-If the rendered activity JSON equals the last successful send, the controller skips the write entirely.
+If the rendered activity JSON equals the last successful send, `update()` skips the write so a chatty event stream is cheap. **Heartbeat and Show Status call `forceTransmit()`**, which re-sends even when unchanged — Discord or another IPC client can replace our activity after we recorded a successful send.
+
+A missing `workspace.readContext` still applies a minimal snapshot so `detailLevel: generic` can publish `Working in Orca`.
 
 Connect failures (Discord not running) are logged and swallowed. The next `update` or heartbeat retries. If local IPC is down and `resolveBridgeTarget` is set, the controller POSTs to the companion instead of giving up. It does **not** write both sinks. A successful later local handshake clears the remote activity.
 

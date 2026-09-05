@@ -627,7 +627,7 @@ function createPresenceController({
       await tryClearBridge(url, token);
     }
   }
-  async function transmit() {
+  async function transmit(force = false) {
     pendingTimer = null;
     if (!snapshot) {
       return;
@@ -638,7 +638,7 @@ function createPresenceController({
       return;
     }
     const serialized = JSON.stringify(activity);
-    if (serialized === lastSentSerialized) {
+    if (!force && serialized === lastSentSerialized) {
       return;
     }
     if (await ensureConnected()) {
@@ -762,6 +762,15 @@ function createPresenceController({
       lastSentSerialized = null;
       await transmit();
     },
+    async forceTransmit() {
+      if (pendingTimer) {
+        clearTimer(pendingTimer);
+        pendingTimer = null;
+      }
+      lastSentSerialized = null;
+      emit("info", "discord.force_transmit");
+      await transmit(true);
+    },
     settings: () => currentSettings,
     status: () => ({
       enabled: currentSettings.enabled && currentSettings.detailLevel !== "off",
@@ -849,6 +858,14 @@ function toggleField(settings, field) {
 
 // src/main.ts
 var HEARTBEAT_MS = 90000;
+var TRANSMITTING_TOAST_MAX = 180;
+function formatStatusTransmitting(activity) {
+  const json = JSON.stringify(activity) ?? "null";
+  if (json.length <= TRANSMITTING_TOAST_MAX) {
+    return `transmitting=${json}`;
+  }
+  return `transmitting=${json.slice(0, TRANSMITTING_TOAST_MAX - 1)}…`;
+}
 var TOGGLE_COMMANDS = {
   "presence.toggle-branch": "showBranch",
   "presence.toggle-agent-state": "showAgentState",
@@ -903,25 +920,28 @@ async function activate(orca) {
     }
     await controller?.setSettings(nextSettings);
   }
-  async function refresh(agentState) {
+  async function refresh(agentState, options = {}) {
     const context = await orca.host.call("workspace.readContext").catch(() => null);
     if (!context) {
-      diagnostics?.line("debug", "refresh.skipped", { reason: "no workspace context" });
-      return;
-    }
-    if (agentState) {
+      diagnostics?.line("debug", "refresh.minimal", { reason: "no workspace context" });
+    } else if (agentState) {
       diagnostics?.line("debug", "refresh", {
         source: "agent.status.changed",
         agentState: agentState.state
       });
     }
     await controller?.update({
-      displayName: context.displayName,
-      branch: context.branch,
-      terminalCount: context.terminals.length,
       machineName: os2.hostname(),
+      ...context ? {
+        displayName: context.displayName,
+        branch: context.branch,
+        terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
+      } : {},
       ...agentState ? { agentState: agentState.state, stateStartedAtMs: agentState.receivedAt } : {}
     });
+    if (options.force) {
+      await controller?.forceTransmit();
+    }
   }
   orca.commands.register("presence.toggle", async () => {
     await persist({ ...settings, enabled: !settings.enabled });
@@ -941,8 +961,10 @@ async function activate(orca) {
     });
   }
   orca.commands.register("presence.status", async () => {
+    await refresh(undefined, { force: true });
     const status = controller?.status();
     const file = status?.logFile ?? diagnostics?.filePath ?? "";
+    const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
     const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel} debug=${settings.debugLogging}`;
     diagnostics?.line("info", "status", {
       enabled: status?.enabled,
@@ -956,7 +978,7 @@ async function activate(orca) {
     });
     await orca.host.call("notifications.show", {
       title: "Discord Rich Presence",
-      body: `${summary} — log ${file || "(none)"}. Palette: Discord Presence: Show Status`
+      body: `${summary} ${transmitting}`
     });
     return status;
   });
@@ -970,7 +992,7 @@ async function activate(orca) {
     await refresh();
   });
   heartbeat = setInterval(() => {
-    refresh();
+    refresh(undefined, { force: true });
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
   refresh();
@@ -987,5 +1009,6 @@ async function deactivate() {
 }
 export {
   deactivate,
-  activate as default
+  activate as default,
+  formatStatusTransmitting
 };

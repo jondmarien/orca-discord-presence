@@ -25,7 +25,7 @@ The plugin is a trusted Orca worker (`dist/main.js`) that:
 3. Writes a Discord Rich Presence activity to the **local** Discord desktop IPC socket when one is available on the Orca **host/runtime**.
 4. If local IPC is down and the opt-in **companion bridge** is enabled, POSTs the same privacy-gated activity to a companion on **any OS** (Linux, macOS, or Windows) that has Discord / Vesktop / Vencord, which calls `SET_ACTIVITY` there.
 5. Debounces writes to Discord’s `SET_ACTIVITY` rate limit (at most one update per 15 seconds).
-6. Heartbeats every 90 seconds so the worker is not idle-reaped and so branch switches (which emit no event) are picked up.
+6. Heartbeats every 90 seconds so the worker is not idle-reaped, branch switches are picked up, and `SET_ACTIVITY` is **re-sent** even if the payload is unchanged (Discord or another IPC client can overwrite us).
 
 No Discord developer account is required for end users. The plugin ships its own Discord Application ID. There is **no bot token and no client secret**.
 
@@ -128,7 +128,7 @@ Panels cannot call `settings.set` in Orca’s current host API, so each toggle i
 | Command | Effect |
 |---|---|
 | Discord Presence: Enable/Disable | Master switch (`enabled`) |
-| Discord Presence: Show Status | Notification + structured log of connection, sink, last activity, and log file path |
+| Discord Presence: Show Status | Force refresh + re-`SET_ACTIVITY`; toast includes `transmitting=…` (truncated last activity) |
 | Discord Presence: Cycle Detail Level | `off` → `generic` → `workspace` → `full` → … |
 | Discord Presence: Toggle Branch | `showBranch` |
 | Discord Presence: Toggle Agent State | `showAgentState` |
@@ -259,8 +259,8 @@ Override with `ORCA_PRESENCE_LOG_FILE`. The active file rotates to `plugin.log.1
 ### How to read status
 
 1. Command palette → **Discord Presence: Show Status**.
-2. The toast repeats `enabled=… connected=… sink=… bridge=… detail=… debug=…` and the log file path.
-3. The same line (plus `transmitting=…` JSON) is written to `orca.log` and the file.
+2. The toast repeats `enabled=… connected=… sink=…` plus **`transmitting=…`** (the last activity JSON, truncated). This command also forces a re-`SET_ACTIVITY`.
+3. The full line (plus file path) is written to `orca.log` and the file.
 
 `connected=true` means **local** Discord IPC on the Orca host succeeded (your Omarchy smoke: `enabled=true connected=true detail=generic`). `sink=bridge` means the companion published instead.
 
@@ -396,7 +396,7 @@ Authenticated requests send `Authorization: Bearer <token>`. `GET /health` is un
 | Wrong / missing art | Assets not yet propagated, or wrong Application ID | Confirm keys `orca`, `state-working`, `state-blocked`, `state-waiting`, `state-idle` |
 | `activate` killed at startup | Handshake blocked the ready timeout | First refresh is fire-and-forget; if you changed that, restore it |
 
-**Show Status** logs `enabled=… connected=… sink=… bridge=… detail=… debug=…` plus the file path and `transmitting=…` JSON (exactly what was last sent, or `null` if cleared). The token is never logged.
+**Show Status** forces a refresh and re-publish, then toasts `enabled=… connected=… sink=… transmitting=…`. That JSON is what was last sent (or `null`). The token is never logged.
 
 ---
 

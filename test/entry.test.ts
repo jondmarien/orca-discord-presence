@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { OrcaHost } from '../src/main'
+import { formatStatusTransmitting, type OrcaHost } from '../src/main'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -33,13 +33,16 @@ test('activate registers commands and events; deactivate is safe to call', async
   const commands: string[] = []
   const events: string[] = []
   const hostLines: string[] = []
+  const notifications: string[] = []
+  const handlers = new Map<string, () => Promise<unknown>>()
   const orca: OrcaHost = {
     log: (message) => {
       hostLines.push(message)
     },
     commands: {
-      register: (id) => {
+      register: (id, handler) => {
         commands.push(id)
+        handlers.set(id, handler)
       }
     },
     events: {
@@ -48,11 +51,15 @@ test('activate registers commands and events; deactivate is safe to call', async
       }
     },
     host: {
-      call: async (method) => {
+      call: async (method, args) => {
         if (method === 'settings.get') {
           return { settings: {} }
         }
-        // No workspace context: refresh returns before opening Discord IPC.
+        if (method === 'notifications.show') {
+          notifications.push(String(args?.body ?? ''))
+          return null
+        }
+        // Missing workspace context: refresh still applies a minimal snapshot.
         return null
       }
     }
@@ -76,6 +83,8 @@ test('activate registers commands and events; deactivate is safe to call', async
   )
   const onDisk = readFileSync(logFile, 'utf8')
   expect(onDisk.includes('activate')).toBe(true)
+  await handlers.get('presence.status')?.()
+  expect(notifications.some((body) => body.includes('transmitting='))).toBe(true)
   await deactivate()
   if (previous === undefined) {
     delete process.env.ORCA_PRESENCE_LOG_FILE
@@ -83,6 +92,17 @@ test('activate registers commands and events; deactivate is safe to call', async
     process.env.ORCA_PRESENCE_LOG_FILE = previous
   }
   rmSync(dir, { recursive: true, force: true })
+})
+
+test('formatStatusTransmitting includes lastActivity and truncates long JSON', () => {
+  expect(formatStatusTransmitting(null)).toBe('transmitting=null')
+  expect(formatStatusTransmitting({ details: 'Working in Orca' })).toBe(
+    'transmitting={"details":"Working in Orca"}'
+  )
+  const long = formatStatusTransmitting({ details: 'x'.repeat(400) })
+  expect(long.startsWith('transmitting=')).toBe(true)
+  expect(long.endsWith('…')).toBe(true)
+  expect(long.length <= 200).toBe(true)
 })
 
 test('shipped dist entry is Node-compatible ESM with the same exports', async () => {

@@ -118,6 +118,14 @@ export type PresenceController = {
    * transmit at once (debounce bypass) so a command feels instant.
    */
   setSettings: (nextSettings: PresenceSettings) => Promise<void>
+  /**
+   * Re-`SET_ACTIVITY` even when the rendered JSON is unchanged.
+   *
+   * Why: Discord (or another IPC client) can replace our activity after we
+   * recorded a successful send. The 90 s heartbeat and **Show Status** use
+   * this so a later client does not leave a stale “already sent” skip.
+   */
+  forceTransmit: () => Promise<void>
   /** Current settings object (same reference the controller holds). */
   settings: () => PresenceSettings
   /** Connection + last transmitted activity + log path for the status command. */
@@ -218,7 +226,7 @@ export function createPresenceController({
    * Otherwise POST to the companion when {@link resolveBridgeTarget} is set.
    * Never dual-publish — if we switch from bridge to local, clear the remote.
    */
-  async function transmit() {
+  async function transmit(force = false) {
     pendingTimer = null
     if (!snapshot) {
       return
@@ -229,7 +237,7 @@ export function createPresenceController({
       return
     }
     const serialized = JSON.stringify(activity)
-    if (serialized === lastSentSerialized) {
+    if (!force && serialized === lastSentSerialized) {
       return
     }
     if (await ensureConnected()) {
@@ -361,6 +369,15 @@ export function createPresenceController({
       // A settings change is user-initiated and rare: bypass the debounce.
       lastSentSerialized = null
       await transmit()
+    },
+    async forceTransmit() {
+      if (pendingTimer) {
+        clearTimer(pendingTimer)
+        pendingTimer = null
+      }
+      lastSentSerialized = null
+      emit('info', 'discord.force_transmit')
+      await transmit(true)
     },
     settings: () => currentSettings,
     status: () => ({

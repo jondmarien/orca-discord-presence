@@ -101,6 +101,25 @@ test('an identical snapshot does not schedule a redundant write', async () => {
   expect(activities.length).toBe(1)
 })
 
+test('forceTransmit re-sends an unchanged activity', async () => {
+  const { controller, activities } = harness()
+  const snapshot = { displayName: 'repo', agentState: 'working', terminalCount: 1 }
+  await controller.update(snapshot)
+  expect(activities.length).toBe(1)
+  await controller.forceTransmit()
+  expect(activities.length).toBe(2)
+  expect(activities[1] && 'details' in activities[1] ? activities[1].details : null).toBe('repo')
+})
+
+test('an empty snapshot still publishes generic Working in Orca', async () => {
+  const { controller, activities } = harness({ detailLevel: 'generic' })
+  await controller.update({})
+  expect(activities.length).toBe(1)
+  expect(activities[0] && 'details' in activities[0] ? activities[0].details : null).toBe(
+    'Working in Orca'
+  )
+})
+
 test('disabling clears the presence exactly once', async () => {
   const { controller, activities } = harness()
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
