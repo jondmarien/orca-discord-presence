@@ -17,7 +17,10 @@ import { inspectApplicationId } from './discord/app-id'
 import { createDiscordClient } from './discord/client'
 import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
 import { createPresenceController, type PresenceController } from './presence/controller'
+import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
+import { resolvePanelHtmlPath, writePanelSnapshot } from './presence/panel-html'
+import { buildPresencePanelSnapshot } from './presence/panel-snapshot'
 import {
   normalizeSettings,
   nextDetailLevel,
@@ -25,6 +28,7 @@ import {
   toggleField,
   type PresenceSettings
 } from './presence/settings'
+import { PLUGIN_VERSION } from './version'
 
 /**
  * Interval for the `workspace.readContext` heartbeat.
@@ -34,6 +38,11 @@ import {
  * switches, which emit no event.
  */
 const HEARTBEAT_MS = 90_000
+
+/**
+ * Coalesce panel HTML rewrites during a chatty agent event stream.
+ */
+const PANEL_WRITE_DEBOUNCE_MS = 2_000
 
 /**
  * Notification / log budget for the `transmitting=` JSON. Discord toasts
@@ -126,7 +135,66 @@ export type OrcaHost = {
 let controller: PresenceController | null = null
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
+let logRing: LogRing | null = null
+let panelWriteTimer: ReturnType<typeof setTimeout> | null = null
+let panelWriteNoted = false
 let deactivated = false
+
+/**
+ * Embed a redacted snapshot into `panel/index.html` when the install is
+ * writable. Marketplace copies are often immutable — failures are silent
+ * after the first debug line.
+ */
+function publishPanelSnapshot(mode: 'immediate' | 'debounced') {
+  const flush = () => {
+    panelWriteTimer = null
+    if (!controller || !logRing) {
+      return
+    }
+    const snapshot = buildPresencePanelSnapshot({
+      version: PLUGIN_VERSION,
+      status: controller.status(),
+      settings: controller.settings(),
+      logs: logRing.lines()
+    })
+    const target = resolvePanelHtmlPath(process.env, import.meta.url)
+    if (!target) {
+      return
+    }
+    const result = writePanelSnapshot(target, snapshot)
+    if (result.ok) {
+      diagnostics?.line('debug', 'panel.snapshot_written', { lines: snapshot.logs.length })
+      return
+    }
+    if (!panelWriteNoted) {
+      panelWriteNoted = true
+      diagnostics?.line('debug', 'panel.snapshot_skipped', { reason: result.reason })
+    }
+  }
+  if (mode === 'immediate') {
+    if (panelWriteTimer) {
+      clearTimeout(panelWriteTimer)
+      panelWriteTimer = null
+    }
+    try {
+      flush()
+    } catch {
+      // Panel rewrite must never take down presence.
+    }
+    return
+  }
+  if (panelWriteTimer) {
+    return
+  }
+  panelWriteTimer = setTimeout(() => {
+    try {
+      flush()
+    } catch {
+      // Same as immediate: ignore rewrite errors.
+    }
+  }, PANEL_WRITE_DEBOUNCE_MS)
+  panelWriteTimer.unref?.()
+}
 
 /**
  * Plugin entry. Loads persisted settings, constructs the Discord client and
@@ -153,13 +221,18 @@ export default async function activate(orca: OrcaHost) {
     tmpdir: os.tmpdir(),
     platform: process.platform
   })
+  logRing = createLogRing()
+  panelWriteNoted = false
   diagnostics = createDiagnosticSink({
     hostLog: (message) => orca.log(message),
     filePath: logFile,
-    debugEnabled: settings.debugLogging
+    debugEnabled: settings.debugLogging,
+    onEmit: (line) => {
+      logRing?.push(line)
+    }
   })
   diagnostics.line('info', 'activate', {
-    version: '0.3.0',
+    version: PLUGIN_VERSION,
     debug: settings.debugLogging,
     file: logFile,
     bridge: settings.bridgeEnabled
@@ -203,6 +276,7 @@ export default async function activate(orca: OrcaHost) {
       })
     }
     await controller?.setSettings(nextSettings)
+    publishPanelSnapshot('immediate')
   }
 
   /**
@@ -240,6 +314,7 @@ export default async function activate(orca: OrcaHost) {
     if (options.force) {
       await controller?.forceTransmit()
     }
+    publishPanelSnapshot('debounced')
   }
 
   orca.commands.register('presence.toggle', async () => {
@@ -285,6 +360,7 @@ export default async function activate(orca: OrcaHost) {
       title: 'Discord Rich Presence',
       body: `${summary} ${transmitting}`
     })
+    publishPanelSnapshot('immediate')
     return status
   })
 
@@ -304,6 +380,7 @@ export default async function activate(orca: OrcaHost) {
       title: 'Discord Rich Presence',
       body: summary
     })
+    publishPanelSnapshot('immediate')
     return status
   })
 
@@ -325,7 +402,9 @@ export default async function activate(orca: OrcaHost) {
   // Why: fire-and-forget. `activate` must resolve inside
   // PLUGIN_WORKER_READY_TIMEOUT_MS (10s) or the host SIGKILLs the worker, and
   // the first refresh chains into a socket scan plus a 5s handshake timeout.
-  void refresh()
+  void refresh().then(() => {
+    publishPanelSnapshot('immediate')
+  })
 }
 
 /**
@@ -342,8 +421,13 @@ export async function deactivate() {
     clearInterval(heartbeat)
     heartbeat = null
   }
+  if (panelWriteTimer) {
+    clearTimeout(panelWriteTimer)
+    panelWriteTimer = null
+  }
   diagnostics?.line('info', 'deactivate')
   await controller?.stop()
   controller = null
   diagnostics = null
+  logRing = null
 }

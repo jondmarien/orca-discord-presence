@@ -158,12 +158,15 @@ export function createDiagnosticSink({
   hostLog,
   filePath,
   debugEnabled,
-  append = appendCappedLog
+  append = appendCappedLog,
+  onEmit
 }: {
   hostLog: (message: string) => void
   filePath: string
   debugEnabled: boolean
   append?: (filePath: string, line: string) => void
+  /** Called with the formatted line after it is actually emitted. */
+  onEmit?: (formatted: string) => void
 }): DiagnosticSink {
   let debug = debugEnabled
   return {
@@ -178,6 +181,7 @@ export function createDiagnosticSink({
       }
       const formatted = formatLogLine(level, event, detail)
       hostLog(formatted)
+      onEmit?.(formatted)
       try {
         append(filePath, formatted)
       } catch {

@@ -688,7 +688,8 @@ function createDiagnosticSink({
   hostLog,
   filePath,
   debugEnabled,
-  append = appendCappedLog
+  append = appendCappedLog,
+  onEmit
 }) {
   let debug = debugEnabled;
   return {
@@ -703,6 +704,7 @@ function createDiagnosticSink({
       }
       const formatted = formatLogLine(level, event, detail);
       hostLog(formatted);
+      onEmit?.(formatted);
       try {
         append(filePath, formatted);
       } catch {}
@@ -972,6 +974,128 @@ function createPresenceController({
   };
 }
 
+// src/presence/log-ring.ts
+var PANEL_LOG_RING_SIZE = 80;
+function createLogRing(capacity = PANEL_LOG_RING_SIZE) {
+  const max = Math.max(1, Math.floor(capacity));
+  const buf = [];
+  return {
+    capacity: max,
+    push(line) {
+      buf.push(line);
+      if (buf.length > max) {
+        buf.splice(0, buf.length - max);
+      }
+    },
+    lines() {
+      return buf.slice();
+    },
+    clear() {
+      buf.length = 0;
+    }
+  };
+}
+
+// src/presence/panel-html.ts
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+var PANEL_HTML_ENV = "ORCA_PRESENCE_PANEL_HTML";
+var PANEL_WRITE_SKIP_ENV = "ORCA_PRESENCE_SKIP_PANEL_WRITE";
+var PANEL_SNAPSHOT_SCRIPT_ID = "presence-snapshot";
+var SNAPSHOT_SCRIPT_RE = /<script id="presence-snapshot" type="application\/json">[\s\S]*?<\/script>/;
+function resolvePanelHtmlPath(env, metaUrl) {
+  const skip = env[PANEL_WRITE_SKIP_ENV];
+  if (skip === "1" || skip === "true") {
+    return null;
+  }
+  const override = env[PANEL_HTML_ENV];
+  if (typeof override === "string" && override.trim()) {
+    return override.trim();
+  }
+  try {
+    return fileURLToPath(new URL("../panel/index.html", metaUrl));
+  } catch {
+    return null;
+  }
+}
+function serializePanelSnapshot(snapshot) {
+  return JSON.stringify(snapshot).replace(/</g, "\\u003c");
+}
+function embedPanelSnapshot(html, snapshot) {
+  if (!SNAPSHOT_SCRIPT_RE.test(html)) {
+    throw new Error("panel snapshot marker missing");
+  }
+  const json = serializePanelSnapshot(snapshot);
+  return html.replace(SNAPSHOT_SCRIPT_RE, `<script id="${PANEL_SNAPSHOT_SCRIPT_ID}" type="application/json">${json}</script>`);
+}
+function writePanelSnapshot(filePath, snapshot) {
+  try {
+    const current = readFileSync(filePath, "utf8");
+    const next = embedPanelSnapshot(current, snapshot);
+    if (next !== current) {
+      writeFileSync(filePath, next, "utf8");
+    }
+    return { ok: true };
+  } catch (error) {
+    const err = error;
+    if (err?.code === "ENOENT") {
+      return { ok: false, reason: "missing" };
+    }
+    if (err?.code === "EACCES" || err?.code === "EROFS" || err?.code === "EPERM") {
+      return { ok: false, reason: "unwritable" };
+    }
+    if (error instanceof Error && error.message.includes("snapshot marker")) {
+      return { ok: false, reason: "no-marker" };
+    }
+    return { ok: false, reason: error instanceof Error ? error.message : "error" };
+  }
+}
+
+// src/presence/panel-snapshot.ts
+var CONVENTIONAL_LOG_HINT = `~/.local/state/${LOG_DIR_NAME}/${LOG_FILE_NAME}`;
+var SECRET_ASSIGNMENT_RE = /\b(token|bridgetoken|authorization|password|secret)=(?!\*\*\*)(\S+)/gi;
+function redactPanelLogLine(line) {
+  return line.replace(SECRET_ASSIGNMENT_RE, "$1=***");
+}
+function summarizePanelActivity(activity) {
+  if (!activity || typeof activity.details !== "string") {
+    return null;
+  }
+  return {
+    details: activity.details,
+    state: typeof activity.state === "string" ? activity.state : null
+  };
+}
+function buildPresencePanelSnapshot(input) {
+  const { version, status, settings, logs, now = new Date } = input;
+  return {
+    version,
+    generatedAt: now.toISOString(),
+    status: {
+      enabled: status.enabled,
+      connected: status.connected,
+      sink: status.sink,
+      detailLevel: status.detailLevel,
+      bridgeEnabled: status.bridgeEnabled,
+      debugLogging: settings.debugLogging,
+      lastActivity: summarizePanelActivity(status.lastActivity),
+      logFile: status.logFile
+    },
+    fields: {
+      enabled: settings.enabled,
+      showBranch: settings.showBranch,
+      showAgentState: settings.showAgentState,
+      showTerminals: settings.showTerminals,
+      showMachine: settings.showMachine,
+      showElapsed: settings.showElapsed,
+      bridgeEnabled: settings.bridgeEnabled,
+      debugLogging: settings.debugLogging
+    },
+    logs: logs.map(redactPanelLogLine),
+    logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT
+  };
+}
+
 // src/presence/settings.ts
 var DETAIL_LEVELS = ["off", "generic", "workspace", "full"];
 var SHIPPED_APPLICATION_ID = "1545653843239374848";
@@ -1026,8 +1150,12 @@ function toggleField(settings, field) {
   return { ...settings, [key]: !settings[key] };
 }
 
+// src/version.ts
+var PLUGIN_VERSION = "0.4.0";
+
 // src/main.ts
 var HEARTBEAT_MS = 90000;
+var PANEL_WRITE_DEBOUNCE_MS = 2000;
 var TRANSMITTING_TOAST_MAX = 180;
 function formatStatusTransmitting(activity) {
   const json = JSON.stringify(activity) ?? "null";
@@ -1048,7 +1176,56 @@ var TOGGLE_COMMANDS = {
 var controller = null;
 var heartbeat = null;
 var diagnostics = null;
+var logRing = null;
+var panelWriteTimer = null;
+var panelWriteNoted = false;
 var deactivated = false;
+function publishPanelSnapshot(mode) {
+  const flush = () => {
+    panelWriteTimer = null;
+    if (!controller || !logRing) {
+      return;
+    }
+    const snapshot = buildPresencePanelSnapshot({
+      version: PLUGIN_VERSION,
+      status: controller.status(),
+      settings: controller.settings(),
+      logs: logRing.lines()
+    });
+    const target = resolvePanelHtmlPath(process.env, import.meta.url);
+    if (!target) {
+      return;
+    }
+    const result = writePanelSnapshot(target, snapshot);
+    if (result.ok) {
+      diagnostics?.line("debug", "panel.snapshot_written", { lines: snapshot.logs.length });
+      return;
+    }
+    if (!panelWriteNoted) {
+      panelWriteNoted = true;
+      diagnostics?.line("debug", "panel.snapshot_skipped", { reason: result.reason });
+    }
+  };
+  if (mode === "immediate") {
+    if (panelWriteTimer) {
+      clearTimeout(panelWriteTimer);
+      panelWriteTimer = null;
+    }
+    try {
+      flush();
+    } catch {}
+    return;
+  }
+  if (panelWriteTimer) {
+    return;
+  }
+  panelWriteTimer = setTimeout(() => {
+    try {
+      flush();
+    } catch {}
+  }, PANEL_WRITE_DEBOUNCE_MS);
+  panelWriteTimer.unref?.();
+}
 async function activate(orca) {
   deactivated = false;
   const stored = await orca.host.call("settings.get").catch(() => ({ settings: {} }));
@@ -1060,13 +1237,18 @@ async function activate(orca) {
     tmpdir: os2.tmpdir(),
     platform: process.platform
   });
+  logRing = createLogRing();
+  panelWriteNoted = false;
   diagnostics = createDiagnosticSink({
     hostLog: (message) => orca.log(message),
     filePath: logFile,
-    debugEnabled: settings.debugLogging
+    debugEnabled: settings.debugLogging,
+    onEmit: (line) => {
+      logRing?.push(line);
+    }
   });
   diagnostics.line("info", "activate", {
-    version: "0.3.0",
+    version: PLUGIN_VERSION,
     debug: settings.debugLogging,
     file: logFile,
     bridge: settings.bridgeEnabled
@@ -1104,6 +1286,7 @@ async function activate(orca) {
       });
     }
     await controller?.setSettings(nextSettings);
+    publishPanelSnapshot("immediate");
   }
   async function refresh(agentState, options = {}) {
     const context = await orca.host.call("workspace.readContext").catch(() => null);
@@ -1127,6 +1310,7 @@ async function activate(orca) {
     if (options.force) {
       await controller?.forceTransmit();
     }
+    publishPanelSnapshot("debounced");
   }
   orca.commands.register("presence.toggle", async () => {
     await persist({ ...settings, enabled: !settings.enabled });
@@ -1165,6 +1349,7 @@ async function activate(orca) {
       title: "Discord Rich Presence",
       body: `${summary} ${transmitting}`
     });
+    publishPanelSnapshot("immediate");
     return status;
   });
   orca.commands.register("presence.reload", async () => {
@@ -1183,6 +1368,7 @@ async function activate(orca) {
       title: "Discord Rich Presence",
       body: summary
     });
+    publishPanelSnapshot("immediate");
     return status;
   });
   orca.events.on("agent.status.changed", async (payload) => {
@@ -1198,7 +1384,9 @@ async function activate(orca) {
     refresh(undefined, { force: true });
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
-  refresh();
+  refresh().then(() => {
+    publishPanelSnapshot("immediate");
+  });
 }
 async function deactivate() {
   if (deactivated) {
@@ -1209,10 +1397,15 @@ async function deactivate() {
     clearInterval(heartbeat);
     heartbeat = null;
   }
+  if (panelWriteTimer) {
+    clearTimeout(panelWriteTimer);
+    panelWriteTimer = null;
+  }
   diagnostics?.line("info", "deactivate");
   await controller?.stop();
   controller = null;
   diagnostics = null;
+  logRing = null;
 }
 export {
   deactivate,

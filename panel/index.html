@@ -1,0 +1,621 @@
+<!--
+  Discord Presence diagnostics panel for Orca pluginApi 1.
+  Sandboxed iframe: inline CSS/JS only. Host CSP blocks fetch/network.
+  Official bridge: postMessage type orca-panel-action / orca-panel-action-result.
+  Watchdog: reply to orca-panel-ping with orca-panel-pong.
+  @author Jonathan Marien
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Discord Presence</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+      }
+      body {
+        padding: 10px 12px 16px;
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--foreground, #e6e6e6);
+        background: var(--background, transparent);
+      }
+      h1 {
+        font-size: 13px;
+        font-weight: 650;
+        margin: 0;
+      }
+      h2 {
+        font-size: 11px;
+        font-weight: 650;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted-foreground, #9a9a9a);
+        margin: 0 0 6px;
+      }
+      p {
+        margin: 0 0 8px;
+      }
+      .status-bar {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px 10px;
+        margin-bottom: 10px;
+        border: 1px solid var(--border, #444);
+        border-radius: 8px;
+        background: var(--card, rgba(255, 255, 255, 0.03));
+      }
+      .status-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .indicator {
+        font-weight: 650;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--muted-foreground, #888);
+        flex: 0 0 auto;
+      }
+      .is-connected .dot {
+        background: #4caf50;
+      }
+      .is-bridge .dot {
+        background: #42a5f5;
+      }
+      .is-down .dot {
+        background: #ef5350;
+      }
+      .is-disabled .dot,
+      .is-waiting .dot {
+        background: var(--muted-foreground, #888);
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      button {
+        padding: 5px 8px;
+        border: 1px solid var(--border, #555);
+        border-radius: 6px;
+        background: var(--secondary, #2a2a2a);
+        color: var(--foreground, #ddd);
+        cursor: pointer;
+        font: inherit;
+      }
+      button.primary {
+        background: var(--primary, #3b6df6);
+        color: var(--primary-foreground, #fff);
+        border-color: transparent;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .tabs {
+        display: flex;
+        gap: 4px;
+        margin: 0 0 10px;
+      }
+      .tabs button {
+        flex: 1 1 0;
+        padding: 6px 4px;
+      }
+      .tabs button.active {
+        background: var(--primary, #3b6df6);
+        color: var(--primary-foreground, #fff);
+        border-color: transparent;
+      }
+      .panel {
+        display: none;
+      }
+      .panel.active {
+        display: block;
+      }
+      .card {
+        padding: 8px 10px;
+        margin-bottom: 10px;
+        border: 1px solid var(--border, #444);
+        border-radius: 8px;
+        background: var(--card, rgba(255, 255, 255, 0.03));
+      }
+      .kv {
+        display: grid;
+        grid-template-columns: 88px 1fr;
+        gap: 4px 8px;
+      }
+      .kv dt {
+        color: var(--muted-foreground, #9a9a9a);
+        margin: 0;
+      }
+      .kv dd {
+        margin: 0;
+        word-break: break-word;
+      }
+      .toggles {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .toggles label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .hint,
+      .note {
+        color: var(--muted-foreground, #9a9a9a);
+        font-size: 11px;
+      }
+      .palette {
+        margin: 0;
+        padding-left: 18px;
+      }
+      .flash {
+        min-height: 1.3em;
+        color: var(--muted-foreground, #9a9a9a);
+        white-space: pre-wrap;
+        margin: 0 0 8px;
+      }
+      details.logs {
+        border: 1px solid var(--border, #444);
+        border-radius: 8px;
+        padding: 6px 8px 8px;
+        background: var(--card, rgba(255, 255, 255, 0.03));
+      }
+      details.logs > summary {
+        cursor: pointer;
+        font-weight: 650;
+        list-style: revert;
+      }
+      .log-toolbar {
+        display: flex;
+        gap: 6px;
+        margin: 8px 0;
+      }
+      pre.log {
+        margin: 0;
+        max-height: 220px;
+        overflow: auto;
+        padding: 8px;
+        border-radius: 6px;
+        background: var(--muted, #161616);
+        color: var(--foreground, #ddd);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 10px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .badge {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--border, #555);
+        font-size: 10px;
+        color: var(--muted-foreground, #aaa);
+      }
+    </style>
+  </head>
+  <body>
+    <script id="presence-snapshot" type="application/json">null</script>
+
+    <header class="status-bar" id="status-bar">
+      <div class="status-row">
+        <div class="indicator" id="indicator">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="indicator-label">Waiting for worker snapshot</span>
+        </div>
+        <span class="badge" id="version-badge">v0.4.0</span>
+      </div>
+      <div class="actions">
+        <button type="button" id="btn-refresh">Refresh</button>
+        <button type="button" class="primary" id="btn-status">Show Status</button>
+        <button type="button" id="btn-reload-hint">Reload RPC (palette)</button>
+      </div>
+    </header>
+    <p class="flash" id="flash"></p>
+
+    <nav class="tabs" aria-label="Panel sections">
+      <button type="button" class="active" data-tab="settings">Settings</button>
+      <button type="button" data-tab="about">About</button>
+      <button type="button" data-tab="help">Help</button>
+    </nav>
+
+    <section class="panel active" id="tab-settings">
+      <div class="card">
+        <h2>Live workspace</h2>
+        <dl class="kv">
+          <dt>Name</dt>
+          <dd id="ws-name">—</dd>
+          <dt>Branch</dt>
+          <dd id="ws-branch">—</dd>
+          <dt>Terminals</dt>
+          <dd id="ws-terminals">—</dd>
+        </dl>
+        <p class="hint" id="ws-hint">Calls workspace.readContext over the panel bridge.</p>
+      </div>
+
+      <div class="card">
+        <h2>Presence status</h2>
+        <dl class="kv">
+          <dt>Enabled</dt>
+          <dd id="st-enabled">—</dd>
+          <dt>Connected</dt>
+          <dd id="st-connected">—</dd>
+          <dt>Sink</dt>
+          <dd id="st-sink">—</dd>
+          <dt>Detail</dt>
+          <dd id="st-detail">—</dd>
+          <dt>Bridge</dt>
+          <dd id="st-bridge">—</dd>
+          <dt>Activity</dt>
+          <dd id="st-activity">—</dd>
+          <dt>Log file</dt>
+          <dd id="st-logfile">~/.local/state/chron0-discord-presence/plugin.log</dd>
+        </dl>
+        <p class="hint" id="st-generated">Snapshot updates when the worker rewrites this panel (activate, Show Status, heartbeat) on a writable install.</p>
+      </div>
+
+      <div class="card">
+        <h2>Field toggles</h2>
+        <p class="note">Read-only. Panels cannot call settings.set yet (host B4 / issue #3). Use the command palette.</p>
+        <div class="toggles">
+          <label><input type="checkbox" disabled id="f-enabled" /> Enabled</label>
+          <label><input type="checkbox" disabled id="f-branch" /> Branch</label>
+          <label><input type="checkbox" disabled id="f-agent" /> Agent state</label>
+          <label><input type="checkbox" disabled id="f-terminals" /> Terminal count</label>
+          <label><input type="checkbox" disabled id="f-machine" /> Machine name</label>
+          <label><input type="checkbox" disabled id="f-elapsed" /> Elapsed timer</label>
+          <label><input type="checkbox" disabled id="f-bridge" /> Companion bridge</label>
+          <label><input type="checkbox" disabled id="f-debug" /> Debug logging</label>
+        </div>
+        <p class="hint">Palette commands</p>
+        <ul class="palette note">
+          <li>Discord Presence: Enable/Disable</li>
+          <li>Discord Presence: Cycle Detail Level</li>
+          <li>Discord Presence: Reload RPC</li>
+          <li>Discord Presence: Toggle Branch / Agent State / Terminals / Machine / Elapsed / Bridge / Debug</li>
+        </ul>
+      </div>
+
+      <details class="logs" id="logs-box">
+        <summary>Extension Logs</summary>
+        <div class="log-toolbar">
+          <button type="button" id="btn-log-clear">Clear</button>
+          <button type="button" id="btn-log-copy">Copy</button>
+        </div>
+        <pre class="log" id="log-view">No snapshot lines yet. Run Discord Presence: Show Status, then reopen this panel on a writable (devPluginPaths) install. Marketplace copies stay static — read the conventional log path above.</pre>
+      </details>
+    </section>
+
+    <section class="panel" id="tab-about">
+      <div class="card">
+        <h1>Discord Rich Presence</h1>
+        <p class="note">Orca plugin · opt-in workspace / branch / agent state</p>
+        <dl class="kv">
+          <dt>Plugin</dt>
+          <dd>chron0.discord-presence</dd>
+          <dt>Version</dt>
+          <dd id="about-version">0.4.0</dd>
+          <dt>Author</dt>
+          <dd>Jonathan Marien</dd>
+        </dl>
+        <p class="hint">Source (plain text — panel CSP blocks navigation):</p>
+        <p>https://github.com/jondmarien/orca-discord-presence</p>
+        <p class="hint">Host settings/storage/log APIs: issue #3 · PLAN.md Task B4</p>
+      </div>
+    </section>
+
+    <section class="panel" id="tab-help">
+      <div class="card">
+        <h2>Getting started</h2>
+        <p>1. Keep the Discord desktop client (or Vesktop + arRPC) signed in on the Orca host, or enable the companion bridge.</p>
+        <p>2. Approve plugin consent (workspace, events, settings, notifications).</p>
+        <p>3. Open this right-sidebar tab: plugin:chron0.discord-presence/presence</p>
+        <p>4. Run Discord Presence: Show Status from the command palette.</p>
+      </div>
+      <div class="card">
+        <h2>Troubleshooting</h2>
+        <p>Vesktop Flatpak: enable Rich Presence via arRPC. IPC lives under .flatpak/dev.vencord.Vesktop/xdg-run.</p>
+        <p>Reload RPC: command palette only — panels cannot invoke commands or reconnect the worker socket.</p>
+        <p>Competing RPC: another IDE or overlay can overwrite activity. Reload RPC or wait for the 90s heartbeat.</p>
+        <p>Logs: ~/.local/state/chron0-discord-presence/plugin.log (Windows: %LOCALAPPDATA%\chron0-discord-presence\plugin.log)</p>
+        <p>Toggles do not persist from this panel until the host flips settings.* to panel-callable. Tracked in issue #3.</p>
+        <p class="hint">https://github.com/jondmarien/orca-discord-presence/issues/3</p>
+      </div>
+    </section>
+
+    <script>
+      'use strict'
+      var PANEL_ACTION = 'orca-panel-action'
+      var PANEL_RESULT = 'orca-panel-action-result'
+      var PANEL_PING = 'orca-panel-ping'
+      var PANEL_PONG = 'orca-panel-pong'
+      var seq = 0
+      var pending = {}
+      window.__PRESENCE_PANEL__ = null
+
+      function $(id) {
+        return document.getElementById(id)
+      }
+
+      function setText(id, value) {
+        var el = $(id)
+        if (el) el.textContent = value == null || value === '' ? '—' : String(value)
+      }
+
+      function readSnapshot() {
+        var el = $('presence-snapshot')
+        var parsed = null
+        try {
+          parsed = el ? JSON.parse(el.textContent || 'null') : null
+        } catch (error) {
+          parsed = null
+        }
+        window.__PRESENCE_PANEL__ = parsed
+        return parsed
+      }
+
+      function hasHostBridge() {
+        return window.parent != null && window.parent !== window
+      }
+
+      function call(action, params) {
+        if (!hasHostBridge()) {
+          return Promise.resolve({
+            ok: false,
+            error: 'Panel host bridge is only available inside Orca',
+            errorCode: 'unavailable'
+          })
+        }
+        return new Promise(function (resolve) {
+          var requestId = 'req-' + ++seq
+          var timer = setTimeout(function () {
+            delete pending[requestId]
+            resolve({ ok: false, error: 'timeout', errorCode: 'unavailable' })
+          }, 4000)
+          pending[requestId] = function (data) {
+            clearTimeout(timer)
+            resolve(data)
+          }
+          window.parent.postMessage(
+            { type: PANEL_ACTION, requestId: requestId, action: action, params: params },
+            '*'
+          )
+        })
+      }
+
+      window.addEventListener('message', function (event) {
+        var data = event.data
+        if (!data || typeof data !== 'object') return
+        if (data.type === PANEL_PING && typeof data.pingId === 'number') {
+          window.parent.postMessage({ type: PANEL_PONG, pingId: data.pingId }, '*')
+          return
+        }
+        if (data.type !== PANEL_RESULT) return
+        var resolve = pending[data.requestId]
+        if (!resolve) return
+        delete pending[data.requestId]
+        resolve(data)
+      })
+
+      function flash(message) {
+        setText('flash', message)
+      }
+
+      function setChecked(id, on) {
+        var el = $(id)
+        if (el) el.checked = !!on
+      }
+
+      function indicatorClass(snapshot) {
+        if (!snapshot || !snapshot.status) return 'is-waiting'
+        if (!snapshot.fields || snapshot.fields.enabled === false) return 'is-disabled'
+        if (snapshot.status.connected) return 'is-connected'
+        if (snapshot.status.sink === 'bridge') return 'is-bridge'
+        if (snapshot.status.enabled) return 'is-down'
+        return 'is-disabled'
+      }
+
+      function indicatorLabel(snapshot) {
+        if (!snapshot || !snapshot.status) return 'Waiting for worker snapshot'
+        if (snapshot.fields && snapshot.fields.enabled === false) return 'Disabled'
+        if (snapshot.status.connected) return 'Connected · local'
+        if (snapshot.status.sink === 'bridge') return 'Publishing · bridge'
+        if (snapshot.status.enabled) return 'Disconnected'
+        return 'Disabled'
+      }
+
+      function formatActivity(activity) {
+        if (!activity || !activity.details) return '—'
+        return activity.state ? activity.details + ' · ' + activity.state : activity.details
+      }
+
+      function renderSnapshot(snapshot) {
+        var bar = $('status-bar')
+        bar.className = 'status-bar ' + indicatorClass(snapshot)
+        setText('indicator-label', indicatorLabel(snapshot))
+        if (snapshot && snapshot.version) setText('version-badge', 'v' + snapshot.version)
+        if (snapshot && snapshot.version) setText('about-version', snapshot.version)
+        if (!snapshot || !snapshot.status) {
+          setText('st-enabled', '—')
+          setText('st-connected', '—')
+          setText('st-sink', '—')
+          setText('st-detail', '—')
+          setText('st-bridge', '—')
+          setText('st-activity', '—')
+          setText('st-logfile', '~/.local/state/chron0-discord-presence/plugin.log')
+          setText(
+            'st-generated',
+            'No worker snapshot. Static marketplace shells stay empty until host B4 or a writable rewrite. Run Show Status from the palette.'
+          )
+          return
+        }
+        var status = snapshot.status
+        var fields = snapshot.fields || {}
+        setText('st-enabled', String(status.enabled))
+        setText('st-connected', String(status.connected))
+        setText('st-sink', status.sink == null ? 'null' : String(status.sink))
+        setText('st-detail', status.detailLevel)
+        setText('st-bridge', status.bridgeEnabled ? 'on' : 'off')
+        setText('st-activity', formatActivity(status.lastActivity))
+        setText('st-logfile', snapshot.logHint || status.logFile)
+        setText(
+          'st-generated',
+          'Snapshot ' + (snapshot.generatedAt || '') + ' · reopen the tab after Show Status / heartbeat to load a newer rewrite.'
+        )
+        setChecked('f-enabled', fields.enabled)
+        setChecked('f-branch', fields.showBranch)
+        setChecked('f-agent', fields.showAgentState)
+        setChecked('f-terminals', fields.showTerminals)
+        setChecked('f-machine', fields.showMachine)
+        setChecked('f-elapsed', fields.showElapsed)
+        setChecked('f-bridge', fields.bridgeEnabled)
+        setChecked('f-debug', fields.debugLogging)
+        var logView = $('log-view')
+        if (snapshot.logs && snapshot.logs.length) {
+          logView.textContent = snapshot.logs.join('\n')
+          $('logs-box').open = true
+        }
+      }
+
+      function renderWorkspace(value) {
+        if (!value) {
+          setText('ws-name', '—')
+          setText('ws-branch', '—')
+          setText('ws-terminals', '—')
+          setText('ws-hint', 'No focused worktree.')
+          return
+        }
+        setText('ws-name', value.displayName)
+        setText('ws-branch', value.branch)
+        var count = value.terminals && value.terminals.length ? value.terminals.length : 0
+        setText('ws-terminals', String(count))
+        setText('ws-hint', 'Live via workspace.readContext.')
+      }
+
+      function refreshWorkspace() {
+        return call('workspace.readContext').then(function (result) {
+          if (!result.ok) {
+            setText('ws-hint', 'workspace.readContext failed: ' + (result.error || result.errorCode || 'error'))
+            return result
+          }
+          renderWorkspace(result.value)
+          return result
+        })
+      }
+
+      function toastStatus() {
+        var snapshot = readSnapshot()
+        var body = snapshot
+          ? 'enabled=' +
+            snapshot.status.enabled +
+            ' connected=' +
+            snapshot.status.connected +
+            ' sink=' +
+            snapshot.status.sink +
+            ' detail=' +
+            snapshot.status.detailLevel
+          : 'No worker snapshot yet. Run Discord Presence: Show Status from the command palette.'
+        return call('notifications.show', { title: 'Discord Rich Presence', body: body }).then(
+          function (result) {
+            flash(
+              result.ok
+                ? 'Status toast ' + (result.value && result.value.delivered ? 'delivered' : 'accepted')
+                : 'Toast failed: ' + (result.error || result.errorCode || 'error')
+            )
+          }
+        )
+      }
+
+      document.querySelectorAll('.tabs [data-tab]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-tab')
+          document.querySelectorAll('.tabs [data-tab]').forEach(function (other) {
+            other.classList.toggle('active', other === btn)
+          })
+          document.querySelectorAll('.panel').forEach(function (panel) {
+            panel.classList.toggle('active', panel.id === 'tab-' + id)
+          })
+        })
+      })
+
+      $('btn-refresh').addEventListener('click', function () {
+        renderSnapshot(readSnapshot())
+        refreshWorkspace().then(function () {
+          flash('Refreshed workspace + snapshot view.')
+        })
+      })
+
+      $('btn-status').addEventListener('click', function () {
+        toastStatus()
+      })
+
+      $('btn-reload-hint').addEventListener('click', function () {
+        call('notifications.show', {
+          title: 'Discord Rich Presence',
+          body: 'Run Discord Presence: Reload RPC from the command palette. Panels cannot invoke commands or reopen Discord IPC.'
+        }).then(function (result) {
+          flash(
+            result.ok
+              ? 'Reminder sent. Use the command palette for Reload RPC.'
+              : 'Run Discord Presence: Reload RPC from the command palette.'
+          )
+        })
+      })
+
+      $('btn-log-clear').addEventListener('click', function () {
+        $('log-view').textContent = ''
+        flash('Cleared this view only (not the on-disk log).')
+      })
+
+      $('btn-log-copy').addEventListener('click', function () {
+        var text = $('log-view').textContent || ''
+        var done = function () {
+          flash('Logs copied.')
+        }
+        var fallback = function () {
+          var range = document.createRange()
+          range.selectNodeContents($('log-view'))
+          var sel = window.getSelection()
+          sel.removeAllRanges()
+          sel.addRange(range)
+          flash('Logs selected — copy with the system shortcut.')
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(fallback)
+        } else {
+          fallback()
+        }
+      })
+
+      renderSnapshot(readSnapshot())
+      if (!hasHostBridge()) {
+        flash('Open this panel in Orca (right sidebar). File preview cannot call the host bridge.')
+      } else {
+        refreshWorkspace()
+      }
+    </script>
+  </body>
+</html>

@@ -70,6 +70,21 @@ test('createDiagnosticSink always emits errors and filters info when debug is of
   expect(host.length).toBe(2)
 })
 
+test('createDiagnosticSink onEmit receives only lines that were actually logged', () => {
+  const emitted: string[] = []
+  const sink = createDiagnosticSink({
+    hostLog: () => {},
+    filePath: '/unused.log',
+    debugEnabled: false,
+    append: () => {},
+    onEmit: (line) => emitted.push(line)
+  })
+  sink.line('info', 'discord.set_activity', { sink: 'local' })
+  sink.line('error', 'discord.connect_failed', { reason: 'down' })
+  expect(emitted.length).toBe(1)
+  expect(emitted[0]?.includes('discord.connect_failed')).toBe(true)
+})
+
 test('appendCappedLog rotates when the next write would exceed the cap', () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'orca-presence-log-'))
   const file = path.join(dir, 'plugin.log')

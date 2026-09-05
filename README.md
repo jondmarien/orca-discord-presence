@@ -8,7 +8,7 @@ Every identifying field is **opt-in**. The default detail level (`generic`) neve
 **Publisher / id:** `chron0` / `discord-presence` (do not rename)  
 **Requires:** Orca `>=1.4.0`, Discord **desktop** client (on the Orca host **or** a companion on any OS where Discord/Vesktop/Vencord runs)  
 **Author:** Jonathan Marien  
-**Version:** 0.3.0
+**Version:** 0.4.0
 
 Browser Discord has **no** IPC socket. Presence will never appear if only the web client is open.
 
@@ -81,7 +81,7 @@ The plugin ships Application ID **`1545653843239374848`**. The Discord Developer
 | `state-waiting` | Small image | [`assets/state-waiting.png`](assets/state-waiting.png) |
 | `state-idle` | Small image | [`assets/state-idle.png`](assets/state-idle.png) |
 
-Changing the Application ID requires a plugin release. v0.2 has no user-facing override UI (v1.0 may add a settings panel). The id lives in [`src/presence/settings.ts`](src/presence/settings.ts) as `SHIPPED_APPLICATION_ID`. Rebuild `dist/` after changing it.
+Changing the Application ID requires a plugin release. v0.4 has a diagnostics panel but **no** Application ID override UI (v1.0 may add one after host B4). The id lives in [`src/presence/settings.ts`](src/presence/settings.ts) as `SHIPPED_APPLICATION_ID`. Rebuild `dist/` after changing it. The panel never displays the Application ID.
 
 There is **no Discord bot token or client secret** in this plugin. The Application ID is public data (it appears in every presence payload).
 
@@ -109,7 +109,7 @@ The manifest requests only:
 | `events:subscribe` | `agent.status.changed`, `worktree.created`, `worktree.removed` |
 | `storage` | Host storage (declared; settings use `settings:own`) |
 | `settings:own` | Persist toggles via `settings.get` / `settings.set` |
-| `notifications:show` | **Show Status** toast |
+| `notifications:show` | **Show Status** toast (command palette and the sidebar panel) |
 
 No `secrets` capability. No terminal write.
 
@@ -118,6 +118,8 @@ No `secrets` capability. No terminal write.
 Run **Discord Presence: Show Status** from the command palette. Presence starts on the first agent event, worktree event, command, or 90 s heartbeat — not necessarily at bare app launch.
 
 Keep the Discord **desktop** client signed in and running.
+
+Open the **Discord Presence** tab in the right sidebar (`plugin:chron0.discord-presence/presence`) for live workspace context and a read-only snapshot. See [Diagnostics panel](#diagnostics-panel-orca-right-sidebar).
 
 ---
 
@@ -138,6 +140,44 @@ Panels cannot call `settings.set` in Orca’s current host API, so each toggle i
 | Discord Presence: Toggle Elapsed Timer | `showElapsed` |
 | Discord Presence: Toggle Bridge | `bridgeEnabled` (still needs `bridgeUrl` / token) |
 | Discord Presence: Toggle Debug Logging | `debugLogging` |
+
+---
+
+## Diagnostics panel (Orca right sidebar)
+
+v0.4 ships one experimental panel:
+
+| Manifest | Value |
+|---|---|
+| `id` | `presence` |
+| Title | Discord Presence |
+| Icon | Lucide `radio` |
+| Entry | `panel/index.html` |
+| Sidebar tab | `plugin:chron0.discord-presence/presence` |
+
+**Open it:** enable the plugin, then open Orca’s **right sidebar** and click the Discord Presence (radio) activity-bar icon.
+
+The iframe is sandboxed. Host CSP is `default-src 'none'; connect-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:` (plus host extras). The panel **cannot** `fetch`, read files, or call `settings.*` / `storage.*` / `secrets.*` / `events.subscribe` / command invoke.
+
+### What works today
+
+| Surface | How |
+|---|---|
+| Live workspace | `workspace.readContext` via `postMessage` `{ type: 'orca-panel-action' }` — display name, branch, terminal count |
+| Show Status toast | `notifications.show` with compact `enabled` / `connected` / `sink` / `detail` from the embedded snapshot |
+| Refresh | Re-reads workspace context and re-renders `window.__PRESENCE_PANEL__` if the worker embedded a snapshot |
+| Read-only toggles | Checkboxes reflect the last snapshot (not live settings). They do **not** persist — that still needs host B4 |
+| Collapsible logs | Ring-buffer lines the worker embeds when it can rewrite `panel/index.html` |
+| Reload RPC / Cycle Detail / Enable | Command palette only. The panel button labeled **Reload RPC (palette)** is a reminder toast, not a reconnect |
+
+### Snapshot + static shell
+
+1. `panel/index.html` is a **static shell**. Marketplace / immutable installs still show live workspace + empty logs + the conventional log path and “run Show Status” copy.
+2. On a **writable** install (`devPluginPaths`), the worker keeps an in-memory log ring and, on activate / Show Status / Reload RPC / heartbeat (debounced), rewrites a `#presence-snapshot` JSON blob (`window.__PRESENCE_PANEL__`). Reopen the tab to load a newer rewrite.
+3. Override path: `ORCA_PRESENCE_PANEL_HTML`. Skip writes: `ORCA_PRESENCE_SKIP_PANEL_WRITE=1`.
+4. The Discord Application ID and bridge token are **never** written into the panel. Log lines are redacted (`token=***`).
+
+A real settings + live log panel still needs host work tracked on [issue #3](https://github.com/jondmarien/orca-discord-presence/issues/3) (PLAN.md Task B4: panel-callable `settings.*` / `storage.*` or `commands.invoke` / log tail). Do not wait on that for this MVP.
 
 ---
 
@@ -182,6 +222,11 @@ src/presence/controller.ts  snapshot cache, 15 s debounce, local-then-bridge pub
 src/presence/expiry.ts      activity-window helper for future focus/tool providers (#7)
 src/presence/bridge.ts      companion URL/token hygiene + HTTP client
 src/presence/log.ts         structured orca.log + capped file log
+src/presence/log-ring.ts    in-memory recent lines for the panel snapshot
+src/presence/panel-snapshot.ts  redacted status / toggles / logs (no token, no App ID)
+src/presence/panel-html.ts  embed snapshot into panel/index.html when writable
+src/version.ts              semver shared by manifest, worker, and panel
+panel/index.html            sandboxed right-sidebar diagnostics panel
 companion/                  OS-agnostic HTTP → local Discord IPC (Linux/macOS/Windows)
 dist/main.js                Orca entry (bundled Node ESM)
 ```
@@ -195,7 +240,8 @@ dist/main.js                Orca entry (bundled Node ESM)
 | What Discord sees | `src/presence/activity.ts` |
 | When Discord is written | `src/presence/controller.ts` (prefer local IPC, else opt-in bridge) |
 | Companion HTTP client | `src/presence/bridge.ts` |
-| Diagnostics | `src/presence/log.ts` |
+| Diagnostics | `src/presence/log.ts` + log ring + panel snapshot |
+| Sidebar panel | `panel/index.html` — `workspace.readContext` + `notifications.show` only |
 | Companion server (any OS) | `companion/main.ts` |
 
 Orca’s plugin worker is **Electron/Node**, not Bun. Shipped code uses only `node:*` APIs (`net`, `os`, `crypto`, timers). See [docs/architecture.md](docs/architecture.md) for IPC opcodes, debounce, and idle-reap details.
@@ -242,7 +288,7 @@ TypeScript sources carry JSDoc (`@module`, `@author Jonathan Marien`, `@date`) o
 Lines look like:
 
 ```
-[chron0.discord-presence] info activate version=0.3.0 debug=true file=/home/you/.local/state/chron0-discord-presence/plugin.log
+[chron0.discord-presence] info activate version=0.4.0 debug=true file=/home/you/.local/state/chron0-discord-presence/plugin.log
 [chron0.discord-presence] error discord.connect_failed reason="no discord ipc socket accepted a connection"
 [chron0.discord-presence] warn discord.client reason="connect attempt 1/3 failed: …; retrying in 3000ms"
 [chron0.discord-presence] error discord.app_id_invalid reason="…" rejected=not-a-snowflake fallback=1545653843239374848
@@ -265,9 +311,9 @@ Override with `ORCA_PRESENCE_LOG_FILE`. The active file rotates to `plugin.log.1
 
 ### How to read status
 
-1. Command palette → **Discord Presence: Show Status**.
-2. The toast repeats `enabled=… connected=… sink=…` plus **`transmitting=…`** (the last activity JSON, truncated). This command also forces a re-`SET_ACTIVITY`.
-3. The full line (plus file path) is written to `orca.log` and the file.
+1. Command palette → **Discord Presence: Show Status**, or the sidebar panel’s **Show Status** button (toast from the embedded snapshot).
+2. The palette toast repeats `enabled=… connected=… sink=…` plus **`transmitting=…`** (the last activity JSON, truncated). This command also forces a re-`SET_ACTIVITY`.
+3. The full line (plus file path) is written to `orca.log` and the file. The panel log view shows the same ring when the worker could rewrite `panel/index.html`.
 
 `connected=true` means **local** Discord IPC on the Orca host succeeded (your Omarchy smoke: `enabled=true connected=true detail=generic`). `sink=bridge` means the companion published instead.
 
@@ -357,7 +403,7 @@ The bridge is **off** by default. Enable it only when you intend to send activit
 | `bridgeUrl` | `""` | Companion base URL, e.g. `http://100.x.y.z:3848` |
 | `bridgeToken` | `""` | Same value as `ORCA_PRESENCE_BRIDGE_TOKEN`. Required when the URL host is not loopback |
 
-There is no settings panel in v0.3. Persist `bridgeUrl` and `bridgeToken` through the plugin `settings:own` store, or overlay them at worker start:
+v0.4’s sidebar panel is **diagnostics only** — it cannot persist `bridgeUrl` / `bridgeToken` (host B4). Use the plugin `settings:own` store, or overlay them at worker start:
 
 | Env (Orca host) | Effect |
 |---|---|
@@ -405,7 +451,8 @@ Authenticated requests send `Authorization: Bearer <token>`. `GET /health` is un
 | Linux worker cannot find the socket | `XDG_RUNTIME_DIR` stripped from the worker env | Plugin reconstructs `/run/user/<uid>/` and Flatpak/Snap nests |
 | Vesktop Flatpak + arRPC, no presence | Socket is inside the Vesktop sandbox, not at `$XDG_RUNTIME_DIR/discord-ipc-0` | Enable **Rich Presence via arRPC** in Vesktop. The plugin also probes `$XDG_RUNTIME_DIR/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-*` (and `/run/user/<uid>/…` when XDG is missing). Keep the desktop client running. |
 | Host has agents, Discord is on another OS, no presence | Local IPC cannot cross machines; bridge off by default | Run the companion on the Discord machine and enable the bridge — [Cross-machine companion](#cross-machine-companion-linux--macos--windows) |
-| Cannot find plugin logs in the UI | `orca.log` is easy to miss | Run **Show Status** or **Reload RPC**; read `~/.local/state/chron0-discord-presence/plugin.log` (or `%LOCALAPPDATA%\…`). Connect/reload failures are `error`/`warn` (always). Token is never logged. See [Diagnostics](#diagnostics-orcalog--file) |
+| Cannot find plugin logs in the UI | `orca.log` is easy to miss | Open the **Discord Presence** sidebar panel (collapsible Extension Logs) or run **Show Status** / **Reload RPC**; read `~/.local/state/chron0-discord-presence/plugin.log` (or `%LOCALAPPDATA%\…`). Marketplace installs may show an empty log view until the worker can rewrite the panel HTML. Token is never logged. See [Diagnostics](#diagnostics-orcalog--file) |
+| Panel toggles do nothing | `settings.set` is not panel-callable | Expected. Use the command palette. Host gap: [#3](https://github.com/jondmarien/orca-discord-presence/issues/3) / PLAN.md B4 |
 | Wrong / missing art | Assets not yet propagated, or wrong Application ID | Confirm keys `orca`, `state-working`, `state-blocked`, `state-waiting`, `state-idle` |
 | `activate` killed at startup | Handshake blocked the ready timeout | First refresh is fire-and-forget; if you changed that, restore it |
 
@@ -422,7 +469,8 @@ Authenticated requests send `Authorization: Bearer <token>`. `GET /health` is un
 - Installing this plugin on two machines does not, by itself, bridge agent events. The Discord machine must run the companion (or be the Orca host with Discord).
 - Presence starts on the first agent/worktree event, command, or 90 s heartbeat — not at bare app launch.
 - Idle-reap survival depends on a 90 s `workspace.readContext` heartbeat (worker is reaped after 5 minutes of no host calls).
-- v0.3 has no settings panel; toggles are commands only. `bridgeUrl` / `bridgeToken` are persisted settings or env overlays.
+- **Diagnostics panel shipped (v0.4).** Live workspace + notifications work. Field toggles are read-only until host B4. Logs are a worker-embedded snapshot on writable installs; immutable marketplace copies show the conventional path and “run Show Status”. Tracked in [#3](https://github.com/jondmarien/orca-discord-presence/issues/3).
+- A **settings** panel (writable toggles, Application ID override) is still blocked on panel-callable `settings.*` / `storage.*`. `bridgeUrl` / `bridgeToken` remain persisted settings or env overlays.
 - Activity **expiry windows** (30s/60s sticky-state reap — same Discord IPC lesson as a prior Rich Presence integration) are documented in [`src/presence/expiry.ts`](src/presence/expiry.ts) for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). They are not applied to today’s agent/workspace snapshot.
 
 ---
