@@ -6,7 +6,7 @@ export const DETAIL_LEVELS = ['off', 'generic', 'workspace', 'full']
 // Public Discord application id. Not a secret — it rides in every presence
 // payload. Replace this placeholder with the real snowflake from the Discord
 // Developer Portal before shipping; see README.md.
-export const SHIPPED_APPLICATION_ID = 'REPLACE_WITH_DISCORD_APPLICATION_ID'
+export const SHIPPED_APPLICATION_ID = '1545653843239374848'
 
 export const DEFAULT_SETTINGS = Object.freeze({
   enabled: true,

@@ -34,9 +34,9 @@ test('normalize rejects an unknown detail level', () => {
   assert.equal(normalizeSettings({ detailLevel: 'everything' }).detailLevel, 'generic')
 })
 
-test('the plugin ships a placeholder application id until the real one is configured', () => {
-  assert.equal(DEFAULT_SETTINGS.applicationId, 'REPLACE_WITH_DISCORD_APPLICATION_ID')
-  assert.equal(SHIPPED_APPLICATION_ID, 'REPLACE_WITH_DISCORD_APPLICATION_ID')
+test('the plugin ships the Discord application id', () => {
+  assert.equal(DEFAULT_SETTINGS.applicationId, '1545653843239374848')
+  assert.equal(SHIPPED_APPLICATION_ID, '1545653843239374848')
 })
 
 test('an absent application id falls back to the shipped default', () => {

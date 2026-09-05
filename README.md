@@ -21,14 +21,14 @@ No Discord developer account is required for end users. The plugin ships its own
 Until a real Discord application exists, the default is the literal placeholder:
 
 ```text
-REPLACE_WITH_DISCORD_APPLICATION_ID
+1545653843239374848
 ```
 
 **Where to plug it in:**
 
 1. Create an application at the Discord developer portal (name it **Orca** — that string is the game name Discord shows).
 2. Copy the Application ID (a 17–20 digit snowflake).
-3. Replace `SHIPPED_APPLICATION_ID` in [`src/presence-settings.mjs`](src/presence-settings.mjs) with that snowflake (same value is used as `DEFAULT_SETTINGS.applicationId`).
+3. Application ID is already set to `1545653843239374848` in [`src/presence-settings.mjs`](src/presence-settings.mjs).
 4. Under Rich Presence → Art Assets, upload five 512×512 PNGs with keys: `orca`, `state-working`, `state-blocked`, `state-waiting`, `state-idle`.
 5. Ship a new plugin release. Changing the ID requires a release (v0.1 has no user-facing override; v1.0 will add one with a settings panel).
 
