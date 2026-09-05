@@ -29,6 +29,9 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
       activities.push(null)
     },
     close: async () => {
+      if (client.connected) {
+        activities.push(null)
+      }
       client.connected = false
     }
   }
@@ -111,6 +114,19 @@ test('forceTransmit re-sends an unchanged activity', async () => {
   expect(activities[1] && 'details' in activities[1] ? activities[1].details : null).toBe('repo')
 })
 
+test('skip-identical cannot strand Discord after another client overwrote activity', async () => {
+  const { controller, activities, advance } = harness()
+  const snapshot = { displayName: 'repo', agentState: 'working', terminalCount: 1 }
+  await controller.update(snapshot)
+  await controller.update({ ...snapshot })
+  await advance(MIN_UPDATE_INTERVAL_MS * 2)
+  expect(activities.length).toBe(1)
+  // Heartbeat / Show Status: forceTransmit must republish even though JSON matches.
+  await controller.forceTransmit()
+  expect(activities.length).toBe(2)
+  expect(activities[1] && 'details' in activities[1] ? activities[1].details : null).toBe('repo')
+})
+
 test('an empty snapshot still publishes generic Working in Orca', async () => {
   const { controller, activities } = harness({ detailLevel: 'generic' })
   await controller.update({})
@@ -168,6 +184,36 @@ test('stop clears presence and closes the client', async () => {
   await controller.stop()
   expect(activities.at(-1)).toBeNull()
   expect(client.isConnected()).toBe(false)
+})
+
+test('stop is idempotent and does not double-close', async () => {
+  const { controller, client, activities } = harness()
+  let closes = 0
+  const innerClose = client.close
+  client.close = async () => {
+    closes++
+    await innerClose()
+  }
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.stop()
+  await controller.stop()
+  expect(closes).toBe(1)
+  expect(activities.filter((entry) => entry === null).length).toBeGreaterThanOrEqual(1)
+  expect(client.isConnected()).toBe(false)
+})
+
+test('reload closes IPC and re-SET_ACTIVITY', async () => {
+  const { controller, client, activities } = harness()
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  expect(activities.length).toBe(1)
+  expect(client.isConnected()).toBe(true)
+  await controller.reload()
+  expect(client.isConnected()).toBe(true)
+  expect(activities.filter((entry) => entry === null).length).toBeGreaterThanOrEqual(1)
+  expect(activities.at(-1) && 'details' in (activities.at(-1) as object) ? (activities.at(-1) as { details: string }).details : null).toBe(
+    'repo'
+  )
+  expect(activities.length).toBeGreaterThan(1)
 })
 
 test('prefers local IPC and does not dual-publish when Discord is connected', async () => {

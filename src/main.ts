@@ -13,11 +13,18 @@
  */
 
 import os from 'node:os'
+import { inspectApplicationId } from './discord/app-id'
 import { createDiscordClient } from './discord/client'
 import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
 import { createPresenceController, type PresenceController } from './presence/controller'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
-import { normalizeSettings, nextDetailLevel, toggleField, type PresenceSettings } from './presence/settings'
+import {
+  normalizeSettings,
+  nextDetailLevel,
+  SHIPPED_APPLICATION_ID,
+  toggleField,
+  type PresenceSettings
+} from './presence/settings'
 
 /**
  * Interval for the `workspace.readContext` heartbeat.
@@ -25,23 +32,17 @@ import { normalizeSettings, nextDetailLevel, toggleField, type PresenceSettings 
  * Why: the worker is reaped after `PLUGIN_WORKER_IDLE_REAP_MS` (5 min) of no
  * host calls. This poll both refreshes that clock and catches branch
  * switches, which emit no event.
- *
- * @author Jonathan Marien
  */
 const HEARTBEAT_MS = 90_000
 
 /**
  * Notification / log budget for the `transmitting=` JSON. Discord toasts
  * truncate; keep enough of `details` / `state` to confirm what was sent.
- *
- * @author Jonathan Marien
  */
 const TRANSMITTING_TOAST_MAX = 180
 
 /**
  * Compact `transmitting=…` fragment for **Show Status** (toast + log).
- *
- * @author Jonathan Marien
  */
 export function formatStatusTransmitting(activity: unknown): string {
   const json = JSON.stringify(activity) ?? 'null'
@@ -54,8 +55,6 @@ export function formatStatusTransmitting(activity: unknown): string {
 /**
  * Command palette ids mapped to the boolean {@link PresenceSettings} field
  * each toggle flips. Command titles live in `orca-plugin.json`.
- *
- * @author Jonathan Marien
  */
 const TOGGLE_COMMANDS = {
   'presence.toggle-branch': 'showBranch',
@@ -69,8 +68,6 @@ const TOGGLE_COMMANDS = {
 
 /**
  * Command id keys of {@link TOGGLE_COMMANDS}.
- *
- * @author Jonathan Marien
  */
 type ToggleCommandId = keyof typeof TOGGLE_COMMANDS
 
@@ -81,8 +78,6 @@ type ToggleCommandId = keyof typeof TOGGLE_COMMANDS
  * or an unrecognized future value). `receivedAt` is the host timestamp in
  * milliseconds; the activity builder may convert it to a Discord start
  * timestamp when `showElapsed` is on.
- *
- * @author Jonathan Marien
  */
 type AgentStatusPayload = {
   state: string
@@ -94,8 +89,6 @@ type AgentStatusPayload = {
  *
  * `terminals` is only used for its length. Missing `displayName` / `branch`
  * are treated as absent by the activity builder.
- *
- * @author Jonathan Marien
  */
 type WorkspaceContext = {
   displayName?: string
@@ -106,8 +99,6 @@ type WorkspaceContext = {
 /**
  * Host object Orca injects into `activate`. This is the subset of the
  * plugin worker API this plugin actually calls — not the full host surface.
- *
- * @author Jonathan Marien
  */
 export type OrcaHost = {
   /** Write a line to the plugin log (also used by **Show Status**). */
@@ -135,6 +126,7 @@ export type OrcaHost = {
 let controller: PresenceController | null = null
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
+let deactivated = false
 
 /**
  * Plugin entry. Loads persisted settings, constructs the Discord client and
@@ -143,12 +135,17 @@ let diagnostics: DiagnosticSink | null = null
  * `refresh` is deferred so activate can return before the handshake timeout.
  *
  * @param orca - Host API injected by the Orca plugin worker.
- * @author Jonathan Marien
  */
 export default async function activate(orca: OrcaHost) {
+  deactivated = false
   const stored = (await orca.host.call('settings.get').catch(() => ({ settings: {} }))) as {
     settings?: unknown
   }
+  const rawSettings =
+    stored?.settings && typeof stored.settings === 'object'
+      ? (stored.settings as Record<string, unknown>)
+      : {}
+  const appId = inspectApplicationId(rawSettings.applicationId, SHIPPED_APPLICATION_ID)
   let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env)
 
   const logFile = resolveLogFilePath(process.env, {
@@ -167,11 +164,22 @@ export default async function activate(orca: OrcaHost) {
     file: logFile,
     bridge: settings.bridgeEnabled
   })
+  if (appId.usedFallback) {
+    diagnostics.line('error', 'discord.app_id_invalid', {
+      reason: appId.reason,
+      rejected: appId.rejectedRaw || '(empty)',
+      fallback: SHIPPED_APPLICATION_ID
+    })
+    void orca.host.call('notifications.show', {
+      title: 'Discord Rich Presence',
+      body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ''}. Using shipped id. ${appId.reason ?? ''}`
+    })
+  }
 
   controller = createPresenceController({
     client: createDiscordClient({
       clientId: settings.applicationId,
-      log: (message) => diagnostics?.line('error', 'discord.client', { reason: message })
+      log: (message, level = 'error') => diagnostics?.line(level, 'discord.client', { reason: message })
     }),
     bridge: createBridgeTransport({
       log: (message) => diagnostics?.line('error', 'bridge.transport', { reason: message })
@@ -280,6 +288,25 @@ export default async function activate(orca: OrcaHost) {
     return status
   })
 
+  orca.commands.register('presence.reload', async () => {
+    await refresh()
+    diagnostics?.line('info', 'discord.reload_command')
+    await controller?.reload()
+    const status = controller?.status()
+    const transmitting = formatStatusTransmitting(status?.lastActivity ?? null)
+    const summary = `reloaded connected=${status?.connected} sink=${status?.sink} ${transmitting}`
+    diagnostics?.line('info', 'discord.reload_done', {
+      connected: status?.connected,
+      sink: status?.sink,
+      transmitting: JSON.stringify(status?.lastActivity)
+    })
+    await orca.host.call('notifications.show', {
+      title: 'Discord Rich Presence',
+      body: summary
+    })
+    return status
+  })
+
   orca.events.on('agent.status.changed', async (payload) => {
     await refresh(payload as AgentStatusPayload)
   })
@@ -303,11 +330,14 @@ export default async function activate(orca: OrcaHost) {
 
 /**
  * Plugin shutdown. Stops the heartbeat, clears Discord activity, and
- * closes the IPC socket. Safe to call when activate never finished wiring.
- *
- * @author Jonathan Marien
+ * closes the IPC socket. Idempotent — safe if called twice or when
+ * activate never finished wiring.
  */
 export async function deactivate() {
+  if (deactivated) {
+    return
+  }
+  deactivated = true
   if (heartbeat) {
     clearInterval(heartbeat)
     heartbeat = null

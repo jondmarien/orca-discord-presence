@@ -18,32 +18,24 @@ import type { PresenceSettings } from './settings'
 /**
  * Default companion listen port. Documented in the README; keep in sync
  * with `companion/config.ts` defaults.
- *
- * @author Jonathan Marien
  */
 export const DEFAULT_BRIDGE_PORT = 3848
 
 /**
  * How long the plugin waits for the companion before aborting a publish
  * or clear. Must stay well under the host command budget.
- *
- * @author Jonathan Marien
  */
 const BRIDGE_TIMEOUT_MS = 5_000
 
 /**
  * Reject absurd URLs and tokens so hand-edited settings cannot become
  * multi-kilobyte headers.
- *
- * @author Jonathan Marien
  */
 const MAX_BRIDGE_URL_LENGTH = 512
 const MAX_BRIDGE_TOKEN_LENGTH = 256
 
 /**
  * Env keys shared by the plugin overlay and the companion process.
- *
- * @author Jonathan Marien
  */
 export const BRIDGE_ENV = {
   ENABLED: 'ORCA_PRESENCE_BRIDGE_ENABLED',
@@ -56,8 +48,6 @@ export const BRIDGE_ENV = {
 
 /**
  * Transport the presence controller uses to talk to a companion.
- *
- * @author Jonathan Marien
  */
 export type PresenceBridge = {
   publish: (url: string, token: string, activity: DiscordActivity) => Promise<void>
@@ -66,8 +56,6 @@ export type PresenceBridge = {
 
 /**
  * Resolved companion target, or `null` when the bridge must stay silent.
- *
- * @author Jonathan Marien
  */
 export type BridgeTarget = {
   url: string
@@ -82,7 +70,6 @@ export type BridgeTarget = {
  * a token.
  *
  * @param host - Hostname, IPv4, or IPv6 (brackets optional).
- * @author Jonathan Marien
  */
 export function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, '')
@@ -104,8 +91,6 @@ export function isLoopbackHost(host: string): boolean {
  * Rejects credentials-in-URL (token belongs in the bearer header),
  * non-http(s) schemes, and a trailing `/activity` so operators can paste
  * either the listen URL or a full activity path.
- *
- * @author Jonathan Marien
  */
 export function normalizeBridgeUrl(raw: unknown): string {
   if (typeof raw !== 'string') {
@@ -136,8 +121,6 @@ export function normalizeBridgeUrl(raw: unknown): string {
 
 /**
  * Trim and cap a shared bearer token; non-strings become `''`.
- *
- * @author Jonathan Marien
  */
 export function normalizeBridgeToken(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim().slice(0, MAX_BRIDGE_TOKEN_LENGTH) : ''
@@ -145,8 +128,6 @@ export function normalizeBridgeToken(raw: unknown): string {
 
 /**
  * Whether this URL may be called without a token (loopback only).
- *
- * @author Jonathan Marien
  */
 export function bridgeUrlAllowsEmptyToken(url: string): boolean {
   try {
@@ -163,8 +144,6 @@ export function bridgeUrlAllowsEmptyToken(url: string): boolean {
  * - `bridgeEnabled` must be true and `bridgeUrl` must normalize to http(s).
  * - A non-loopback URL **requires** a token (same rule as the companion
  *   listen config). Loopback may omit it.
- *
- * @author Jonathan Marien
  */
 export function resolveBridgeTarget(settings: PresenceSettings): BridgeTarget | null {
   if (!settings.bridgeEnabled) {
@@ -187,8 +166,6 @@ export function resolveBridgeTarget(settings: PresenceSettings): BridgeTarget | 
  * Host-persisted values still win when the env key is absent. An explicit
  * `ORCA_PRESENCE_BRIDGE_ENABLED=0` turns the bridge off even if storage
  * had it on — useful for a one-off disable without editing settings.
- *
- * @author Jonathan Marien
  */
 export function applyBridgeEnvOverrides(
   settings: PresenceSettings,
@@ -254,8 +231,6 @@ async function bridgeRequest(
  *
  * `fetch` is injectable so unit tests can stand up a fake HTTP server
  * (or a stub). Production uses global `fetch` (Node 18+ / Electron).
- *
- * @author Jonathan Marien
  */
 export function createBridgeTransport({
   fetch: fetchFn = fetch,

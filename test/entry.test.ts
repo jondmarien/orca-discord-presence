@@ -75,7 +75,8 @@ test('activate registers commands and events; deactivate is safe to call', async
     'presence.toggle-elapsed',
     'presence.toggle-bridge',
     'presence.debug-logging',
-    'presence.status'
+    'presence.status',
+    'presence.reload'
   ])
   expect(events).toEqual(['agent.status.changed', 'worktree.created', 'worktree.removed'])
   expect(hostLines.some((line) => line.includes('activate') && line.includes('chron0.discord-presence'))).toBe(
@@ -85,6 +86,53 @@ test('activate registers commands and events; deactivate is safe to call', async
   expect(onDisk.includes('activate')).toBe(true)
   await handlers.get('presence.status')?.()
   expect(notifications.some((body) => body.includes('transmitting='))).toBe(true)
+  await handlers.get('presence.reload')?.()
+  expect(hostLines.some((line) => line.includes('discord.reload'))).toBe(true)
+  expect(notifications.some((body) => body.includes('reloaded'))).toBe(true)
+  await deactivate()
+  await deactivate()
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('an invalid persisted Application ID is logged and toasted', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-appid-'))
+  const logFile = join(dir, 'plugin.log')
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  process.env.ORCA_PRESENCE_LOG_FILE = logFile
+  const { default: activate, deactivate } = await import('../src/main')
+  const hostLines: string[] = []
+  const notifications: string[] = []
+  const orca: OrcaHost = {
+    log: (message) => {
+      hostLines.push(message)
+    },
+    commands: { register: () => {} },
+    events: { on: () => {} },
+    host: {
+      call: async (method, args) => {
+        if (method === 'settings.get') {
+          return { settings: { applicationId: 'not-a-snowflake' } }
+        }
+        if (method === 'notifications.show') {
+          notifications.push(String(args?.body ?? ''))
+          return null
+        }
+        return null
+      }
+    }
+  }
+  await activate(orca)
+  expect(hostLines.some((line) => line.includes('discord.app_id_invalid'))).toBe(true)
+  expect(hostLines.some((line) => /token=/i.test(line) && !line.includes('token=***'))).toBe(false)
+  expect(notifications.some((body) => /invalid discord application id/i.test(body))).toBe(true)
+  const onDisk = readFileSync(logFile, 'utf8')
+  expect(onDisk.includes('discord.app_id_invalid')).toBe(true)
+  expect(onDisk.includes('not-a-snowflake')).toBe(true)
   await deactivate()
   if (previous === undefined) {
     delete process.env.ORCA_PRESENCE_LOG_FILE
@@ -110,6 +158,8 @@ test('shipped dist entry is Node-compatible ESM with the same exports', async ()
   expect(shipped.includes('Bun.file')).toBe(false)
   expect(shipped.includes('Bun.spawn')).toBe(false)
   expect(shipped.includes('from "node:net"') || shipped.includes("from 'node:net'")).toBe(true)
+  expect(shipped.includes('presence.reload')).toBe(true)
+  expect(shipped.includes('discord.app_id_invalid')).toBe(true)
   const entry = new URL('../dist/main.js', import.meta.url).href
   const mod = (await import(entry)) as { default: unknown; deactivate: unknown }
   expect(typeof mod.default).toBe('function')

@@ -17,16 +17,12 @@ import type { CompanionConfig } from './config'
 
 /**
  * Maximum JSON body accepted on `POST /activity`.
- *
- * @author Jonathan Marien
  */
 const MAX_BODY_BYTES = 64 * 1024
 
 /**
  * Discord surface the companion needs. Matches {@link DiscordClient} so
  * tests can inject a fake without opening named pipes.
- *
- * @author Jonathan Marien
  */
 export type CompanionDiscordClient = {
   connect: () => Promise<void>
@@ -38,8 +34,6 @@ export type CompanionDiscordClient = {
 
 /**
  * Construction options for {@link startCompanionServer}.
- *
- * @author Jonathan Marien
  */
 export type CompanionServerOptions = {
   config: CompanionConfig
@@ -52,8 +46,6 @@ export type CompanionServerOptions = {
 
 /**
  * Handle returned after the HTTP server is listening.
- *
- * @author Jonathan Marien
  */
 export type CompanionServer = {
   url: string
@@ -63,8 +55,6 @@ export type CompanionServer = {
 
 /**
  * Constant-time string compare that does not early-return on length.
- *
- * @author Jonathan Marien
  */
 export function tokensEqual(expected: string, provided: string): boolean {
   const expectedBuf = Buffer.from(expected)
@@ -145,8 +135,6 @@ function isActivityObject(value: unknown): value is object {
 
 /**
  * Start the companion HTTP listener.
- *
- * @author Jonathan Marien
  */
 export async function startCompanionServer({
   config,

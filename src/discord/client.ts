@@ -3,8 +3,11 @@
  *
  * Talks to the local Discord **desktop** client only. Browser Discord has
  * no IPC socket. Handshake and command replies each time out after 5s.
+ * Retryable handshake failures (READY with null data, handshake timeout)
+ * retry up to 3 times with 3s → 15s capped exponential backoff. Missing
+ * sockets fail immediately so the companion bridge can fail over.
  * PING frames are answered with PONG; CLOSE or socket errors tear down and
- * invoke `onClose` once.
+ * invoke `onClose` once. `close()` is idempotent and clears activity first.
  *
  * @module discord/client
  * @author Jonathan Marien
@@ -14,26 +17,28 @@
 import { randomUUID } from 'node:crypto'
 import net from 'node:net'
 import os from 'node:os'
+import { assertPlausibleApplicationId } from './app-id'
 import { createFrameDecoder, discordIpcCandidates, encodeFrame, OPCODE } from './ipc'
+import {
+  CONNECT_RETRY_ATTEMPTS,
+  CONNECT_RETRY_INITIAL_MS,
+  CONNECT_RETRY_MAX_MS,
+  HandshakeNotReadyError,
+  isRetryableConnectError
+} from './retry'
 
 /**
  * How long to wait for a `READY` dispatch after sending the handshake.
- *
- * @author Jonathan Marien
  */
 const HANDSHAKE_TIMEOUT_MS = 5_000
 
 /**
  * How long to wait for a SET_ACTIVITY (or other RPC) reply nonce.
- *
- * @author Jonathan Marien
  */
 const COMMAND_TIMEOUT_MS = 5_000
 
 /**
  * Minimal Discord RPC JSON body this client inspects on inbound frames.
- *
- * @author Jonathan Marien
  */
 type RpcMessage = {
   evt?: string
@@ -43,9 +48,15 @@ type RpcMessage = {
 }
 
 /**
+ * Discord's READY dispatch is usable only when `data` is a non-null object.
+ * A null `data` means the pipe opened before the client finished auth.
+ */
+function isHandshakeReadyPayload(payload: RpcMessage | null): boolean {
+  return payload?.evt === 'READY' && payload.data != null && typeof payload.data === 'object'
+}
+
+/**
  * In-flight RPC command waiting on a matching `nonce`.
- *
- * @author Jonathan Marien
  */
 type PendingCommand = {
   resolve: (value: unknown) => void
@@ -54,9 +65,12 @@ type PendingCommand = {
 }
 
 /**
+ * Diagnostic severity for {@link DiscordClientOptions.log}.
+ */
+export type DiscordClientLogLevel = 'info' | 'warn' | 'error'
+
+/**
  * Construction options for {@link createDiscordClient}.
- *
- * @author Jonathan Marien
  */
 export type DiscordClientOptions = {
   /** Discord Application ID sent in the handshake `client_id`. */
@@ -68,14 +82,31 @@ export type DiscordClientOptions = {
   candidates?: () => string[]
   /** Called once when the socket closes or handshake/frame errors tear down. */
   onClose?: () => void
-  /** Optional diagnostic logger (frame errors, socket errors, peer CLOSE). */
-  log?: (message: string) => void
+  /**
+   * Optional diagnostic logger (frame errors, socket errors, peer CLOSE,
+   * connect retries). The optional second argument is a level; default error.
+   */
+  log?: (message: string, level?: DiscordClientLogLevel) => void
+  /**
+   * Handshake `READY` wait per attempt. Tests inject a short value.
+   * Defaults to {@link HANDSHAKE_TIMEOUT_MS}.
+   */
+  handshakeTimeoutMs?: number
+  /**
+   * Retryable-handshake attempts (default 3). Missing-socket failures
+   * still fail on the first try so the companion bridge can fail over.
+   */
+  connectAttempts?: number
+  /** Override {@link CONNECT_RETRY_INITIAL_MS} (tests). */
+  retryInitialMs?: number
+  /** Override {@link CONNECT_RETRY_MAX_MS} (tests). */
+  retryMaxMs?: number
+  /** Sleep between retries. Defaults to `setTimeout`. Tests inject a no-op. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 /**
  * Stateful Discord IPC client used by the presence controller.
- *
- * @author Jonathan Marien
  */
 export type DiscordClient = {
   /** Connect to the first accepting IPC socket and complete the handshake. */
@@ -145,19 +176,28 @@ function defaultCandidates(): string[] {
  *
  * @param options - Application id, optional path override, close/log hooks.
  * @returns A {@link DiscordClient} bound to those options.
- * @author Jonathan Marien
  */
 export function createDiscordClient({
   clientId,
   candidates = defaultCandidates,
   onClose = () => {},
-  log = () => {}
+  log = () => {},
+  handshakeTimeoutMs = HANDSHAKE_TIMEOUT_MS,
+  connectAttempts = CONNECT_RETRY_ATTEMPTS,
+  retryInitialMs = CONNECT_RETRY_INITIAL_MS,
+  retryMaxMs = CONNECT_RETRY_MAX_MS,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 }: DiscordClientOptions): DiscordClient {
   let socket: net.Socket | null = null
   let connected = false
   let closeNotified = false
+  let closed = false
   const pending = new Map<string, PendingCommand>()
-  let onReady: (() => void) | null = null
+  let handshakeWait: {
+    resolve: () => void
+    reject: (error: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  } | null = null
 
   function teardown() {
     connected = false
@@ -177,6 +217,16 @@ export function createDiscordClient({
     }
   }
 
+  function failHandshake(error: Error) {
+    const wait = handshakeWait
+    handshakeWait = null
+    if (wait) {
+      clearTimeout(wait.timer)
+    }
+    teardown()
+    wait?.reject(error)
+  }
+
   function handleFrame(opcode: number, data: unknown) {
     if (opcode === OPCODE.PING) {
       socket?.write(encodeFrame(OPCODE.PONG, data))
@@ -184,7 +234,12 @@ export function createDiscordClient({
     }
     const payload = data as RpcMessage | null
     if (opcode === OPCODE.CLOSE) {
-      log(`discord closed the connection: ${payload?.message ?? 'no reason given'}`)
+      const reason = payload?.message ?? 'no reason given'
+      log(`discord closed the connection: ${reason}`)
+      if (handshakeWait) {
+        failHandshake(new Error(`discord closed the connection: ${reason}`))
+        return
+      }
       teardown()
       return
     }
@@ -192,7 +247,22 @@ export function createDiscordClient({
       return
     }
     if (payload?.evt === 'READY') {
-      onReady?.()
+      if (!isHandshakeReadyPayload(payload)) {
+        log('handshake not ready (READY data was null)', 'warn')
+        failHandshake(new HandshakeNotReadyError())
+        return
+      }
+      const wait = handshakeWait
+      handshakeWait = null
+      if (wait) {
+        clearTimeout(wait.timer)
+        connected = true
+        wait.resolve()
+      }
+      return
+    }
+    if (payload?.evt === 'ERROR' && handshakeWait) {
+      failHandshake(new Error(payload.data?.message ?? 'discord rejected the handshake'))
       return
     }
     const entry = payload?.nonce ? pending.get(payload.nonce) : undefined
@@ -208,37 +278,77 @@ export function createDiscordClient({
     }
   }
 
-  async function connect() {
-    if (connected) {
-      return
-    }
+  async function connectOnce() {
     closeNotified = false
+    closed = false
     socket = await connectToFirstAvailable(candidates())
     const decoder = createFrameDecoder(handleFrame, (error) => {
       const message = error instanceof Error ? error.message : String(error)
       log(`discord frame error: ${message}`)
+      if (handshakeWait) {
+        failHandshake(new Error(message))
+        return
+      }
       teardown()
     })
     socket.on('data', (chunk) => decoder.push(chunk))
-    socket.on('close', teardown)
+    socket.on('close', () => {
+      if (handshakeWait) {
+        failHandshake(new Error('discord connection closed'))
+        return
+      }
+      teardown()
+    })
     socket.on('error', (error) => {
       log(`discord socket error: ${error.message}`)
+      if (handshakeWait) {
+        failHandshake(error)
+        return
+      }
       teardown()
     })
 
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        teardown()
-        reject(new Error('discord handshake timed out'))
-      }, HANDSHAKE_TIMEOUT_MS)
-      onReady = () => {
-        clearTimeout(timer)
-        onReady = null
-        connected = true
-        resolve()
+      handshakeWait = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          failHandshake(new Error('discord handshake timed out'))
+        }, handshakeTimeoutMs)
       }
       socket?.write(encodeFrame(OPCODE.HANDSHAKE, { v: 1, client_id: clientId }))
     })
+  }
+
+  async function connect() {
+    if (connected) {
+      return
+    }
+    assertPlausibleApplicationId(clientId)
+    let lastError: Error | undefined
+    const attempts = Math.max(1, connectAttempts)
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await connectOnce()
+        if (attempt > 1) {
+          log(`connect succeeded on attempt ${attempt}/${attempts}`, 'info')
+        }
+        return
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        if (!isRetryableConnectError(lastError) || attempt >= attempts) {
+          log(`connect failed: ${lastError.message}`, 'error')
+          throw lastError
+        }
+        const delay = Math.min(retryInitialMs * 2 ** (attempt - 1), retryMaxMs)
+        log(
+          `connect attempt ${attempt}/${attempts} failed: ${lastError.message}; retrying in ${delay}ms`,
+          'warn'
+        )
+        await sleep(delay)
+      }
+    }
+    throw lastError ?? new Error('discord connect failed')
   }
 
   function command(cmd: string, args: object) {
@@ -262,6 +372,10 @@ export function createDiscordClient({
     setActivity: (activity) => command('SET_ACTIVITY', { pid: process.pid, activity }),
     clearActivity: () => command('SET_ACTIVITY', { pid: process.pid, activity: null }),
     async close() {
+      if (closed) {
+        return
+      }
+      closed = true
       if (socket && connected) {
         try {
           await command('SET_ACTIVITY', { pid: process.pid, activity: null })

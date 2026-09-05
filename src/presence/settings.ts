@@ -12,6 +12,7 @@
  * @date 2026-09-05
  */
 
+import { inspectApplicationId } from '../discord/app-id'
 import { normalizeBridgeToken, normalizeBridgeUrl } from './bridge'
 
 /**
@@ -23,23 +24,17 @@ import { normalizeBridgeToken, normalizeBridgeUrl } from './bridge'
  * | `generic` | Non-identifying copy + optional agent / terminals / elapsed |
  * | `workspace` | Workspace display name; still no branch |
  * | `full` | Workspace + optional branch, machine, etc. |
- *
- * @author Jonathan Marien
  */
 export const DETAIL_LEVELS = ['off', 'generic', 'workspace', 'full'] as const
 
 /**
  * One of {@link DETAIL_LEVELS}.
- *
- * @author Jonathan Marien
  */
 export type DetailLevel = (typeof DETAIL_LEVELS)[number]
 
 /**
  * Persisted plugin settings. Every identifying field is opt-in except the
  * non-identifying defaults (`enabled`, `generic` detail, agent state, elapsed).
- *
- * @author Jonathan Marien
  */
 export type PresenceSettings = {
   /** Master switch. When false, activity is cleared regardless of detail. */
@@ -93,8 +88,6 @@ export type PresenceSettings = {
 
 /**
  * Boolean keys of {@link PresenceSettings} (the fields {@link toggleField} flips).
- *
- * @author Jonathan Marien
  */
 type BooleanSetting = {
   [K in keyof PresenceSettings]: PresenceSettings[K] extends boolean ? K : never
@@ -105,8 +98,6 @@ type BooleanSetting = {
  * payload. The Discord Developer Portal already has this application and the
  * five Rich Presence assets uploaded (`orca`, `state-working`,
  * `state-blocked`, `state-waiting`, `state-idle`).
- *
- * @author Jonathan Marien
  */
 export const SHIPPED_APPLICATION_ID = '1545653843239374848'
 
@@ -114,8 +105,6 @@ export const SHIPPED_APPLICATION_ID = '1545653843239374848'
  * Privacy-first defaults applied to every missing or invalid field.
  *
  * `detailLevel: 'generic'` never transmits a repo, branch, or machine name.
- *
- * @author Jonathan Marien
  */
 export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   enabled: true,
@@ -139,11 +128,6 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
 const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(
   (key): key is BooleanSetting => typeof DEFAULT_SETTINGS[key] === 'boolean'
 )
-
-/**
- * Discord snowflakes are 17–20 digits today; accept that range and nothing else.
- */
-const APPLICATION_ID_RE = /^\d{17,20}$/
 
 function isDetailLevel(value: unknown): value is DetailLevel {
   return typeof value === 'string' && (DETAIL_LEVELS as readonly string[]).includes(value)
@@ -169,7 +153,6 @@ function normalizeLabel(value: unknown): string | null {
  *
  * @param raw - Value from `settings.get` (or `{}` / `undefined`).
  * @returns A fully populated settings object.
- * @author Jonathan Marien
  */
 export function normalizeSettings(raw: unknown): PresenceSettings {
   const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
@@ -184,17 +167,12 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
   }
   // Why: absent or malformed overrides fall back to the shipped id — never to
   // null, which would leave the plugin permanently unable to connect.
-  // The shipped placeholder is also accepted so persisted defaults round-trip.
-  if (typeof source.applicationId === 'string') {
-    const trimmed = source.applicationId.trim()
-    if (APPLICATION_ID_RE.test(trimmed) || trimmed === SHIPPED_APPLICATION_ID) {
-      settings.applicationId = trimmed
-    } else {
-      settings.applicationId = DEFAULT_SETTINGS.applicationId
-    }
-  } else {
-    settings.applicationId = DEFAULT_SETTINGS.applicationId
-  }
+  // The shipped snowflake is always accepted. Junk ids are rejected here;
+  // activate() logs / optionally toasts when inspectApplicationId used a fallback.
+  settings.applicationId = inspectApplicationId(
+    source.applicationId,
+    SHIPPED_APPLICATION_ID
+  ).applicationId
   settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel
   settings.bridgeUrl = normalizeBridgeUrl(source.bridgeUrl)
   settings.bridgeToken = normalizeBridgeToken(source.bridgeToken)
@@ -208,7 +186,6 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
  *
  * @param current - Current level string (typically already normalized).
  * @returns The next {@link DetailLevel}.
- * @author Jonathan Marien
  */
 export function nextDetailLevel(current: string): DetailLevel {
   const index = (DETAIL_LEVELS as readonly string[]).indexOf(current)
@@ -222,7 +199,6 @@ export function nextDetailLevel(current: string): DetailLevel {
  * @param settings - Current settings.
  * @param field - A boolean key of {@link PresenceSettings}.
  * @returns A shallow copy with that field inverted, or `settings` unchanged.
- * @author Jonathan Marien
  */
 export function toggleField(settings: PresenceSettings, field: string): PresenceSettings {
   if (!BOOLEAN_FIELDS.includes(field as BooleanSetting)) {

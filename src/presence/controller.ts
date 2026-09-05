@@ -22,8 +22,6 @@ import type { PresenceSettings } from './settings'
  * Last successful publish path. `null` after a clear or before the first
  * successful write. Local IPC wins when connected; the HTTP bridge is the
  * fallback when Discord is not running on the Orca host.
- *
- * @author Jonathan Marien
  */
 export type PresenceSink = 'local' | 'bridge'
 
@@ -33,15 +31,11 @@ export type PresenceSink = 'local' | 'bridge'
  * The first update after a quiet period transmits immediately. Later
  * updates inside the window coalesce to a single deferred write of the
  * newest snapshot.
- *
- * @author Jonathan Marien
  */
 export const MIN_UPDATE_INTERVAL_MS = 15_000
 
 /**
  * Discord client surface the controller depends on (real or test fake).
- *
- * @author Jonathan Marien
  */
 export type PresenceClient = {
   connect: () => Promise<void>
@@ -56,8 +50,6 @@ export type PresenceClient = {
  *
  * Timer and clock hooks are injectable so unit tests can advance time
  * without real `setTimeout`.
- *
- * @author Jonathan Marien
  */
 export type PresenceControllerOptions = {
   client: PresenceClient
@@ -88,8 +80,6 @@ export type PresenceControllerOptions = {
  * `enabled` is true only when the master switch is on **and**
  * `detailLevel !== 'off'`. `lastActivity` is the last payload successfully
  * sent to Discord (or `null` after a clear).
- *
- * @author Jonathan Marien
  */
 export type PresenceStatus = {
   enabled: boolean
@@ -107,8 +97,6 @@ export type PresenceStatus = {
 
 /**
  * Stateful presence coordinator used by the plugin worker.
- *
- * @author Jonathan Marien
  */
 export type PresenceController = {
   /** Merge a partial snapshot and schedule or skip a Discord write. */
@@ -126,11 +114,19 @@ export type PresenceController = {
    * this so a later client does not leave a stale “already sent” skip.
    */
   forceTransmit: () => Promise<void>
+  /**
+   * Close the IPC socket (clears activity first), reconnect, and
+   * re-`SET_ACTIVITY`. Palette: **Discord Presence: Reload RPC**.
+   */
+  reload: () => Promise<void>
   /** Current settings object (same reference the controller holds). */
   settings: () => PresenceSettings
   /** Connection + last transmitted activity + log path for the status command. */
   status: () => PresenceStatus
-  /** Cancel a pending timer, clear activity, close the client. */
+  /**
+   * Cancel a pending timer, clear activity, close the client.
+   * Idempotent — a second call is a no-op.
+   */
   stop: () => Promise<void>
 }
 
@@ -139,7 +135,6 @@ export type PresenceController = {
  *
  * @param options - Client, initial settings, optional clock/timer/log.
  * @returns A {@link PresenceController}.
- * @author Jonathan Marien
  */
 export function createPresenceController({
   client,
@@ -161,6 +156,7 @@ export function createPresenceController({
   let lastSink: PresenceSink | null = null
   let lastBridgeUrl: string | null = null
   let lastBridgeToken: string | null = null
+  let stopped = false
 
   function emit(
     level: 'debug' | 'info' | 'warn' | 'error',
@@ -379,6 +375,27 @@ export function createPresenceController({
       emit('info', 'discord.force_transmit')
       await transmit(true)
     },
+    async reload() {
+      if (pendingTimer) {
+        clearTimer(pendingTimer)
+        pendingTimer = null
+      }
+      lastSentSerialized = null
+      stopped = false
+      emit('info', 'discord.reload')
+      try {
+        await client.close()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        emit('error', 'discord.reload_close_failed', { reason: message })
+      }
+      await transmit(true)
+      if (!client.isConnected() && lastSink !== 'bridge') {
+        emit('error', 'discord.reload_failed', {
+          reason: 'reconnect did not complete; see discord.connect_failed'
+        })
+      }
+    },
     settings: () => currentSettings,
     status: () => ({
       enabled: currentSettings.enabled && currentSettings.detailLevel !== 'off',
@@ -390,6 +407,10 @@ export function createPresenceController({
       logFile: diagnostics?.filePath ?? null
     }),
     async stop() {
+      if (stopped) {
+        return
+      }
+      stopped = true
       if (pendingTimer) {
         clearTimer(pendingTimer)
         pendingTimer = null
