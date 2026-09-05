@@ -1,9 +1,10 @@
 /**
- * Windows Discord presence companion entry.
+ * Discord presence companion entry (Linux, macOS, or Windows).
  *
  * Listens for privacy-gated activity from the Orca host plugin and writes
- * `SET_ACTIVITY` to the local Discord / Vencord IPC socket. Intended to run
- * on the machine where Discord is signed in (typically Windows).
+ * `SET_ACTIVITY` to the local Discord / Vesktop / Vencord IPC socket on
+ * whichever OS this process runs. Shared path discovery covers win32 pipes
+ * and POSIX sockets (including Vesktop Flatpak).
  *
  * @module companion/main
  * @author Jonathan Marien

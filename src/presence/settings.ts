@@ -68,7 +68,7 @@ export type PresenceSettings = {
   /** Include a Discord elapsed-timer start timestamp. */
   showElapsed: boolean
   /**
-   * Opt-in HTTP bridge to a Windows (or other) companion. Default **off**.
+   * Opt-in HTTP bridge to a Discord-IPC companion on any OS. Default **off**.
    * When on, the controller may POST the privacy-gated activity if local
    * Discord IPC is unavailable (`src/presence/bridge.ts`).
    */
@@ -83,6 +83,12 @@ export type PresenceSettings = {
    * not loopback. Never logged.
    */
   bridgeToken: string
+  /**
+   * Structured `orca.log` + on-disk plugin log. Default **on** so connect
+   * / SET_ACTIVITY / bridge lines are findable without hunting the UI.
+   * Connect failures are always logged even when this is off.
+   */
+  debugLogging: boolean
 }
 
 /**
@@ -125,7 +131,9 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   // Cross-machine HTTP is off until the operator opts in.
   bridgeEnabled: false,
   bridgeUrl: '',
-  bridgeToken: ''
+  bridgeToken: '',
+  // Default on for this debug-friendly release; toggle off via command.
+  debugLogging: true
 })
 
 const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(

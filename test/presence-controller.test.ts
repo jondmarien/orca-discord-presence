@@ -14,6 +14,7 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
   let now = 1_000_000
   const activities: Array<DiscordActivity | null> = []
   const bridged: Array<DiscordActivity | 'clear'> = []
+  const logs: string[] = []
   const timers: FakeTimer[] = []
   const client: PresenceClient & { connected: boolean } = {
     connected: false,
@@ -54,7 +55,9 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
         ;(timer as FakeTimer).cancelled = true
       }
     },
-    log: () => {}
+    log: (message) => {
+      logs.push(message)
+    }
   })
   const advance = async (ms: number) => {
     now += ms
@@ -65,7 +68,7 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
       }
     }
   }
-  return { controller, client, activities, bridged, advance, nowRef: () => now }
+  return { controller, client, activities, bridged, logs, advance, nowRef: () => now }
 }
 
 test('the first update writes through immediately', async () => {
@@ -115,7 +118,7 @@ test('detail level off clears the presence like disabling does', async () => {
 })
 
 test('a connect failure is swallowed and retried on the next update', async () => {
-  const { controller, client, activities } = harness()
+  const { controller, client, activities, logs } = harness()
   let attempts = 0
   client.connect = async () => {
     attempts++
@@ -126,6 +129,7 @@ test('a connect failure is swallowed and retried on the next update', async () =
   }
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
   expect(activities.length).toBe(0)
+  expect(logs.some((line) => line.includes('discord.connect_failed'))).toBe(true)
   await controller.update({ displayName: 'repo', agentState: 'blocked', terminalCount: 1 })
   expect(activities.length).toBe(1)
 })

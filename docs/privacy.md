@@ -16,6 +16,7 @@ From `DEFAULT_SETTINGS` in [`src/presence/settings.ts`](../src/presence/settings
 - Agent state and elapsed timer **on**.
 - Application id is the shipped public snowflake `1545653843239374848`.
 - Companion bridge **off** (`bridgeEnabled: false`, empty URL/token).
+- `debugLogging` **on** (local `orca.log` + state-dir file; not sent to Discord).
 
 `generic` never includes a workspace display name, git branch, or machine name — even if `showBranch` or `showMachine` were flipped on. Those toggles only take effect at higher detail levels (machine also requires detail ≠ `generic`; branch requires `full`).
 
@@ -80,7 +81,7 @@ Only these Orca states have labels. Anything else becomes idle so a future or ma
 - `bridgeToken` is trimmed and capped at 256 characters.
 - A non-loopback `bridgeUrl` without a token is not used (`resolveBridgeTarget` returns `null`).
 
-Commands persist the full normalized object via `settings.set` (one key per field). There is no settings panel in v0.2.
+Commands persist the full normalized object via `settings.set` (one key per field). There is no settings panel in v0.3.
 
 ## Capabilities
 
@@ -90,5 +91,6 @@ The consent dialog lists `workspace:read`, `events:subscribe`, `storage`, `setti
 
 - Leave detail at `generic` on shared or client-named workspaces unless you intend to publish the name.
 - Treat repository / branch names as client-identifying once `full` + `showBranch` is on.
-- **Show Status** prints the last transmitted activity JSON in the plugin log — use that to audit what is public.
-- Leave `bridgeEnabled` off unless you intend to send that same JSON to a companion you control. Prefer Tailscale over a raw LAN bind.
+- **Show Status** prints the last transmitted activity JSON in the plugin log and the on-disk file — use that to audit what is public.
+- Leave `bridgeEnabled` off unless you intend to send that same JSON to a companion you control (any OS). Prefer Tailscale or an SSH tunnel over a raw LAN bind.
+- The debug file is local-only. Turn `debugLogging` off if you do not want activity JSON on disk. The bridge token is never written.

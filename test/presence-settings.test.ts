@@ -19,6 +19,7 @@ test('defaults are privacy-preserving', () => {
   expect(DEFAULT_SETTINGS.bridgeEnabled).toBe(false)
   expect(DEFAULT_SETTINGS.bridgeUrl).toBe('')
   expect(DEFAULT_SETTINGS.bridgeToken).toBe('')
+  expect(DEFAULT_SETTINGS.debugLogging).toBe(true)
 })
 
 test('normalize fills gaps and drops unknown keys', () => {
@@ -91,4 +92,8 @@ test('normalize rejects non-http bridge urls and credentials-in-url', () => {
 test('toggleField flips bridgeEnabled', () => {
   const next = toggleField({ ...DEFAULT_SETTINGS }, 'bridgeEnabled')
   expect(next.bridgeEnabled).toBe(true)
+})
+
+test('toggleField flips debugLogging', () => {
+  expect(toggleField({ ...DEFAULT_SETTINGS }, 'debugLogging').debugLogging).toBe(false)
 })

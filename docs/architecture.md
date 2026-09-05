@@ -13,16 +13,17 @@ Orca starts a trusted plugin worker and calls `export default function activate(
 
 The worker is **idle-reaped after 5 minutes** of no host calls. An open Discord socket does not count as activity. A 90 s `workspace.readContext` heartbeat (`HEARTBEAT_MS` in `src/main.ts`) both keeps the worker alive and picks up branch changes, which emit no event.
 
-Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`) also wake a sleeping worker. Dynamic-only subscriptions would not.
+Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`) also wake a sleeping worker. Dynamic-only subscriptions would not. There is **no** focused-window or active-tab event in the host API this plugin uses.
 
 ## Module map
 
 ```
 activate (src/main.ts)
   ├─ normalizeSettings(settings.get) + applyBridgeEnvOverrides
+  ├─ createDiagnosticSink (orca.log + state-dir file)
   ├─ createDiscordClient({ clientId: applicationId })
   ├─ createBridgeTransport()
-  ├─ createPresenceController({ client, bridge, settings })
+  ├─ createPresenceController({ client, bridge, settings, diagnostics })
   ├─ commands → persist (settings.set) → controller.setSettings → refresh
   ├─ events / heartbeat → workspace.readContext + os.hostname → controller.update
   └─ deactivate → controller.stop → clear local + remote + close socket
@@ -37,7 +38,8 @@ activate (src/main.ts)
 | [`src/presence/activity.ts`](../src/presence/activity.ts) | **Privacy boundary.** Snapshot + settings → activity or `null`. |
 | [`src/presence/controller.ts`](../src/presence/controller.ts) | Snapshot merge, 15 s debounce, reconnect, **local-then-bridge** publish. |
 | [`src/presence/bridge.ts`](../src/presence/bridge.ts) | Companion URL/token hygiene + `POST`/`DELETE /activity`. |
-| [`companion/`](../companion/) | Windows (or any OS) HTTP listener → same Discord IPC client. |
+| [`src/presence/log.ts`](../src/presence/log.ts) | Structured `orca.log` + capped state-dir file. |
+| [`companion/`](../companion/) | OS-agnostic HTTP listener → same Discord IPC client (Linux/macOS/Windows). |
 
 Tests live under `test/` and use Bun’s test runner. Client tests stand up a fake IPC server; controller tests inject a fake clock and client.
 
@@ -99,4 +101,5 @@ Text fields are clamped to 128 characters. See [privacy.md](privacy.md) for whic
 - **Authoring / CI:** Bun (`bun install`, `bun test`, `bun run typecheck`, `bun run build`).
 - **Runtime:** Node/Electron plugin worker. `dist/main.js` must stay free of `Bun.file` / `Bun.spawn`.
 - **Identity:** `orca-plugin.json` `publisher` + `id` → `chron0.discord-presence`. Do not rename.
-- **Companion:** `bun run companion` / `bun run start` in `companion/`. Optional `bun build companion/main.ts --compile`. Zero extra production dependencies; Node `http` + shared IPC modules.
+- **Companion:** `bun run companion` / `bun run start` in `companion/`. Runs on Linux, macOS, or Windows. Optional `bun build companion/main.ts --compile`. Zero extra production dependencies; Node `http` + shared IPC modules.
+- **Focus:** the worker does not subscribe to UI focus/tab events (none are exposed). Snapshot sources are `agent.status.changed` and `workspace.readContext` only.

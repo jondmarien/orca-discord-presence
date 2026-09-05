@@ -15,6 +15,7 @@
 
 import { buildActivity, type DiscordActivity, type PresenceSnapshot } from './activity'
 import { resolveBridgeTarget, type PresenceBridge } from './bridge'
+import { formatLogLine, type DiagnosticSink } from './log'
 import type { PresenceSettings } from './settings'
 
 /**
@@ -74,6 +75,11 @@ export type PresenceControllerOptions = {
   clearTimer?: (timer: unknown) => void
   /** Diagnostic logger for connect / set / clear failures. */
   log?: (message: string) => void
+  /**
+   * Structured sink (`orca.log` + file). When omitted, {@link log} receives
+   * {@link formatLogLine} strings so existing tests stay a no-op.
+   */
+  diagnostics?: Pick<DiagnosticSink, 'line'> & { filePath?: string }
 }
 
 /**
@@ -95,6 +101,8 @@ export type PresenceStatus = {
   sink: PresenceSink | null
   detailLevel: PresenceSettings['detailLevel']
   lastActivity: DiscordActivity | null
+  /** On-disk log path when a diagnostic sink is wired (Show Status). */
+  logFile: string | null
 }
 
 /**
@@ -112,7 +120,7 @@ export type PresenceController = {
   setSettings: (nextSettings: PresenceSettings) => Promise<void>
   /** Current settings object (same reference the controller holds). */
   settings: () => PresenceSettings
-  /** Connection + last transmitted activity for the status command. */
+  /** Connection + last transmitted activity + log path for the status command. */
   status: () => PresenceStatus
   /** Cancel a pending timer, clear activity, close the client. */
   stop: () => Promise<void>
@@ -132,7 +140,8 @@ export function createPresenceController({
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
-  log = () => {}
+  log = () => {},
+  diagnostics
 }: PresenceControllerOptions): PresenceController {
   let currentSettings = settings
   let snapshot: PresenceSnapshot | null = null
@@ -145,17 +154,38 @@ export function createPresenceController({
   let lastBridgeUrl: string | null = null
   let lastBridgeToken: string | null = null
 
+  function emit(
+    level: 'debug' | 'info' | 'warn' | 'error',
+    event: string,
+    detail?: Record<string, unknown>
+  ) {
+    if (diagnostics) {
+      diagnostics.line(level, event, detail)
+      return
+    }
+    log(formatLogLine(level, event, detail))
+  }
+
+  function bridgeOrigin(url: string): string {
+    try {
+      return new URL(url).origin
+    } catch {
+      return '(invalid)'
+    }
+  }
+
   async function ensureConnected() {
     if (client.isConnected()) {
       return true
     }
     try {
       await client.connect()
+      emit('info', 'discord.connect_ok')
       return true
     } catch (error) {
-      // Discord not running is the common case. Stay quiet; retry next update.
+      // Discord not running is the common case. Always log; retry next update.
       const message = error instanceof Error ? error.message : String(error)
-      log(`discord unavailable: ${message}`)
+      emit('error', 'discord.connect_failed', { reason: message })
       return false
     }
   }
@@ -165,10 +195,11 @@ export function createPresenceController({
       return
     }
     try {
+      emit('info', 'bridge.clear', { url: bridgeOrigin(url) })
       await bridge.clear(url, token)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      log(`failed to clear bridge activity: ${message}`)
+      emit('error', 'bridge.clear_failed', { url: bridgeOrigin(url), reason: message })
     }
   }
 
@@ -204,6 +235,7 @@ export function createPresenceController({
     if (await ensureConnected()) {
       try {
         await client.setActivity(activity)
+        emit('info', 'discord.set_activity', { sink: 'local', details: activity.details })
         if (lastSink === 'bridge') {
           await forgetBridge(true)
         }
@@ -214,7 +246,7 @@ export function createPresenceController({
         cleared = false
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        log(`failed to set activity: ${message}`)
+        emit('error', 'discord.set_activity_failed', { reason: message })
         lastSentSerialized = null
       }
       return
@@ -222,16 +254,18 @@ export function createPresenceController({
     const target = resolveBridgeTarget(currentSettings)
     if (!target) {
       if (currentSettings.bridgeEnabled) {
-        log('bridge enabled but url/token is not usable')
+        emit('warn', 'bridge.skipped', { reason: 'url/token is not usable' })
       }
       return
     }
     if (!bridge) {
-      log('bridge enabled but no transport is configured')
+      emit('warn', 'bridge.skipped', { reason: 'no transport is configured' })
       return
     }
     try {
+      emit('info', 'bridge.publish', { url: bridgeOrigin(target.url) })
       await bridge.publish(target.url, target.token, activity)
+      emit('info', 'discord.set_activity', { sink: 'bridge', details: activity.details })
       lastSentSerialized = serialized
       lastActivity = activity
       lastSentAt = now()
@@ -241,7 +275,7 @@ export function createPresenceController({
       cleared = false
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      log(`failed to publish activity to bridge: ${message}`)
+      emit('error', 'bridge.publish_failed', { url: bridgeOrigin(target.url), reason: message })
       lastSentSerialized = null
     }
   }
@@ -258,9 +292,10 @@ export function createPresenceController({
     if (sink === 'local' || client.isConnected()) {
       try {
         await client.clearActivity()
+        emit('info', 'discord.clear', { sink: 'local' })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        log(`failed to clear activity: ${message}`)
+        emit('error', 'discord.clear_failed', { reason: message })
       }
     }
     if (sink === 'bridge') {
@@ -334,7 +369,8 @@ export function createPresenceController({
       bridgeEnabled: currentSettings.bridgeEnabled,
       sink: lastSink,
       detailLevel: currentSettings.detailLevel,
-      lastActivity
+      lastActivity,
+      logFile: diagnostics?.filePath ?? null
     }),
     async stop() {
       if (pendingTimer) {

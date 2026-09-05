@@ -1,5 +1,5 @@
 /**
- * Opt-in HTTP bridge: privacy-gated activity → Windows companion.
+ * Opt-in HTTP bridge: privacy-gated activity → Discord-IPC companion.
  *
  * Local Discord IPC cannot cross machines. When the Orca host has no
  * desktop Discord (typical Omarchy split) and the operator enables the
@@ -41,7 +41,7 @@ const MAX_BRIDGE_URL_LENGTH = 512
 const MAX_BRIDGE_TOKEN_LENGTH = 256
 
 /**
- * Env keys shared by the plugin overlay and the Windows companion.
+ * Env keys shared by the plugin overlay and the companion process.
  *
  * @author Jonathan Marien
  */

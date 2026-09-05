@@ -18,7 +18,8 @@
       { "id": "presence.toggle-terminals", "title": "Discord Presence: Toggle Terminal Count" },
       { "id": "presence.toggle-machine", "title": "Discord Presence: Toggle Machine Name" },
       { "id": "presence.toggle-elapsed", "title": "Discord Presence: Toggle Elapsed Timer" },
-      { "id": "presence.toggle-bridge", "title": "Discord Presence: Toggle Bridge" }
+      { "id": "presence.toggle-bridge", "title": "Discord Presence: Toggle Bridge" },
+      { "id": "presence.debug-logging", "title": "Discord Presence: Toggle Debug Logging" }
     ],
     "events": [
       { "on": "agent.status.changed" },

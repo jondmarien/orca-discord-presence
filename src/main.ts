@@ -16,6 +16,7 @@ import os from 'node:os'
 import { createDiscordClient } from './discord/client'
 import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
 import { createPresenceController, type PresenceController } from './presence/controller'
+import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
 import { normalizeSettings, nextDetailLevel, toggleField, type PresenceSettings } from './presence/settings'
 
 /**
@@ -41,7 +42,8 @@ const TOGGLE_COMMANDS = {
   'presence.toggle-terminals': 'showTerminals',
   'presence.toggle-machine': 'showMachine',
   'presence.toggle-elapsed': 'showElapsed',
-  'presence.toggle-bridge': 'bridgeEnabled'
+  'presence.toggle-bridge': 'bridgeEnabled',
+  'presence.debug-logging': 'debugLogging'
 } as const
 
 /**
@@ -111,6 +113,7 @@ export type OrcaHost = {
 
 let controller: PresenceController | null = null
 let heartbeat: ReturnType<typeof setInterval> | null = null
+let diagnostics: DiagnosticSink | null = null
 
 /**
  * Plugin entry. Loads persisted settings, constructs the Discord client and
@@ -127,15 +130,33 @@ export default async function activate(orca: OrcaHost) {
   }
   let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env)
 
+  const logFile = resolveLogFilePath(process.env, {
+    homedir: os.homedir(),
+    tmpdir: os.tmpdir(),
+    platform: process.platform
+  })
+  diagnostics = createDiagnosticSink({
+    hostLog: (message) => orca.log(message),
+    filePath: logFile,
+    debugEnabled: settings.debugLogging
+  })
+  diagnostics.line('info', 'activate', {
+    version: '0.3.0',
+    debug: settings.debugLogging,
+    file: logFile,
+    bridge: settings.bridgeEnabled
+  })
+
   controller = createPresenceController({
     client: createDiscordClient({
       clientId: settings.applicationId,
-      log: (message) => orca.log(message)
+      log: (message) => diagnostics?.line('error', 'discord.client', { reason: message })
     }),
     bridge: createBridgeTransport({
-      log: (message) => orca.log(message)
+      log: (message) => diagnostics?.line('error', 'bridge.transport', { reason: message })
     }),
     settings,
+    diagnostics,
     log: (message) => orca.log(message)
   })
 
@@ -145,6 +166,7 @@ export default async function activate(orca: OrcaHost) {
    */
   async function persist(nextSettings: PresenceSettings) {
     settings = nextSettings
+    diagnostics?.setDebugEnabled(nextSettings.debugLogging)
     for (const [key, value] of Object.entries(nextSettings)) {
       await orca.host.call('settings.set', { key, value }).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error)
@@ -164,7 +186,14 @@ export default async function activate(orca: OrcaHost) {
       | WorkspaceContext
       | null
     if (!context) {
+      diagnostics?.line('debug', 'refresh.skipped', { reason: 'no workspace context' })
       return
+    }
+    if (agentState) {
+      diagnostics?.line('debug', 'refresh', {
+        source: 'agent.status.changed',
+        agentState: agentState.state
+      })
     }
     await controller?.update({
       displayName: context.displayName,
@@ -202,11 +231,21 @@ export default async function activate(orca: OrcaHost) {
 
   orca.commands.register('presence.status', async () => {
     const status = controller?.status()
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel}`
-    orca.log(`${summary} transmitting=${JSON.stringify(status?.lastActivity)}`)
+    const file = status?.logFile ?? diagnostics?.filePath ?? ''
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel} debug=${settings.debugLogging}`
+    diagnostics?.line('info', 'status', {
+      enabled: status?.enabled,
+      connected: status?.connected,
+      sink: status?.sink,
+      bridge: status?.bridgeEnabled,
+      detail: status?.detailLevel,
+      debug: settings.debugLogging,
+      file,
+      transmitting: JSON.stringify(status?.lastActivity)
+    })
     await orca.host.call('notifications.show', {
       title: 'Discord Rich Presence',
-      body: summary
+      body: `${summary} — log ${file || '(none)'}. Palette: Discord Presence: Show Status`
     })
     return status
   })
@@ -243,6 +282,8 @@ export async function deactivate() {
     clearInterval(heartbeat)
     heartbeat = null
   }
+  diagnostics?.line('info', 'deactivate')
   await controller?.stop()
   controller = null
+  diagnostics = null
 }
