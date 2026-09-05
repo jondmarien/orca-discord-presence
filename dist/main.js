@@ -1860,7 +1860,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // src/version.ts
-var PLUGIN_VERSION = "0.6.1";
+var PLUGIN_VERSION = "0.6.2";
 
 // src/presence/panel-html.ts
 var PANEL_HTML_ENV = "ORCA_PRESENCE_PANEL_HTML";
@@ -1931,6 +1931,11 @@ function writePanelSnapshot(filePath, snapshot) {
     }
     return { ok: false, reason: error instanceof Error ? error.message : "error" };
   }
+}
+
+// src/presence/panel-live.ts
+function shouldRewritePanelHtml(storageWritten) {
+  return !storageWritten;
 }
 
 // src/presence/panel-snapshot.ts
@@ -2076,6 +2081,7 @@ var diagnostics = null;
 var logRing = null;
 var panelWriteTimer = null;
 var panelWriteNoted = false;
+var panelStorageNoted = false;
 var deactivated = false;
 function publicConfigureView(settings) {
   return {
@@ -2111,6 +2117,7 @@ async function activate(orca) {
   });
   logRing = createLogRing();
   panelWriteNoted = false;
+  panelStorageNoted = false;
   diagnostics = createDiagnosticSink({
     hostLog: (message) => orca.log(message),
     filePath: logFile,
@@ -2168,7 +2175,16 @@ async function activate(orca) {
         logs: logRing.lines(),
         host: { ...hostCaps }
       });
-      await writeDiagnosticsSnapshot((method, args) => orca.host.call(method, args), snapshot);
+      const stored = await writeDiagnosticsSnapshot((method, args) => orca.host.call(method, args), snapshot);
+      if (stored) {
+        if (!panelStorageNoted) {
+          panelStorageNoted = true;
+          diagnostics?.line("debug", "panel.snapshot_stored", { lines: snapshot.logs.length });
+        }
+      }
+      if (!shouldRewritePanelHtml(stored)) {
+        return;
+      }
       const target = resolvePanelHtmlPath(process.env, import.meta.url);
       if (!target) {
         return;

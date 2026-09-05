@@ -139,6 +139,117 @@ test('activate registers commands and events; deactivate is safe to call', async
   await handlers.get('presence.reload')?.()
   expect(hostLines.some((line) => line.includes('discord.reload'))).toBe(true)
   expect(notifications.some((body) => body.includes('reloaded'))).toBe(true)
+  expect(extractPanelSnapshot(readFileSync(panelFile, 'utf8'))).toBe(null)
+  expect(storageKeys.includes('diagnostics.snapshot')).toBe(true)
+  await deactivate()
+  await deactivate()
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  if (previousPanel === undefined) {
+    delete process.env.ORCA_PRESENCE_PANEL_HTML
+  } else {
+    process.env.ORCA_PRESENCE_PANEL_HTML = previousPanel
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('activate writes diagnostics.snapshot and skips HTML rewrite when storage.set succeeds', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-storage-panel-'))
+  const logFile = join(dir, 'plugin.log')
+  const panelFile = join(dir, 'index.html')
+  copyFileSync(join(root, 'panel/index.html'), panelFile)
+  const shipped = readFileSync(panelFile, 'utf8')
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousPanel = process.env.ORCA_PRESENCE_PANEL_HTML
+  process.env.ORCA_PRESENCE_LOG_FILE = logFile
+  process.env.ORCA_PRESENCE_PANEL_HTML = panelFile
+  const { default: activate, deactivate } = await import('../src/main')
+  const handlers = new Map<string, () => Promise<unknown>>()
+  const stored: unknown[] = []
+  const orca: OrcaHost = {
+    log: () => {},
+    commands: {
+      register: (id, handler) => {
+        handlers.set(id, handler)
+      }
+    },
+    events: { on: () => {} },
+    host: {
+      call: async (method, args) => {
+        if (method === 'settings.get') {
+          return { settings: {} }
+        }
+        if (method === 'storage.set') {
+          stored.push(args?.value)
+          return { ok: true }
+        }
+        if (method === 'notifications.show') {
+          return null
+        }
+        return null
+      }
+    }
+  }
+  await activate(orca)
+  await handlers.get('presence.status')?.()
+  const snapshot = stored.at(-1) as { version?: string; status?: { detailLevel?: string } }
+  expect(snapshot?.version).toBe(PLUGIN_VERSION)
+  expect(snapshot?.status?.detailLevel).toBe('generic')
+  expect(readFileSync(panelFile, 'utf8')).toBe(shipped)
+  expect(extractPanelSnapshot(readFileSync(panelFile, 'utf8'))).toBe(null)
+  await deactivate()
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  if (previousPanel === undefined) {
+    delete process.env.ORCA_PRESENCE_PANEL_HTML
+  } else {
+    process.env.ORCA_PRESENCE_PANEL_HTML = previousPanel
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('activate rewrites panel HTML when storage.set is unavailable', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-html-fallback-'))
+  const logFile = join(dir, 'plugin.log')
+  const panelFile = join(dir, 'index.html')
+  copyFileSync(join(root, 'panel/index.html'), panelFile)
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousPanel = process.env.ORCA_PRESENCE_PANEL_HTML
+  process.env.ORCA_PRESENCE_LOG_FILE = logFile
+  process.env.ORCA_PRESENCE_PANEL_HTML = panelFile
+  const { default: activate, deactivate } = await import('../src/main')
+  const handlers = new Map<string, () => Promise<unknown>>()
+  const orca: OrcaHost = {
+    log: () => {},
+    commands: {
+      register: (id, handler) => {
+        handlers.set(id, handler)
+      }
+    },
+    events: { on: () => {} },
+    host: {
+      call: async (method) => {
+        if (method === 'settings.get') {
+          return { settings: {} }
+        }
+        if (method === 'storage.set') {
+          throw new Error('no such method')
+        }
+        if (method === 'notifications.show') {
+          return null
+        }
+        return null
+      }
+    }
+  }
+  await activate(orca)
+  await handlers.get('presence.status')?.()
   const embedded = extractPanelSnapshot(readFileSync(panelFile, 'utf8')) as {
     version: string
     status: { detailLevel: string }
@@ -148,8 +259,6 @@ test('activate registers commands and events; deactivate is safe to call', async
   expect(embedded.status.detailLevel).toBe('generic')
   expect(embedded.logs.some((line) => line.includes('activate'))).toBe(true)
   expect(JSON.stringify(embedded).includes('bridgeToken')).toBe(false)
-  expect(storageKeys.includes('diagnostics.snapshot')).toBe(true)
-  await deactivate()
   await deactivate()
   if (previous === undefined) {
     delete process.env.ORCA_PRESENCE_LOG_FILE

@@ -6,7 +6,7 @@
 
 **Workspace, branch, and agent state on your Discord profile — every identifying field is opt-in.**
 
-[![Version](https://img.shields.io/badge/v0.6.1-blue.svg)](orca-plugin.json)
+[![Version](https://img.shields.io/badge/v0.6.2-blue.svg)](orca-plugin.json)
 [![Latest release](https://img.shields.io/github/v/release/jondmarien/orca-discord-presence?label=latest%20release)](https://github.com/jondmarien/orca-discord-presence/releases/latest)
 [![Orca plugin](https://img.shields.io/badge/Orca-chron0.discord--presence-5c6bc0)](orca-plugin.json)
 [![Bun](https://img.shields.io/badge/Bun-1.4+-000000?logo=bun&logoColor=white)](https://bun.sh)
@@ -35,7 +35,7 @@ A trusted Orca plugin worker (`dist/main.js`) that publishes privacy-gated Rich 
 | What it reads | `agent.status.changed`, `workspace.readContext` (name, branch, terminal **count**, optional execution host / agent / focus), worktree events, optional `ui.focus.changed`, 90 s heartbeat |
 | What it does **not** read | File paths or editor cursors. Focus titles are host-truncated and off until you opt in. |
 | Discord path | Local IPC first; fork sidecar mailbox when local IPC fails; opt-in HTTP companion if Discord is on another machine ([#6](https://github.com/jondmarien/orca-discord-presence/pull/6)) |
-| Settings UI | Command palette for every toggle. On [`jondmarien/orca`](https://github.com/jondmarien/orca) the sidebar can persist toggles (`settings.set`) and poll live logs (`storage.get`). Stock `stablyai/orca` rejects this 0.6.1 manifest (`ui:focus` / `sidecar`); use v0.5.0 there. |
+| Settings UI | Command palette for every toggle. On [`jondmarien/orca`](https://github.com/jondmarien/orca) the sidebar can persist toggles (`settings.set`) and poll live logs (`storage.get`) without resetting Settings. Stock `stablyai/orca` rejects this 0.6.2 manifest (`ui:focus` / `sidecar`); use v0.5.0 there. |
 
 ---
 
@@ -74,7 +74,7 @@ What the plugin cannot do today, and what to do instead. Skim this with [How it 
 
 | Limit | What to do instead | Track |
 |---|---|---|
-| **Focused window / tab on stock Orca** — `stablyai/orca` rejects `ui:focus` | Load v0.5.0 on stock, or smoke-test 0.6.1 against [`jondmarien/orca`](https://github.com/jondmarien/orca) `pnpm dev` | [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) |
+| **Focused window / tab on stock Orca** — `stablyai/orca` rejects `ui:focus` | Load v0.5.0 on stock, or smoke-test 0.6.2 against [`jondmarien/orca`](https://github.com/jondmarien/orca) `pnpm dev` | [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) |
 | **File-level presence** — Orca does not expose the active file | Nothing to enable; no path is sent. Focus titles are host-truncated | [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
 | **Settings panel on stock Orca** — panels cannot call `settings.set` | Use the [command palette](#commands). On the fork, sidebar toggles persist | [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
 | **Writable settings / live log tail on stock Orca** | Fork: panel `settings.*` + `storage.get` (`diagnostics.snapshot`). Stock: snapshot rewrite on a writable install + palette | [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) |
@@ -137,7 +137,7 @@ Direct download (filename is stable; contents change with each release):
 
 Unzip it. You need the folder that contains `orca-plugin.json` (and `dist/main.js`). Orca does **not** install from the `.zip` file itself.
 
-Each `main` push publishes a new release. **Testing for 0.6.1 is the `develop` branch** — `main` stays on the current release line until Jon promotes. The product version inside `orca-plugin.json` is `0.6.1`; GitHub tags look like `v0.6.1-<sha>` so every build is unique. Put `[skip release]` in a commit message to skip a release.
+Each `main` push publishes a new release. **Testing for 0.6.2 is the `develop` branch** — `main` stays on the current release line until Jon promotes. The product version inside `orca-plugin.json` is `0.6.2`; GitHub tags look like `v0.6.2-<sha>` so every build is unique. Put `[skip release]` in a commit message to skip a release.
 
 ### 3. Load the folder in Orca
 
@@ -164,9 +164,9 @@ The plugin asks only for:
 
 No `secrets`. No terminal write. After you approve, confirm **Discord Rich Presence** (`chron0.discord-presence`) is enabled in **Settings → Plugins**.
 
-`engines.orca` stays `>=1.4.0` (methods are probed; the fork may still report 1.4.x). Stock `stablyai/orca` will **reject this 0.6.1 manifest** because `ui:focus`, `sidecar`, and `ui.focus.changed` are not in its closed sets. v0.5.0 remains the stock-loadable line.
+`engines.orca` stays `>=1.4.0` (methods are probed; the fork may still report 1.4.x). Stock `stablyai/orca` will **reject this 0.6.2 manifest** because `ui:focus`, `sidecar`, and `ui.focus.changed` are not in its closed sets. v0.5.0 remains the stock-loadable line.
 
-**Smoke-test (fork):** check out [`jondmarien/orca`](https://github.com/jondmarien/orca) `main` (focus join keys + `ui.readFocus` landed in [jondmarien/orca#8](https://github.com/jondmarien/orca/pull/8) at [`096f26bd`](https://github.com/jondmarien/orca/commit/096f26bdf5b2e1cb378c429716bc2d82c1426a9d)), `pnpm dev`, and add this plugin’s **`develop`** checkout to **Settings → Plugins → Development → Add path**. Do not expect stock `stablyai/orca` to load 0.6.1. Missing fields on older hosts are still ignored.
+**Smoke-test (fork):** check out [`jondmarien/orca`](https://github.com/jondmarien/orca) `main` (focus join keys + `ui.readFocus` landed in [jondmarien/orca#8](https://github.com/jondmarien/orca/pull/8) at [`096f26bd`](https://github.com/jondmarien/orca/commit/096f26bdf5b2e1cb378c429716bc2d82c1426a9d)), `pnpm dev`, and add this plugin’s **`develop`** checkout to **Settings → Plugins → Development → Add path**. Do not expect stock `stablyai/orca` to load 0.6.2. Missing fields on older hosts are still ignored.
 
 ### 5. Confirm it is alive
 
@@ -188,7 +188,7 @@ Then load the **repository root** (the folder that contains `orca-plugin.json`) 
 
 - **Settings → Plugins → Install plugin → Local folder** — same as the zip, pointed at your checkout.
 - **Settings → Plugins → Development → Add path** — live `devPluginPaths` checkout (still requires consent).
-- **Settings → Plugins → Install plugin → Git URL** — pin a tag or commit: `https://github.com/jondmarien/orca-discord-presence.git#<tag>`. Copy the exact tag from [the latest release](https://github.com/jondmarien/orca-discord-presence/releases/latest) (after CI: `v0.6.1-<sha>`). For fork smoke-tests, point `devPluginPaths` at a `develop` checkout.
+- **Settings → Plugins → Install plugin → Git URL** — pin a tag or commit: `https://github.com/jondmarien/orca-discord-presence.git#<tag>`. Copy the exact tag from [the latest release](https://github.com/jondmarien/orca-discord-presence/releases/latest) (after CI: `v0.6.2-<sha>`). For fork smoke-tests, point `devPluginPaths` at a `develop` checkout.
 
 Commit `dist/main.js` when TypeScript sources change so a checkout or marketplace clone works without a local build.
 
@@ -361,11 +361,11 @@ The iframe is sandboxed. Host CSP is `default-src 'none'; connect-src 'none'; sc
 | Show Status toast | `notifications.show` with compact `enabled` / `connected` / `sink` / `detail` from the embedded snapshot |
 | Refresh | Re-reads workspace + `settings.get` + `storage.get` when those methods work |
 | Field toggles | Writable on the fork via `settings.set`. Stock Orca: read-only + command palette |
-| Collapsible logs | Poll `diagnostics.snapshot` (~2s) on the fork; otherwise the worker rewrite on a writable install |
+| Collapsible logs | Poll `diagnostics.snapshot` (~2s) on the fork without resetting Settings or forcing the log `<details>` open; otherwise the worker rewrite on a writable install when storage is unavailable |
 | Reload RPC / Cycle Detail | Command palette. The panel **Reload RPC (palette)** button is a reminder toast, not a reconnect |
 
 1. `panel/index.html` is a **static shell**. Marketplace / immutable installs still show live workspace + the conventional log path. Badge / About version comes from `PLUGIN_VERSION` (`#plugin-version` JSON + stamped text). A bump that forgets the panel fails `bun test`.
-2. The worker writes the same redacted snapshot to `storage.set` (`diagnostics.snapshot`, ~60 KiB cap) and, on a writable install, rewrites `#presence-snapshot`.
+2. The worker writes the same redacted snapshot to `storage.set` (`diagnostics.snapshot`, ~60 KiB cap). It rewrites `#presence-snapshot` only when that storage write is unavailable, so a `devPluginPaths` file watch cannot remount the iframe on every heartbeat.
 3. Override path: `ORCA_PRESENCE_PANEL_HTML`. Skip writes: `ORCA_PRESENCE_SKIP_PANEL_WRITE=1`.
 4. The Discord Application ID, bridge token, bridge URL, `openUrl`, and `machineLabel` are **never** written from the panel. Log lines are redacted (`token=***`).
 
@@ -379,7 +379,7 @@ The iframe is sandboxed. Host CSP is `default-src 'none'; connect-src 'none'; sc
 | `info` / `debug` | When `debugLogging` is on (default **on**) |
 
 ```
-[chron0.discord-presence] info activate version=0.6.1 debug=true file=/home/you/.local/state/chron0-discord-presence/plugin.log
+[chron0.discord-presence] info activate version=0.6.2 debug=true file=/home/you/.local/state/chron0-discord-presence/plugin.log
 [chron0.discord-presence] error discord.connect_failed reason="no discord ipc socket accepted a connection"
 [chron0.discord-presence] info discord.set_activity sink=local details="Working in Orca"
 ```
@@ -417,7 +417,7 @@ bun run build
 
 Commit `dist/main.js` when TypeScript sources change so a checkout or marketplace clone works without a local build. Zero production dependencies. File-level JSDoc only (`@module`, `@author Jonathan Marien`, `@date`).
 
-Each push to `main` (unless the commit message contains `[skip release]`) runs `bun test` + `bun run build` and publishes `chron0.discord-presence.zip` on [GitHub Releases](https://github.com/jondmarien/orca-discord-presence/releases/latest). Tags are `v{product-version}-{sha7}`; `orca-plugin.json` / `package.json` stay at the product version (`0.6.1` on `develop` until Jon promotes). The zip includes `panel/` when that folder is present.
+Each push to `main` (unless the commit message contains `[skip release]`) runs `bun test` + `bun run build` and publishes `chron0.discord-presence.zip` on [GitHub Releases](https://github.com/jondmarien/orca-discord-presence/releases/latest). Tags are `v{product-version}-{sha7}`; `orca-plugin.json` / `package.json` stay at the product version (`0.6.2` on `develop` until Jon promotes). The zip includes `panel/` when that folder is present.
 
 Module map, opcodes, and debounce: [docs/architecture.md](docs/architecture.md).
 

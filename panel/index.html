@@ -226,7 +226,7 @@
   </head>
   <body>
     <script id="presence-snapshot" type="application/json">null</script>
-    <script id="plugin-version" type="application/json">"0.6.1"</script>
+    <script id="plugin-version" type="application/json">"0.6.2"</script>
 
     <header class="status-bar" id="status-bar">
       <div class="status-row">
@@ -234,7 +234,7 @@
           <span class="dot" aria-hidden="true"></span>
           <span id="indicator-label">Waiting for worker snapshot</span>
         </div>
-        <span class="badge" id="version-badge">v0.6.1</span>
+        <span class="badge" id="version-badge">v0.6.2</span>
       </div>
       <div class="actions">
         <button type="button" id="btn-refresh">Refresh</button>
@@ -290,7 +290,7 @@
           <dt>Log file</dt>
           <dd id="st-logfile">~/.local/state/chron0-discord-presence/plugin.log</dd>
         </dl>
-        <p class="hint" id="st-generated">Snapshot updates when the worker rewrites this panel (activate, Show Status, heartbeat) on a writable install.</p>
+        <p class="hint" id="st-generated">Snapshot updates live from diagnostics.snapshot on the fork. Settings toggles stay on settings.get.</p>
       </div>
 
       <div class="card">
@@ -348,13 +348,13 @@
           <dt>Plugin</dt>
           <dd>chron0.discord-presence</dd>
           <dt>Version</dt>
-          <dd id="about-version">0.6.1</dd>
+          <dd id="about-version">0.6.2</dd>
           <dt>Author</dt>
           <dd>Jonathan Marien</dd>
         </dl>
         <p class="hint">Source (plain text — panel CSP blocks navigation):</p>
         <p>https://github.com/jondmarien/orca-discord-presence</p>
-        <p class="hint">Fork Orca-1…5 + #7 join keys (jondmarien/orca#8 on main). Feature-detect worktreeId/agentId and ui.readFocus. Those ids are never shown. Stock stablyai/orca rejects this 0.6.1 manifest (ui:focus / sidecar). v0.5.0 stays the stock-loadable line.</p>
+        <p class="hint">Fork Orca-1…5 + #7 join keys (jondmarien/orca#8 on main). Feature-detect worktreeId/agentId and ui.readFocus. Those ids are never shown. Stock stablyai/orca rejects this 0.6.2 manifest (ui:focus / sidecar). v0.5.0 stays the stock-loadable line.</p>
       </div>
     </section>
 
@@ -372,7 +372,7 @@
         <p>Reload RPC: command palette only — panels cannot invoke commands or reconnect the worker socket.</p>
         <p>Competing RPC: another IDE or overlay can overwrite activity. Reload RPC or wait for the 90s heartbeat.</p>
         <p>Logs: ~/.local/state/chron0-discord-presence/plugin.log (Windows: %LOCALAPPDATA%\chron0-discord-presence\plugin.log)</p>
-        <p>On jondmarien/orca (pnpm dev + devPluginPaths) this panel persists toggles via settings.set and polls diagnostics.snapshot. Stock Orca stays read-only — use the command palette.</p>
+        <p>On jondmarien/orca (pnpm dev + devPluginPaths) this panel persists toggles via settings.set and polls diagnostics.snapshot for status/logs only — polls do not reset Settings. Stock Orca stays read-only — use the command palette.</p>
         <p>Smoke-test from the develop branch. main stays on the current release until Jon promotes.</p>
         <p class="hint">https://github.com/jondmarien/orca-discord-presence/issues/10</p>
       </div>
@@ -471,9 +471,30 @@
         setText('flash', message)
       }
 
+      function panelRenderPolicy(mode) {
+        if (mode === 'live' || mode === 'refresh') {
+          return { applyFields: false, forceLogsOpen: false }
+        }
+        return { applyFields: true, forceLogsOpen: false }
+      }
+
+      function fingerprintPanelSnapshot(value) {
+        if (!value || typeof value !== 'object') return JSON.stringify(value)
+        var copy = {}
+        for (var key in value) {
+          if (!Object.prototype.hasOwnProperty.call(value, key)) continue
+          if (key === 'generatedAt') continue
+          copy[key] = value[key]
+        }
+        return JSON.stringify(copy)
+      }
+
       function setChecked(id, on) {
         var el = $(id)
-        if (el) el.checked = !!on
+        if (!el || document.activeElement === el) return
+        var next = !!on
+        if (el.checked === next) return
+        el.checked = next
       }
 
       function indicatorClass(snapshot) {
@@ -501,7 +522,8 @@
         return activity.state ? activity.details + ' · ' + activity.state : activity.details
       }
 
-      function renderSnapshot(snapshot) {
+      function renderSnapshot(snapshot, mode) {
+        var policy = panelRenderPolicy(mode || 'bootstrap')
         var bar = $('status-bar')
         bar.className = 'status-bar ' + indicatorClass(snapshot)
         setText('indicator-label', indicatorLabel(snapshot))
@@ -537,28 +559,43 @@
         setText('st-logfile', snapshot.logHint || status.logFile)
         setText(
           'st-generated',
-          'Snapshot ' + (snapshot.generatedAt || '') + ' · reopen the tab after Show Status / heartbeat to load a newer rewrite.'
+          storageReadable
+            ? 'Snapshot ' +
+              (snapshot.generatedAt || '') +
+              ' · status and logs update live without resetting Settings.'
+            : 'Snapshot ' +
+              (snapshot.generatedAt || '') +
+              ' · reopen the tab after Show Status / heartbeat to load a newer rewrite.'
         )
-        setChecked('f-enabled', fields.enabled)
-        setChecked('f-branch', fields.showBranch)
-        setChecked('f-agent', fields.showAgentState)
-        setChecked('f-terminals', fields.showTerminals)
-        setChecked('f-machine', fields.showMachine)
-        setChecked('f-elapsed', fields.showElapsed)
-        setChecked('f-bridge', fields.bridgeEnabled)
-        setChecked('f-debug', fields.debugLogging)
-        setChecked('f-open-button', fields.showOpenButton)
-        setChecked('f-agent-count', fields.showAgentCount)
-        setChecked('f-focus', fields.showFocusedSurface)
-        setChecked('f-agent-type', fields.showAgentType)
-        setChecked('f-agent-model', fields.showAgentModel)
-        setChecked('f-agent-profile', fields.showAgentProfile)
-        var detail = $('f-focus-detail')
-        if (detail && fields.focusedSurfaceDetail) detail.value = fields.focusedSurfaceDetail
+        if (policy.applyFields) {
+          setChecked('f-enabled', fields.enabled)
+          setChecked('f-branch', fields.showBranch)
+          setChecked('f-agent', fields.showAgentState)
+          setChecked('f-terminals', fields.showTerminals)
+          setChecked('f-machine', fields.showMachine)
+          setChecked('f-elapsed', fields.showElapsed)
+          setChecked('f-bridge', fields.bridgeEnabled)
+          setChecked('f-debug', fields.debugLogging)
+          setChecked('f-open-button', fields.showOpenButton)
+          setChecked('f-agent-count', fields.showAgentCount)
+          setChecked('f-focus', fields.showFocusedSurface)
+          setChecked('f-agent-type', fields.showAgentType)
+          setChecked('f-agent-model', fields.showAgentModel)
+          setChecked('f-agent-profile', fields.showAgentProfile)
+          var detail = $('f-focus-detail')
+          if (detail && document.activeElement !== detail && fields.focusedSurfaceDetail) {
+            detail.value = fields.focusedSurfaceDetail
+          }
+        }
         var logView = $('log-view')
         if (snapshot.logs && snapshot.logs.length) {
-          logView.textContent = snapshot.logs.join('\n')
-          $('logs-box').open = true
+          var nextLogs = snapshot.logs.join('\n')
+          if (logView.textContent !== nextLogs) {
+            var prevTop = logView.scrollTop
+            var stickToEnd = logView.scrollHeight - logView.scrollTop <= logView.clientHeight + 16
+            logView.textContent = nextLogs
+            logView.scrollTop = stickToEnd ? logView.scrollHeight : prevTop
+          }
         }
       }
 
@@ -628,7 +665,11 @@
         setChecked('f-agent-model', record.showAgentModel)
         setChecked('f-agent-profile', record.showAgentProfile)
         var detail = $('f-focus-detail')
-        if (detail && (record.focusedSurfaceDetail === 'kind' || record.focusedSurfaceDetail === 'kind+title')) {
+        if (
+          detail &&
+          document.activeElement !== detail &&
+          (record.focusedSurfaceDetail === 'kind' || record.focusedSurfaceDetail === 'kind+title')
+        ) {
           detail.value = record.focusedSurfaceDetail
         }
       }
@@ -648,10 +689,10 @@
       function applyStorageSnapshot(envelope) {
         var value = envelope && envelope.value !== undefined ? envelope.value : envelope
         if (!value || typeof value !== 'object') return
-        var json = JSON.stringify(value)
+        var json = fingerprintPanelSnapshot(value)
         if (json === lastStorageJson) return
         lastStorageJson = json
-        renderSnapshot(value)
+        renderSnapshot(value, 'live')
       }
 
       function pollStorage() {
@@ -678,7 +719,7 @@
         if (!note) return
         if (settingsWritable && storageReadable) {
           note.textContent =
-            'Writable on this host. Toggles persist via settings.set. Logs refresh from diagnostics.snapshot every 2s.'
+            'Writable on this host. Toggles persist via settings.set. Status/logs refresh from diagnostics.snapshot every 2s without resetting Settings.'
         } else if (settingsWritable) {
           note.textContent =
             'settings.set is available. Live logs still need storage.get (or a writable HTML rewrite).'
@@ -783,7 +824,7 @@
       })
 
       $('btn-refresh').addEventListener('click', function () {
-        renderSnapshot(readSnapshot())
+        renderSnapshot(readSnapshot(), 'refresh')
         Promise.all([refreshWorkspace(), settingsWritable ? call('settings.get') : Promise.resolve(null), pollStorage()]).then(
           function (results) {
             var settingsResult = results[1]
@@ -837,7 +878,7 @@
         }
       })
 
-      renderSnapshot(readSnapshot())
+      renderSnapshot(readSnapshot(), 'bootstrap')
       if (!hasHostBridge()) {
         flash('Open this panel in Orca (right sidebar). File preview cannot call the host bridge.')
       } else {

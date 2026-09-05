@@ -191,6 +191,10 @@ test('shipped panel HTML is CSP-safe and speaks the official bridge', () => {
   expect(html.includes('window.__PRESENCE_PANEL__')).toBe(true)
   expect(html.includes('id="presence-snapshot"')).toBe(true)
   expect(extractPanelSnapshot(html)).toBe(null)
+  expect(html.includes("renderSnapshot(value, 'live')")).toBe(true)
+  expect(html.includes("renderSnapshot(readSnapshot(), 'bootstrap')")).toBe(true)
+  expect(html.includes("renderSnapshot(readSnapshot(), 'refresh')")).toBe(true)
+  expect(html.includes("$('logs-box').open = true")).toBe(false)
 })
 
 test('shipped panel HTML version markers match PLUGIN_VERSION', () => {
