@@ -78,7 +78,7 @@ test('buildPresencePanelSnapshot omits secrets and summarizes activity', () => {
     },
     logs: ['[chron0.discord-presence] info bridge.publish token=super-secret-token']
   })
-  expect(snapshot.version).toBe('0.4.0')
+  expect(snapshot.version).toBe(PLUGIN_VERSION)
   expect(snapshot.generatedAt).toBe('2026-09-05T06:00:00.000Z')
   expect(snapshot.status.lastActivity).toEqual({ details: 'acme-payments', state: 'working' })
   expect(snapshot.fields.showBranch).toBe(true)
