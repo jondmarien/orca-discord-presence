@@ -14,6 +14,7 @@
 
 import os from 'node:os'
 import { createDiscordClient } from './discord/client'
+import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
 import { createPresenceController, type PresenceController } from './presence/controller'
 import { normalizeSettings, nextDetailLevel, toggleField, type PresenceSettings } from './presence/settings'
 
@@ -39,7 +40,8 @@ const TOGGLE_COMMANDS = {
   'presence.toggle-agent-state': 'showAgentState',
   'presence.toggle-terminals': 'showTerminals',
   'presence.toggle-machine': 'showMachine',
-  'presence.toggle-elapsed': 'showElapsed'
+  'presence.toggle-elapsed': 'showElapsed',
+  'presence.toggle-bridge': 'bridgeEnabled'
 } as const
 
 /**
@@ -123,11 +125,14 @@ export default async function activate(orca: OrcaHost) {
   const stored = (await orca.host.call('settings.get').catch(() => ({ settings: {} }))) as {
     settings?: unknown
   }
-  let settings = normalizeSettings(stored?.settings)
+  let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env)
 
   controller = createPresenceController({
     client: createDiscordClient({
       clientId: settings.applicationId,
+      log: (message) => orca.log(message)
+    }),
+    bridge: createBridgeTransport({
       log: (message) => orca.log(message)
     }),
     settings,
@@ -197,7 +202,7 @@ export default async function activate(orca: OrcaHost) {
 
   orca.commands.register('presence.status', async () => {
     const status = controller?.status()
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} detail=${status?.detailLevel}`
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel}`
     orca.log(`${summary} transmitting=${JSON.stringify(status?.lastActivity)}`)
     await orca.host.call('notifications.show', {
       title: 'Discord Rich Presence',

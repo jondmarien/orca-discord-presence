@@ -4,12 +4,15 @@
  * Settings are persisted through the host `settings.*` API, so anything read
  * back may be stale, partial, or hand-edited. Normalize on every read.
  * Unknown keys are dropped; invalid types fall back to
- * {@link DEFAULT_SETTINGS}.
+ * {@link DEFAULT_SETTINGS}. The HTTP companion (`bridgeEnabled` / `bridgeUrl`
+ * / `bridgeToken`) is opt-in and defaults off.
  *
  * @module presence/settings
  * @author Jonathan Marien
  * @date 2026-09-05
  */
+
+import { normalizeBridgeToken, normalizeBridgeUrl } from './bridge'
 
 /**
  * Detail-level ladder, in the order **Cycle Detail Level** walks.
@@ -64,6 +67,22 @@ export type PresenceSettings = {
   showMachine: boolean
   /** Include a Discord elapsed-timer start timestamp. */
   showElapsed: boolean
+  /**
+   * Opt-in HTTP bridge to a Windows (or other) companion. Default **off**.
+   * When on, the controller may POST the privacy-gated activity if local
+   * Discord IPC is unavailable (`src/presence/bridge.ts`).
+   */
+  bridgeEnabled: boolean
+  /**
+   * Companion base URL (`http://` / `https://` only), no `/activity` suffix
+   * required. Empty when unused.
+   */
+  bridgeUrl: string
+  /**
+   * Shared bearer token for the companion. Required when `bridgeUrl` is
+   * not loopback. Never logged.
+   */
+  bridgeToken: string
 }
 
 /**
@@ -102,7 +121,11 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   showAgentState: true,
   showTerminals: false,
   showMachine: false,
-  showElapsed: true
+  showElapsed: true,
+  // Cross-machine HTTP is off until the operator opts in.
+  bridgeEnabled: false,
+  bridgeUrl: '',
+  bridgeToken: ''
 })
 
 const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(
@@ -165,6 +188,8 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
     settings.applicationId = DEFAULT_SETTINGS.applicationId
   }
   settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel
+  settings.bridgeUrl = normalizeBridgeUrl(source.bridgeUrl)
+  settings.bridgeToken = normalizeBridgeToken(source.bridgeToken)
   return settings
 }
 

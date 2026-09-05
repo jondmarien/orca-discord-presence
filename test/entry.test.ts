@@ -58,6 +58,7 @@ test('activate registers commands and events; deactivate is safe to call', async
     'presence.toggle-terminals',
     'presence.toggle-machine',
     'presence.toggle-elapsed',
+    'presence.toggle-bridge',
     'presence.status'
   ])
   expect(events).toEqual(['agent.status.changed', 'worktree.created', 'worktree.removed'])

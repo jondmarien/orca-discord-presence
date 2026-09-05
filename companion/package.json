@@ -1,0 +1,11 @@
+{
+  "name": "orca-discord-presence-companion",
+  "version": "0.3.0",
+  "private": true,
+  "author": "Jonathan Marien",
+  "type": "module",
+  "scripts": {
+    "start": "bun run main.ts",
+    "compile": "bun build main.ts --compile --outfile orca-presence-companion"
+  }
+}

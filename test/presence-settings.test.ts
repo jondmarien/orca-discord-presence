@@ -16,6 +16,9 @@ test('defaults are privacy-preserving', () => {
   expect(DEFAULT_SETTINGS.showTerminals).toBe(false)
   expect(DEFAULT_SETTINGS.showAgentState).toBe(true)
   expect(DEFAULT_SETTINGS.showElapsed).toBe(true)
+  expect(DEFAULT_SETTINGS.bridgeEnabled).toBe(false)
+  expect(DEFAULT_SETTINGS.bridgeUrl).toBe('')
+  expect(DEFAULT_SETTINGS.bridgeToken).toBe('')
 })
 
 test('normalize fills gaps and drops unknown keys', () => {
@@ -66,4 +69,26 @@ test('toggleField flips exactly one boolean', () => {
 
 test('toggleField ignores a non-boolean field name', () => {
   expect(toggleField({ ...DEFAULT_SETTINGS }, 'detailLevel')).toEqual({ ...DEFAULT_SETTINGS })
+})
+
+test('normalize accepts a loopback bridge url and trims the token', () => {
+  const settings = normalizeSettings({
+    bridgeEnabled: true,
+    bridgeUrl: 'http://127.0.0.1:3848/activity',
+    bridgeToken: '  secret  '
+  })
+  expect(settings.bridgeEnabled).toBe(true)
+  expect(settings.bridgeUrl).toBe('http://127.0.0.1:3848')
+  expect(settings.bridgeToken).toBe('secret')
+})
+
+test('normalize rejects non-http bridge urls and credentials-in-url', () => {
+  expect(normalizeSettings({ bridgeUrl: 'javascript:alert(1)' }).bridgeUrl).toBe('')
+  expect(normalizeSettings({ bridgeUrl: 'http://user:pass@127.0.0.1:3848' }).bridgeUrl).toBe('')
+  expect(normalizeSettings({ bridgeUrl: 'not a url' }).bridgeUrl).toBe('')
+})
+
+test('toggleField flips bridgeEnabled', () => {
+  const next = toggleField({ ...DEFAULT_SETTINGS }, 'bridgeEnabled')
+  expect(next.bridgeEnabled).toBe(true)
 })

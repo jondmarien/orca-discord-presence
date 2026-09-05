@@ -256,6 +256,152 @@ function createDiscordClient({
   };
 }
 
+// src/presence/bridge.ts
+var BRIDGE_TIMEOUT_MS = 5000;
+var MAX_BRIDGE_URL_LENGTH = 512;
+var MAX_BRIDGE_TOKEN_LENGTH = 256;
+var BRIDGE_ENV = {
+  ENABLED: "ORCA_PRESENCE_BRIDGE_ENABLED",
+  URL: "ORCA_PRESENCE_BRIDGE_URL",
+  TOKEN: "ORCA_PRESENCE_BRIDGE_TOKEN",
+  BIND: "ORCA_PRESENCE_BIND",
+  PORT: "ORCA_PRESENCE_PORT",
+  CLIENT_ID: "ORCA_PRESENCE_CLIENT_ID"
+};
+function isLoopbackHost(host) {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (normalized === "localhost" || normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+  if (normalized.startsWith("127.")) {
+    return true;
+  }
+  if (normalized.startsWith("::ffff:")) {
+    return isLoopbackHost(normalized.slice("::ffff:".length));
+  }
+  return false;
+}
+function normalizeBridgeUrl(raw) {
+  if (typeof raw !== "string") {
+    return "";
+  }
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_BRIDGE_URL_LENGTH) {
+    return "";
+  }
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return "";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "";
+  }
+  if (parsed.username || parsed.password) {
+    return "";
+  }
+  let pathname = parsed.pathname.replace(/\/+$/, "");
+  if (pathname.endsWith("/activity")) {
+    pathname = pathname.slice(0, -"/activity".length);
+  }
+  return `${parsed.origin}${pathname}`;
+}
+function normalizeBridgeToken(raw) {
+  return typeof raw === "string" ? raw.trim().slice(0, MAX_BRIDGE_TOKEN_LENGTH) : "";
+}
+function bridgeUrlAllowsEmptyToken(url) {
+  try {
+    return isLoopbackHost(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+function resolveBridgeTarget(settings) {
+  if (!settings.bridgeEnabled) {
+    return null;
+  }
+  const url = normalizeBridgeUrl(settings.bridgeUrl);
+  if (!url) {
+    return null;
+  }
+  const token = normalizeBridgeToken(settings.bridgeToken);
+  if (!token && !bridgeUrlAllowsEmptyToken(url)) {
+    return null;
+  }
+  return { url, token };
+}
+function applyBridgeEnvOverrides(settings, env) {
+  const next = { ...settings };
+  const url = normalizeBridgeUrl(env[BRIDGE_ENV.URL]);
+  if (url) {
+    next.bridgeUrl = url;
+  }
+  const token = normalizeBridgeToken(env[BRIDGE_ENV.TOKEN]);
+  if (token) {
+    next.bridgeToken = token;
+  }
+  const flag = env[BRIDGE_ENV.ENABLED];
+  if (flag === "1" || flag === "true") {
+    next.bridgeEnabled = true;
+  } else if (flag === "0" || flag === "false") {
+    next.bridgeEnabled = false;
+  }
+  return next;
+}
+async function bridgeRequest(fetchFn, url, token, method, body) {
+  const headers = { accept: "application/json" };
+  if (token) {
+    headers.authorization = `Bearer ${token}`;
+  }
+  let payload;
+  if (method === "POST") {
+    headers["content-type"] = "application/json";
+    payload = JSON.stringify(body);
+  }
+  const controller = new AbortController;
+  const timer = setTimeout(() => controller.abort(), BRIDGE_TIMEOUT_MS);
+  try {
+    const response = await fetchFn(`${url}/activity`, {
+      method,
+      headers,
+      body: payload,
+      redirect: "error",
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`bridge ${method} ${response.status}`);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function createBridgeTransport({
+  fetch: fetchFn = fetch,
+  log = () => {}
+} = {}) {
+  return {
+    async publish(url, token, activity) {
+      try {
+        await bridgeRequest(fetchFn, url, token, "POST", activity);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`bridge publish failed: ${message}`);
+        throw error;
+      }
+    },
+    async clear(url, token) {
+      try {
+        await bridgeRequest(fetchFn, url, token, "DELETE");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`bridge clear failed: ${message}`);
+        throw error;
+      }
+    }
+  };
+}
+
 // src/presence/activity.ts
 var DISCORD_TEXT_MAX = 128;
 var AGENT_STATE_LABELS = {
@@ -326,6 +472,7 @@ var MIN_UPDATE_INTERVAL_MS = 15000;
 function createPresenceController({
   client,
   settings,
+  bridge,
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer),
@@ -338,6 +485,9 @@ function createPresenceController({
   let lastSentAt = 0;
   let pendingTimer = null;
   let cleared = true;
+  let lastSink = null;
+  let lastBridgeUrl = null;
+  let lastBridgeToken = null;
   async function ensureConnected() {
     if (client.isConnected()) {
       return true;
@@ -349,6 +499,26 @@ function createPresenceController({
       const message = error instanceof Error ? error.message : String(error);
       log(`discord unavailable: ${message}`);
       return false;
+    }
+  }
+  async function tryClearBridge(url, token) {
+    if (!bridge) {
+      return;
+    }
+    try {
+      await bridge.clear(url, token);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log(`failed to clear bridge activity: ${message}`);
+    }
+  }
+  async function forgetBridge(clearRemote) {
+    const url = lastBridgeUrl;
+    const token = lastBridgeToken ?? "";
+    lastBridgeUrl = null;
+    lastBridgeToken = null;
+    if (clearRemote && url) {
+      await tryClearBridge(url, token);
     }
   }
   async function transmit() {
@@ -365,18 +535,47 @@ function createPresenceController({
     if (serialized === lastSentSerialized) {
       return;
     }
-    if (!await ensureConnected()) {
+    if (await ensureConnected()) {
+      try {
+        await client.setActivity(activity);
+        if (lastSink === "bridge") {
+          await forgetBridge(true);
+        }
+        lastSentSerialized = serialized;
+        lastActivity = activity;
+        lastSentAt = now();
+        lastSink = "local";
+        cleared = false;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`failed to set activity: ${message}`);
+        lastSentSerialized = null;
+      }
+      return;
+    }
+    const target = resolveBridgeTarget(currentSettings);
+    if (!target) {
+      if (currentSettings.bridgeEnabled) {
+        log("bridge enabled but url/token is not usable");
+      }
+      return;
+    }
+    if (!bridge) {
+      log("bridge enabled but no transport is configured");
       return;
     }
     try {
-      await client.setActivity(activity);
+      await bridge.publish(target.url, target.token, activity);
       lastSentSerialized = serialized;
       lastActivity = activity;
       lastSentAt = now();
+      lastSink = "bridge";
+      lastBridgeUrl = target.url;
+      lastBridgeToken = target.token;
       cleared = false;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      log(`failed to set activity: ${message}`);
+      log(`failed to publish activity to bridge: ${message}`);
       lastSentSerialized = null;
     }
   }
@@ -387,14 +586,20 @@ function createPresenceController({
     cleared = true;
     lastSentSerialized = null;
     lastActivity = null;
-    if (!client.isConnected()) {
-      return;
+    const sink = lastSink;
+    lastSink = null;
+    if (sink === "local" || client.isConnected()) {
+      try {
+        await client.clearActivity();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`failed to clear activity: ${message}`);
+      }
     }
-    try {
-      await client.clearActivity();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      log(`failed to clear activity: ${message}`);
+    if (sink === "bridge") {
+      await forgetBridge(true);
+    } else {
+      await forgetBridge(false);
     }
   }
   async function schedule() {
@@ -424,6 +629,7 @@ function createPresenceController({
       await schedule();
     },
     async setSettings(nextSettings) {
+      const previousBridge = lastSink === "bridge" && lastBridgeUrl != null ? { url: lastBridgeUrl, token: lastBridgeToken ?? "" } : null;
       currentSettings = nextSettings;
       if (!currentSettings.enabled || currentSettings.detailLevel === "off") {
         if (pendingTimer) {
@@ -433,6 +639,16 @@ function createPresenceController({
         await clearPresence();
         return;
       }
+      const nextTarget = resolveBridgeTarget(currentSettings);
+      if (previousBridge && (!nextTarget || nextTarget.url !== previousBridge.url)) {
+        await tryClearBridge(previousBridge.url, previousBridge.token);
+        lastSink = null;
+        lastActivity = null;
+        lastSentSerialized = null;
+        lastBridgeUrl = null;
+        lastBridgeToken = null;
+        cleared = true;
+      }
       lastSentSerialized = null;
       await transmit();
     },
@@ -440,6 +656,8 @@ function createPresenceController({
     status: () => ({
       enabled: currentSettings.enabled && currentSettings.detailLevel !== "off",
       connected: client.isConnected(),
+      bridgeEnabled: currentSettings.bridgeEnabled,
+      sink: lastSink,
       detailLevel: currentSettings.detailLevel,
       lastActivity
     }),
@@ -466,7 +684,10 @@ var DEFAULT_SETTINGS = Object.freeze({
   showAgentState: true,
   showTerminals: false,
   showMachine: false,
-  showElapsed: true
+  showElapsed: true,
+  bridgeEnabled: false,
+  bridgeUrl: "",
+  bridgeToken: ""
 });
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
 var APPLICATION_ID_RE = /^\d{17,20}$/;
@@ -498,6 +719,8 @@ function normalizeSettings(raw) {
     settings.applicationId = DEFAULT_SETTINGS.applicationId;
   }
   settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel;
+  settings.bridgeUrl = normalizeBridgeUrl(source.bridgeUrl);
+  settings.bridgeToken = normalizeBridgeToken(source.bridgeToken);
   return settings;
 }
 function nextDetailLevel(current) {
@@ -519,16 +742,20 @@ var TOGGLE_COMMANDS = {
   "presence.toggle-agent-state": "showAgentState",
   "presence.toggle-terminals": "showTerminals",
   "presence.toggle-machine": "showMachine",
-  "presence.toggle-elapsed": "showElapsed"
+  "presence.toggle-elapsed": "showElapsed",
+  "presence.toggle-bridge": "bridgeEnabled"
 };
 var controller = null;
 var heartbeat = null;
 async function activate(orca) {
   const stored = await orca.host.call("settings.get").catch(() => ({ settings: {} }));
-  let settings = normalizeSettings(stored?.settings);
+  let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env);
   controller = createPresenceController({
     client: createDiscordClient({
       clientId: settings.applicationId,
+      log: (message) => orca.log(message)
+    }),
+    bridge: createBridgeTransport({
       log: (message) => orca.log(message)
     }),
     settings,
@@ -576,7 +803,7 @@ async function activate(orca) {
   }
   orca.commands.register("presence.status", async () => {
     const status = controller?.status();
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} detail=${status?.detailLevel}`;
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel}`;
     orca.log(`${summary} transmitting=${JSON.stringify(status?.lastActivity)}`);
     await orca.host.call("notifications.show", {
       title: "Discord Rich Presence",
