@@ -5,9 +5,9 @@ Date: 2026-09-05
 
 Known limits of `chron0.discord-presence` and the Orca host work that would unlock richer presence. This is not a schedule.
 
-Presence today is **local Discord IPC first**. The Vesktop Flatpak path in `src/discord/ipc.ts` only finds a socket on the same machine as the plugin worker. An **opt-in HTTP companion** (Linux, macOS, or Windows) can publish that same privacy-gated activity on another machine (issue [#3](https://github.com/jondmarien/orca-discord-presence/issues/3) plugin MVP). A native Orca remote-presence API is still future work.
+Presence today is **local Discord IPC first**. The Vesktop Flatpak path in `src/discord/ipc.ts` only finds a socket on the same machine as the plugin worker. An **opt-in HTTP companion** (Linux, macOS, or Windows) can publish that same privacy-gated activity on another machine ([#6](https://github.com/jondmarien/orca-discord-presence/pull/6) plugin MVP). A native Orca remote-presence API is still future work — [#10](https://github.com/jondmarien/orca-discord-presence/issues/10).
 
-See also [README](README.md), [Architecture](docs/architecture.md), [Privacy](docs/privacy.md). Tracked in [#3](https://github.com/jondmarien/orca-discord-presence/issues/3).
+See also [README](README.md), [Architecture](docs/architecture.md), [Privacy](docs/privacy.md). Host/API follow-up: [#10](https://github.com/jondmarien/orca-discord-presence/issues/10). Companion MVP: [#6](https://github.com/jondmarien/orca-discord-presence/pull/6).
 
 ---
 
@@ -27,7 +27,7 @@ If **Show Status** reports `enabled=true connected=true`, this path is working. 
 
 ## Cross-machine case — plugin MVP (done)
 
-User-confirmed split ([#3](https://github.com/jondmarien/orca-discord-presence/issues/3)) — one configuration among several:
+User-confirmed split (originally [#3](https://github.com/jondmarien/orca-discord-presence/issues/3); companion shipped in [#6](https://github.com/jondmarien/orca-discord-presence/pull/6)) — one configuration among several:
 
 | Machine | Role | Discord / Vesktop |
 |---|---|---|
@@ -48,7 +48,7 @@ The same design applies to any pair: host on Linux/macOS/Windows, companion on L
 - Publish policy: **prefer local IPC if connected, else bridge**. No dual-publish. Disable/stop clears remote activity.
 - Token required for non-loopback bind/URL. Tailscale and SSH-tunnel documented in the README.
 
-**Still future (Orca-native):** a host-mediated remote capability so this does not require a sidecar process or operator-set URL/token. That remains an upstream Orca PR candidate.
+**Still future (Orca-native):** a host-mediated remote capability so this does not require a sidecar process or operator-set URL/token. Tracked in [#10](https://github.com/jondmarien/orca-discord-presence/issues/10) (fork-first, then upstream).
 
 ---
 
@@ -70,11 +70,11 @@ Controlling Orca from another machine does **not** require installing this plugi
 
 ## What we do not detect
 
-No focused Orca window/tab (terminal vs agent UI). Inputs are `agent.status.changed` + `workspace.readContext` only. Subscribe to host focus/tab events **if Orca adds them** — do not invent.
+No focused Orca window/tab (terminal vs agent UI). Inputs are `agent.status.changed` + `workspace.readContext` only. Subscribe to host focus/tab events **if Orca adds them** — do not invent. See [#7](https://github.com/jondmarien/orca-discord-presence/issues/7).
 
 ---
 
-## Issue #3 checklist
+## Follow-up checklist ([#10](https://github.com/jondmarien/orca-discord-presence/issues/10))
 
 - [x] Document the dual-host gap in README + ROADMAP
 - [x] Optional OS-agnostic companion + plugin HTTP bridge (privacy-first, default off)
