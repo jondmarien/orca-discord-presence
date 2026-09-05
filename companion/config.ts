@@ -15,8 +15,6 @@ import { SHIPPED_APPLICATION_ID } from '../src/presence/settings'
 
 /**
  * Parsed companion process configuration.
- *
- * @author Jonathan Marien
  */
 export type CompanionConfig = {
   /** Address passed to `server.listen` (`127.0.0.1`, `0.0.0.0`, Tailscale IP, …). */
@@ -33,7 +31,6 @@ export type CompanionConfig = {
  *
  * @param env - `process.env` or a test map.
  * @throws If the port is not in `1…65535`, or bind is not loopback and the token is empty.
- * @author Jonathan Marien
  */
 export function parseCompanionConfig(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>

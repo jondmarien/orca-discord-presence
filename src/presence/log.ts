@@ -15,57 +15,41 @@ import { dirname, join } from 'node:path'
 
 /**
  * Qualified plugin id — also the log line prefix.
- *
- * @author Jonathan Marien
  */
 export const LOG_PLUGIN_ID = 'chron0.discord-presence'
 
 /**
  * Directory name under XDG state / LocalAppData.
- *
- * @author Jonathan Marien
  */
 export const LOG_DIR_NAME = 'chron0-discord-presence'
 
 /**
  * Log file basename.
- *
- * @author Jonathan Marien
  */
 export const LOG_FILE_NAME = 'plugin.log'
 
 /**
  * Rotate the active file when the next append would exceed this size.
- *
- * @author Jonathan Marien
  */
 export const MAX_LOG_BYTES = 256 * 1024
 
 /**
  * Override path (tests / operators). Takes precedence over XDG.
- *
- * @author Jonathan Marien
  */
 export const LOG_FILE_ENV = 'ORCA_PRESENCE_LOG_FILE'
 
 /**
  * Diagnostic severity. `error` and `warn` always reach the host log.
- *
- * @author Jonathan Marien
  */
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const
 
 /**
  * One of {@link LOG_LEVELS}.
- *
- * @author Jonathan Marien
  */
 export type LogLevel = (typeof LOG_LEVELS)[number]
 
 /**
  * Structured line emitter used by the controller and `activate`.
- *
- * @author Jonathan Marien
  */
 export type DiagnosticSink = {
   line: (level: LogLevel, event: string, detail?: Record<string, unknown>) => void
@@ -75,16 +59,12 @@ export type DiagnosticSink = {
 
 /**
  * Keys that must never appear in a log line (bridge token, headers).
- *
- * @author Jonathan Marien
  */
 const REDACTED_KEYS = new Set(['token', 'bridgetoken', 'authorization', 'password', 'secret'])
 
 /**
  * Inputs for {@link resolveLogFilePath}. Injected so tests can simulate
  * Windows LocalAppData and XDG without writing to the real home directory.
- *
- * @author Jonathan Marien
  */
 export type LogPathInput = {
   homedir: string
@@ -97,8 +77,6 @@ export type LogPathInput = {
  *
  * Order: `ORCA_PRESENCE_LOG_FILE`, `XDG_STATE_HOME`, Windows `LOCALAPPDATA`,
  * `~/.local/state/chron0-discord-presence/plugin.log`, then tmpdir.
- *
- * @author Jonathan Marien
  */
 export function resolveLogFilePath(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
@@ -128,8 +106,6 @@ export function resolveLogFilePath(
 /**
  * Format one structured line. Values with spaces are JSON-quoted.
  * Redacted keys are replaced with `***`.
- *
- * @author Jonathan Marien
  */
 export function formatLogLine(
   level: LogLevel,
@@ -154,8 +130,6 @@ export function formatLogLine(
 
 /**
  * Append a line, rotating `file` → `file.1` when the cap would be exceeded.
- *
- * @author Jonathan Marien
  */
 export function appendCappedLog(filePath: string, line: string, maxBytes = MAX_LOG_BYTES): void {
   mkdirSync(dirname(filePath), { recursive: true })
@@ -179,8 +153,6 @@ export function appendCappedLog(filePath: string, line: string, maxBytes = MAX_L
 /**
  * Host + file sink. `error` / `warn` always go to `orca.log` (and the file).
  * `info` / `debug` require `debugEnabled`. File writes never throw.
- *
- * @author Jonathan Marien
  */
 export function createDiagnosticSink({
   hostLog,

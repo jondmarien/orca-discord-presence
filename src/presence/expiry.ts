@@ -17,9 +17,9 @@
  * Named windows: short (30s) vs long (60s) tool activity.
  */
 export const ACTIVITY_EXPIRY_MS = {
-  /** Proxy / WebSocket-style chatter. */
+  /** Short-lived chatter (a burst of small events). */
   short: 30_000,
-  /** Scanner / Repeater / Intruder-style work. */
+  /** Longer-lived work (a focused session or scan). */
   long: 60_000
 } as const
 

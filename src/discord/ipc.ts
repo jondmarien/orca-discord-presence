@@ -14,8 +14,6 @@
 
 /**
  * Discord exposes `discord-ipc-0` through `discord-ipc-9` per install prefix.
- *
- * @author Jonathan Marien
  */
 const SOCKET_INDEX_LIMIT = 10
 
@@ -28,8 +26,6 @@ const SOCKET_INDEX_LIMIT = 10
  * `.flatpak/dev.vencord.Vesktop/xdg-run` — the host view of the sandbox
  * XDG runtime. There is no Flathub app `dev.vencord.Vencord` (Vencord is
  * a client mod; Vesktop is the standalone client), so that id is omitted.
- *
- * @author Jonathan Marien
  */
 const SANDBOX_SUBDIRS = [
   '',
@@ -41,8 +37,6 @@ const SANDBOX_SUBDIRS = [
 /**
  * Discord IPC opcodes. Handshake uses 0; RPC commands and READY/ERROR
  * dispatches use FRAME (1).
- *
- * @author Jonathan Marien
  */
 export const OPCODE = {
   HANDSHAKE: 0,
@@ -54,8 +48,6 @@ export const OPCODE = {
 
 /**
  * Numeric opcode union (`0` | `1` | `2` | `3` | `4`).
- *
- * @author Jonathan Marien
  */
 export type Opcode = (typeof OPCODE)[keyof typeof OPCODE]
 
@@ -63,16 +55,12 @@ export type Opcode = (typeof OPCODE)[keyof typeof OPCODE]
  * Maximum JSON body size the decoder will accept.
  *
  * Why: a hostile or desynced stream must not let us buffer unbounded memory.
- *
- * @author Jonathan Marien
  */
 const MAX_FRAME_BYTES = 1024 * 1024
 
 /**
  * Inputs for {@link discordIpcCandidates}. Injected so tests can simulate
  * Windows pipes and Linux XDG reconstruction without running on those OSes.
- *
- * @author Jonathan Marien
  */
 export type IpcPathInput = {
   /** `process.platform` value (`win32`, `linux`, `darwin`, …). */
@@ -103,7 +91,6 @@ function trimTrailingSeparator(value: string): string {
  *
  * @param input - Platform, env, and optional uid.
  * @returns Deduplicated candidate paths, most-likely first.
- * @author Jonathan Marien
  */
 export function discordIpcCandidates({ platform, env, uid }: IpcPathInput): string[] {
   if (platform === 'win32') {
@@ -151,7 +138,6 @@ export function discordIpcCandidates({ platform, env, uid }: IpcPathInput): stri
  * @param opcode - {@link OPCODE} value.
  * @param payload - JSON-serializable body (handshake `{ v, client_id }`, RPC command, etc.).
  * @returns A Node `Buffer` ready to `socket.write`.
- * @author Jonathan Marien
  */
 export function encodeFrame(opcode: number, payload: unknown): Buffer {
   const body = Buffer.from(JSON.stringify(payload), 'utf8')
@@ -173,7 +159,6 @@ export function encodeFrame(opcode: number, payload: unknown): Buffer {
  * @param onFrame - Receives opcode and parsed JSON for each complete frame.
  * @param onError - Receives decode errors; default is a no-op.
  * @returns An object with `push(chunk)`.
- * @author Jonathan Marien
  */
 export function createFrameDecoder(
   onFrame: (opcode: number, data: unknown) => void,

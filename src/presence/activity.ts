@@ -14,8 +14,6 @@ import type { PresenceSettings } from './settings'
 
 /**
  * Discord Rich Presence text-field maximum (details / state / asset text).
- *
- * @author Jonathan Marien
  */
 const DISCORD_TEXT_MAX = 128
 
@@ -24,8 +22,6 @@ const DISCORD_TEXT_MAX = 128
  *
  * Fields are optional because `workspace.readContext` and agent events
  * arrive independently; the controller merges partial updates.
- *
- * @author Jonathan Marien
  */
 export type PresenceSnapshot = {
   /** Workspace display name from `workspace.readContext`. */
@@ -50,8 +46,6 @@ export type PresenceSnapshot = {
  *
  * `state` and `timestamps` are omitted entirely when empty / disabled
  * (Discord treats a blank `state` poorly).
- *
- * @author Jonathan Marien
  */
 export type DiscordActivity = {
   /** Primary line: generic copy, workspace name, or `name — branch`. */
@@ -78,8 +72,6 @@ export type DiscordActivity = {
  * Allowed Orca agent states (`AGENT_STATUS_STATES`) and their Discord
  * labels / Rich Presence asset keys. Anything else is treated as idle so a
  * future or malformed state can never be transmitted verbatim.
- *
- * @author Jonathan Marien
  */
 const AGENT_STATE_LABELS = {
   working: { label: 'working', asset: 'state-working' },
@@ -160,7 +152,6 @@ function buildState(snapshot: PresenceSnapshot, settings: PresenceSettings): str
  * @param settings - Normalized {@link PresenceSettings}.
  * @param nowMs - Clock for clamping a future `stateStartedAtMs`.
  * @returns A {@link DiscordActivity}, or `null` to clear presence.
- * @author Jonathan Marien
  */
 export function buildActivity(
   snapshot: PresenceSnapshot,
