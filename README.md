@@ -40,29 +40,19 @@ A trusted Orca plugin worker (`dist/main.js`) that publishes privacy-gated Rich 
 
 ## Look & Feel
 
-These are the Rich Presence art keys already uploaded on the shipped Discord application. Live Discord profile screenshots can be added later — this repo does not invent them.
+### Presence look
 
-<p align="center">
-  <img src="assets/orca.png" width="72" alt="Asset key orca (large image)" />
-  &nbsp;
-  <img src="assets/state-working.png" width="56" alt="Asset key state-working" />
-  &nbsp;
-  <img src="assets/state-blocked.png" width="56" alt="Asset key state-blocked" />
-  &nbsp;
-  <img src="assets/state-waiting.png" width="56" alt="Asset key state-waiting" />
-  &nbsp;
-  <img src="assets/state-idle.png" width="56" alt="Asset key state-idle" />
-</p>
+These are the Discord Rich Presence keys already uploaded on the shipped application, rendered from in-repo [`assets/`](assets/). Live Discord profile screenshots can be added later — this table does not invent extra states or fake URLs.
 
-| Asset key | Role | File |
-|---|---|---|
-| `orca` | Large image | [`assets/orca.png`](assets/orca.png) |
-| `state-working` | Small image | [`assets/state-working.png`](assets/state-working.png) |
-| `state-blocked` | Small image | [`assets/state-blocked.png`](assets/state-blocked.png) |
-| `state-waiting` | Small image | [`assets/state-waiting.png`](assets/state-waiting.png) |
-| `state-idle` | Small image | [`assets/state-idle.png`](assets/state-idle.png) |
+| State | Asset key | Meaning | Preview |
+|---|---|---|---|
+| *(always)* | `orca` | Large image on every non-null activity | <img src="assets/orca.png" width="64" alt="orca large asset" /> |
+| `working` | `state-working` | Agent label `working` (small image) | <img src="assets/state-working.png" width="48" alt="state-working" /> |
+| `blocked` | `state-blocked` | Agent label `blocked` (small image) | <img src="assets/state-blocked.png" width="48" alt="state-blocked" /> |
+| `waiting` | `state-waiting` | Agent label `waiting for input` (small image) | <img src="assets/state-waiting.png" width="48" alt="state-waiting" /> |
+| `done` or unrecognized | `state-idle` | Agent label `idle` — raw unknown states are never forwarded | <img src="assets/state-idle.png" width="48" alt="state-idle" /> |
 
-Agent mapping: `working` → working · `blocked` → blocked · `waiting` → waiting for input · `done` / unknown → idle. Unrecognized states are never forwarded as raw strings.
+Source files: [`assets/orca.png`](assets/orca.png), [`assets/state-working.png`](assets/state-working.png), [`assets/state-blocked.png`](assets/state-blocked.png), [`assets/state-waiting.png`](assets/state-waiting.png), [`assets/state-idle.png`](assets/state-idle.png).
 
 ---
 
@@ -339,7 +329,7 @@ Module map, opcodes, and debounce: [docs/architecture.md](docs/architecture.md).
 | Doc | What |
 |---|---|
 | [What is this?](#what-is-this) | Identity, default Discord copy, inputs |
-| [Look & Feel](#look--feel) | Shipped RP assets |
+| [Look & Feel](#look--feel) / [Presence look](#presence-look) | Activity-state table + in-repo asset previews |
 | [How it works](#how-it-works) | IPC, privacy, heartbeat |
 | [Features](#features) | Core / advanced / UX |
 | [Installation](#installation) | Enable, load, consent, Show Status |
