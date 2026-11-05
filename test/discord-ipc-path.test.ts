@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { discordIpcCandidates } from '../src/discord/ipc'
+import { DISCORD_IPC_ENV, discordIpcCandidates } from '../src/discord/ipc'
 
 test('windows candidates are named pipes, ten per install', () => {
   const paths = discordIpcCandidates({ platform: 'win32', env: {}, uid: 1000 })
@@ -61,4 +61,23 @@ test('an explicit XDG_RUNTIME_DIR wins over the reconstructed one', () => {
 test('trailing separators do not produce doubled slashes', () => {
   const paths = discordIpcCandidates({ platform: 'linux', env: { TMPDIR: '/tmp/' }, uid: 1000 })
   expect(paths.every((path) => !path.includes('//'))).toBe(true)
+})
+
+test('ORCA_PRESENCE_DISCORD_IPC overrides candidates', () => {
+  expect(DISCORD_IPC_ENV).toBe('ORCA_PRESENCE_DISCORD_IPC')
+  const paths = discordIpcCandidates({
+    platform: 'linux',
+    env: { ORCA_PRESENCE_DISCORD_IPC: '/x/a:/x/b::' },
+    uid: 1000
+  })
+  expect(paths).toEqual(['/x/a', '/x/b'])
+})
+
+test('ORCA_PRESENCE_DISCORD_IPC uses ; on win32', () => {
+  const paths = discordIpcCandidates({
+    platform: 'win32',
+    env: { ORCA_PRESENCE_DISCORD_IPC: '\\\\?\\pipe\\a;\\\\?\\pipe\\b' },
+    uid: 1000
+  })
+  expect(paths).toEqual(['\\\\?\\pipe\\a', '\\\\?\\pipe\\b'])
 })

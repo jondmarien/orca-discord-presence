@@ -12,6 +12,8 @@
  * @date 2026-09-05
  */
 
+import path from 'node:path'
+
 /**
  * Discord exposes `discord-ipc-0` through `discord-ipc-9` per install prefix.
  */
@@ -59,6 +61,14 @@ export type Opcode = (typeof OPCODE)[keyof typeof OPCODE]
 const MAX_FRAME_BYTES = 1024 * 1024
 
 /**
+ * Env var that replaces the whole candidate list with explicit paths,
+ * separated by the platform delimiter (`:` POSIX, `;` Windows).
+ *
+ * Why: tests must not dial a live Discord/Vesktop socket on the dev machine.
+ */
+export const DISCORD_IPC_ENV = 'ORCA_PRESENCE_DISCORD_IPC'
+
+/**
  * Inputs for {@link discordIpcCandidates}. Injected so tests can simulate
  * Windows pipes and Linux XDG reconstruction without running on those OSes.
  */
@@ -87,12 +97,19 @@ function trimTrailingSeparator(value: string): string {
  * Windows: `\\?\pipe\discord-ipc-0` … `discord-ipc-9`.
  * POSIX: for each prefix (`XDG_RUNTIME_DIR`, `/run/user/<uid>`, temp dirs,
  * `/tmp`) and each {@link SANDBOX_SUBDIRS} entry, emit `discord-ipc-0`…`9`.
- * Duplicates are dropped; first occurrence wins.
+ * Duplicates are dropped; first occurrence wins. If {@link DISCORD_IPC_ENV}
+ * is set, its delimiter-separated entries are returned verbatim instead.
  *
  * @param input - Platform, env, and optional uid.
  * @returns Deduplicated candidate paths, most-likely first.
  */
 export function discordIpcCandidates({ platform, env, uid }: IpcPathInput): string[] {
+  const override = env[DISCORD_IPC_ENV]
+  if (override) {
+    // Why: choose the delimiter from the injected platform, not the host.
+    const delimiter = platform === 'win32' ? path.win32.delimiter : path.posix.delimiter
+    return override.split(delimiter).filter((entry) => entry.length > 0)
+  }
   if (platform === 'win32') {
     return Array.from(
       { length: SOCKET_INDEX_LIMIT },

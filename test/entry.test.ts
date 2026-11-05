@@ -1,13 +1,31 @@
-import { expect, test } from 'bun:test'
+import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DISCORD_IPC_ENV } from '../src/discord/ipc'
 import { formatStatusTransmitting, type OrcaHost } from '../src/main'
 import { extractPanelSnapshot } from '../src/presence/panel-html'
 import { PLUGIN_VERSION } from '../src/version'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+// Why: activate() starts the controller, which dials Discord IPC. A live
+// Discord/Vesktop socket on the dev machine would make tests hang, so point
+// discovery at a path that never exists.
+const ipcDir = mkdtempSync(join(os.tmpdir(), 'orca-presence-ipc-'))
+const previousIpc = process.env[DISCORD_IPC_ENV]
+beforeAll(() => {
+  process.env[DISCORD_IPC_ENV] = join(ipcDir, 'discord-ipc-none')
+})
+afterAll(() => {
+  if (previousIpc === undefined) {
+    delete process.env[DISCORD_IPC_ENV]
+  } else {
+    process.env[DISCORD_IPC_ENV] = previousIpc
+  }
+  rmSync(ipcDir, { recursive: true, force: true })
+})
 
 test('manifest identity is chron0.discord-presence', () => {
   const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')) as {
