@@ -286,6 +286,35 @@ test('a listed agent working past the stale window survives prune and keeps its 
   expect(table.summarize().stateStartedAtMs).toBe(startedAt)
 })
 
+function seedList(table: ReturnType<typeof tableHarness>['table'], now: number, state: string, startedAt: number) {
+  for (const event of parseAgentsList({ agents: [{ terminalId: 't1', agent: 'claude', state, stateStartedAt: startedAt }] }, now)) {
+    table.upsert(event)
+  }
+}
+
+test('a listed done row finished 30 minutes ago is pruned immediately', () => {
+  const { table, nowRef } = tableHarness()
+  seedList(table, nowRef(), 'done', nowRef() - 30 * 60_000)
+  expect(table.slots()).toHaveLength(0)
+})
+
+test('a listed done row finished 2 minutes ago stays listed', () => {
+  const { table, nowRef } = tableHarness()
+  seedList(table, nowRef(), 'done', nowRef() - 2 * 60_000)
+  expect(table.slots()).toHaveLength(1)
+  expect(table.slots()[0]?.receivedAt).toBe(nowRef() - 2 * 60_000)
+})
+
+test('a re-sync of a completed slot does not extend its receivedAt', () => {
+  const { table, nowRef } = tableHarness()
+  const finishedAt = nowRef() - 2 * 60_000
+  seedList(table, nowRef(), 'done', finishedAt)
+  seedList(table, nowRef() + 60_000, 'done', finishedAt)
+  expect(table.slots()[0]?.receivedAt).toBe(finishedAt)
+  seedList(table, nowRef() + 60_000, 'done', nowRef() + 60_000)
+  expect(table.slots()[0]?.receivedAt).toBe(finishedAt)
+})
+
 test('same-state event keeps stateStartedAt; a state change resets it', () => {
   const { table, nowRef } = tableHarness()
   const t0 = nowRef()

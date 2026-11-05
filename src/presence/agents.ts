@@ -172,7 +172,8 @@ export function parseWorkspaceRemovedId(payload: unknown): string | null {
  * replaces them. Rows without a `terminalId` cannot be deduped and are dropped.
  *
  * @param result - Raw `agents.list` result, `{ agents: [...] }`.
- * @param nowMs - Listing time, used as `receivedAt` for every row.
+ * @param nowMs - Listing time, used as `receivedAt` for active rows (finished
+ *   rows use their `stateStartedAt`).
  * @returns Events, or `[]` for any non-conforming input.
  */
 export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEvent[] {
@@ -195,18 +196,26 @@ export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEven
     if (typeof source.state !== 'string') {
       continue
     }
+    const startedAt =
+      typeof source.stateStartedAt === 'number' && Number.isFinite(source.stateStartedAt)
+        ? source.stateStartedAt
+        : undefined
+    const canonical = canonicalizeAgentState(source.state)
+    const finished = canonical === 'done' || canonical === 'idle'
     const event: AgentStatusEvent = {
       workspaceId: '',
       paneKey: '',
       terminalId: source.terminalId,
       state: source.state,
-      // Why: the listing proves the agent is alive now. Using its (possibly
-      // hours old) start as `receivedAt` would drop it from the stale window
-      // the moment the worker restarts.
-      receivedAt: nowMs
+      // Why: the listing proves an active agent is alive now. Using its
+      // (possibly hours old) start as `receivedAt` would drop it from the
+      // stale window the moment the worker restarts. A finished row is the
+      // opposite: retention counts from when it finished, so a long-done row
+      // does not get a fresh window on every re-sync.
+      receivedAt: finished ? (startedAt ?? nowMs) : nowMs
     }
-    if (typeof source.stateStartedAt === 'number' && Number.isFinite(source.stateStartedAt)) {
-      event.stateStartedAt = source.stateStartedAt
+    if (startedAt !== undefined) {
+      event.stateStartedAt = startedAt
     }
     if (typeof source.agent === 'string' && source.agent.length > 0) {
       event.kind = source.agent
@@ -335,13 +344,18 @@ export function createAgentTable({
         previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined
           ? previous.stateStartedAt
           : (event.stateStartedAt ?? event.receivedAt)
+      // Why: a re-sync of an already finished slot must never extend its
+      // retention; it keeps the receivedAt of the first sighting.
+      const finished = canonicalState === 'done' || canonicalState === 'idle'
+      const receivedAt =
+        finished && previous?.canonicalState === canonicalState ? previous.receivedAt : event.receivedAt
       map.set(key, {
         workspaceId,
         paneKey: event.paneKey,
         ...(event.terminalId ? { terminalId: event.terminalId } : {}),
         rawState: event.state,
         canonicalState,
-        receivedAt: event.receivedAt,
+        receivedAt,
         stateStartedAt,
         ...(kind ? { kind } : {}),
         ...(title ? { title } : {})

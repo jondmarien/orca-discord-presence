@@ -670,15 +670,18 @@ function parseAgentsList(result, nowMs) {
     if (typeof source.state !== "string") {
       continue;
     }
+    const startedAt = typeof source.stateStartedAt === "number" && Number.isFinite(source.stateStartedAt) ? source.stateStartedAt : undefined;
+    const canonical = canonicalizeAgentState(source.state);
+    const finished = canonical === "done" || canonical === "idle";
     const event = {
       workspaceId: "",
       paneKey: "",
       terminalId: source.terminalId,
       state: source.state,
-      receivedAt: nowMs
+      receivedAt: finished ? startedAt ?? nowMs : nowMs
     };
-    if (typeof source.stateStartedAt === "number" && Number.isFinite(source.stateStartedAt)) {
-      event.stateStartedAt = source.stateStartedAt;
+    if (startedAt !== undefined) {
+      event.stateStartedAt = startedAt;
     }
     if (typeof source.agent === "string" && source.agent.length > 0) {
       event.kind = source.agent;
@@ -780,13 +783,15 @@ function createAgentTable({
       const previous = map.get(key);
       const workspaceId = event.workspaceId || previous?.workspaceId || "";
       const stateStartedAt = previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined ? previous.stateStartedAt : event.stateStartedAt ?? event.receivedAt;
+      const finished = canonicalState === "done" || canonicalState === "idle";
+      const receivedAt = finished && previous?.canonicalState === canonicalState ? previous.receivedAt : event.receivedAt;
       map.set(key, {
         workspaceId,
         paneKey: event.paneKey,
         ...event.terminalId ? { terminalId: event.terminalId } : {},
         rawState: event.state,
         canonicalState,
-        receivedAt: event.receivedAt,
+        receivedAt,
         stateStartedAt,
         ...kind ? { kind } : {},
         ...title ? { title } : {}
