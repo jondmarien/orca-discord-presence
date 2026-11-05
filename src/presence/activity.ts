@@ -83,16 +83,29 @@ export type DiscordActivity = {
  * Suffix on every Discord art asset key.
  *
  * Why: Discord caches asset art by key name for hours or days, so redesigned
- * icons ship under new keys (`orca-v2`, `state-working-v2`, …) uploaded to the
+ * icons ship under new keys (`orca-v2`) uploaded to the
  * shipped application. Bump this when the art changes again.
  */
 export const DISCORD_ASSET_SUFFIX = '-v2'
 
 /**
- * Local file name (in `assets/`) for a Discord asset key: the key without
+ * Bare state names used as Discord small-image keys. Why: the small image is a
+ * badge-only asset (`working`, `completed`, …) drawn over the large `orca-v2`
+ * icon, so Discord shows a clean status dot instead of a shrunken full icon.
+ */
+const SMALL_STATE_KEYS: ReadonlySet<string> = new Set(['working', 'blocked', 'waiting', 'completed', 'idle'])
+
+/**
+ * Local file name (in `assets/`) the panel shows for a Discord asset key.
+ *
+ * Why: the panel draws the full state icon (`state-working.png`), not the
+ * badge, so bare state keys map to their `state-*` file; suffixed keys lose
  * {@link DISCORD_ASSET_SUFFIX}.
  */
 export function localAssetName(key: string): string {
+  if (SMALL_STATE_KEYS.has(key)) {
+    return `state-${key}`
+  }
   return key.endsWith(DISCORD_ASSET_SUFFIX) ? key.slice(0, -DISCORD_ASSET_SUFFIX.length) : key
 }
 
@@ -104,11 +117,11 @@ export function localAssetName(key: string): string {
  * claims completion.
  */
 const AGENT_STATE_LABELS = {
-  working: { label: 'working', asset: `state-working${DISCORD_ASSET_SUFFIX}` },
-  blocked: { label: 'blocked', asset: `state-blocked${DISCORD_ASSET_SUFFIX}` },
-  waiting: { label: 'waiting for input', asset: `state-waiting${DISCORD_ASSET_SUFFIX}` },
-  done: { label: 'completed', asset: `state-completed${DISCORD_ASSET_SUFFIX}` },
-  idle: { label: 'idle', asset: `state-idle${DISCORD_ASSET_SUFFIX}` }
+  working: { label: 'working', asset: 'working' },
+  blocked: { label: 'blocked', asset: 'blocked' },
+  waiting: { label: 'waiting for input', asset: 'waiting' },
+  done: { label: 'completed', asset: 'completed' },
+  idle: { label: 'idle', asset: 'idle' }
 } as const
 
 /**

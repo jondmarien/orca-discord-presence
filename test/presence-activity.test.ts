@@ -119,7 +119,7 @@ test('agent state done renders as completed with the completed asset', () => {
     NOW_MS
   )
   expect(activity?.state).toBe('completed')
-  expect(activity?.assets.small_image).toBe('state-completed-v2')
+  expect(activity?.assets.small_image).toBe('completed')
   expect(activity?.assets.small_text).toBe('completed')
 })
 
@@ -130,7 +130,7 @@ test('no agent state renders as idle with the idle asset', () => {
     NOW_MS
   )
   expect(activity?.state).toBe('idle')
-  expect(activity?.assets.small_image).toBe('state-idle-v2')
+  expect(activity?.assets.small_image).toBe('idle')
   expect(activity?.assets.small_text).toBe('idle')
 })
 
@@ -141,7 +141,7 @@ test('a raw idle state renders as idle, not completed', () => {
     NOW_MS
   )
   expect(activity?.state).toBe('idle')
-  expect(activity?.assets.small_image).toBe('state-idle-v2')
+  expect(activity?.assets.small_image).toBe('idle')
 })
 
 test('an unrecognized agent state reads idle rather than leaking or claiming completion', () => {
@@ -151,7 +151,7 @@ test('an unrecognized agent state reads idle rather than leaking or claiming com
     NOW_MS
   )
   expect(activity?.state).toBe('idle')
-  expect(activity?.assets.small_image).toBe('state-idle-v2')
+  expect(activity?.assets.small_image).toBe('idle')
   expect(activity?.assets.small_text).toBe('idle')
 })
 
@@ -194,7 +194,7 @@ test('running aliases to the working asset and label', () => {
     NOW_MS
   )
   expect(activity?.state).toBe('working')
-  expect(activity?.assets.small_image).toBe('state-working-v2')
+  expect(activity?.assets.small_image).toBe('working')
   expect(activity?.assets.small_text).toBe('working')
 })
 
@@ -205,7 +205,7 @@ test('needs_input aliases to waiting for input', () => {
     NOW_MS
   )
   expect(activity?.state).toBe('waiting for input')
-  expect(activity?.assets.small_image).toBe('state-waiting-v2')
+  expect(activity?.assets.small_image).toBe('waiting')
 })
 
 test('an unrecognized agent state is omitted from the serialized payload', () => {
@@ -285,8 +285,8 @@ test('an empty state string is omitted rather than sent blank', () => {
 test('every Discord asset key carries the -v2 suffix and maps back to a local file', () => {
   const activity = buildActivity({ ...SNAPSHOT, agentState: 'blocked' }, normalizeSettings({}), NOW_MS)
   expect(activity?.assets.large_image).toBe('orca-v2')
-  expect(activity?.assets.small_image).toBe('state-blocked-v2')
-  expect(localAssetName('state-blocked-v2')).toBe('state-blocked')
+  expect(activity?.assets.small_image).toBe('blocked')
+  expect(localAssetName('blocked')).toBe('state-blocked')
   expect(existsSync(join(import.meta.dir, '..', 'assets', `${localAssetName(activity!.assets.small_image)}.png`))).toBe(true)
 })
 
