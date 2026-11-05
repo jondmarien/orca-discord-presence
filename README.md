@@ -15,6 +15,8 @@
 
 </div>
 
+<img width="1400" height="520" alt="Rich Presence for Discord showing Orca agent state on a Discord profile" src="https://github.com/user-attachments/assets/d8cf8947-c451-4e29-92f7-1a2cd271227d" />
+
 The default Discord text is `Working in Orca`, plus an optional agent state and an elapsed timer. Repo, branch, and machine names stay off until you raise the detail level. You do not need your own Discord application: the plugin ships Application ID `1545653843239374848` (a public snowflake; there is no bot token and no client secret).
 
 Browser Discord has no IPC socket. Presence needs the desktop client (Discord, Vesktop with arRPC, or Vencord with RPC) on the machine where the plugin runs, or on a [companion](#remote-presence-companion) machine.
