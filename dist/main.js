@@ -760,9 +760,10 @@ function createAgentTable({
       const kind = event.kind ?? map.get(key)?.kind;
       const title = event.title ?? map.get(key)?.title;
       const previous = map.get(key);
+      const workspaceId = event.workspaceId || previous?.workspaceId || "";
       const stateStartedAt = previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined ? previous.stateStartedAt : event.stateStartedAt ?? event.receivedAt;
       map.set(key, {
-        workspaceId: event.workspaceId,
+        workspaceId,
         paneKey: event.paneKey,
         ...event.terminalId ? { terminalId: event.terminalId } : {},
         rawState: event.state,

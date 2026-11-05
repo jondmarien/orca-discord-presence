@@ -295,3 +295,12 @@ test('same-state event keeps stateStartedAt; a state change resets it', () => {
   table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'blocked', receivedAt: t0 + 20 })
   expect(table.slots()[0]?.stateStartedAt).toBe(t0 + 20)
 })
+
+test('a list re-sync keeps the workspaceId a status event supplied', () => {
+  const { table, nowRef } = tableHarness()
+  const at = nowRef()
+  table.upsert({ workspaceId: 'w1', paneKey: 'k', terminalId: 't1', state: 'working', receivedAt: at })
+  table.upsert({ workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: at })
+  expect(table.removeWorkspace('w1')).toBe(true)
+  expect(table.slots()).toHaveLength(0)
+})

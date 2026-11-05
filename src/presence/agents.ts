@@ -328,12 +328,15 @@ export function createAgentTable({
       // Why: repeated same-state events must not restart the elapsed timer; a
       // state change starts it at that event.
       const previous = map.get(key)
+      // Why: `agents.list` rows have no workspace, so a re-sync must not wipe
+      // the id a status event supplied or `removeWorkspace` would miss it.
+      const workspaceId = event.workspaceId || previous?.workspaceId || ''
       const stateStartedAt =
         previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined
           ? previous.stateStartedAt
           : (event.stateStartedAt ?? event.receivedAt)
       map.set(key, {
-        workspaceId: event.workspaceId,
+        workspaceId,
         paneKey: event.paneKey,
         ...(event.terminalId ? { terminalId: event.terminalId } : {}),
         rawState: event.state,
