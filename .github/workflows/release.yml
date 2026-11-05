@@ -1,21 +1,19 @@
-# Cut a GitHub Release on every push to main.
+# Cut a GitHub Release when a version tag (vX.Y.Z) is pushed.
 #
-# Product version in package.json / orca-plugin.json stays honest (e.g. 0.3.0).
-# Tags are unique per commit: v${VERSION}-${GITHUB_SHA::7}.
-# Zip name is stable so this URL always hits the latest build:
-#   https://github.com/jondmarien/orca-discord-presence/releases/latest/download/chron0.discord-presence.zip
-#
-# Skip: put [skip release] in the commit message.
-# Tests use fake IPC — no Discord required.
+# The Orca plugin directory (onorca.dev) lists the newest vX.Y.Z tag and installs
+# from the Git repository, so this workflow only adds a convenience zip for
+# manual "local folder" installs. It refuses a tag that does not match the
+# version in orca-plugin.json, package.json and src/version.ts.
+# Tests use fake IPC; no Discord is required.
 
 name: Release
 
 on:
   push:
-    branches: [main]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
 concurrency:
-  group: release-main
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -23,7 +21,6 @@ permissions:
 
 jobs:
   release:
-    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -34,78 +31,56 @@ jobs:
         with:
           bun-version: 1.4.1
 
+      - name: Check tag matches the plugin version
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          MANIFEST="$(python3 -c "import json; print(json.load(open('orca-plugin.json'))['version'])")"
+          PACKAGE="$(python3 -c "import json; print(json.load(open('package.json'))['version'])")"
+          grep -q "PLUGIN_VERSION = '${TAG_VERSION}'" src/version.ts
+          test "${MANIFEST}" = "${TAG_VERSION}"
+          test "${PACKAGE}" = "${TAG_VERSION}"
+          echo "VERSION=${TAG_VERSION}" >> "${GITHUB_ENV}"
+
       - name: Install, test, build
         run: |
           bun install --frozen-lockfile
           bun test
+          bun run typecheck
           bun run build
+
+      - name: Committed build is up to date
+        run: git diff --exit-code -- dist/main.js panel/index.html
 
       - name: Pack plugin zip
         run: |
           set -euo pipefail
-          VERSION="$(python3 -c "import json; print(json.load(open('package.json'))['version'])")"
-          SHORT_SHA="${GITHUB_SHA:0:7}"
-          PLUGIN_DIR="chron0.discord-presence"
-          ZIP_NAME="chron0.discord-presence.zip"
+          PLUGIN_DIR="rich-presence-for-discord"
+          ZIP_NAME="rich-presence-for-discord-${VERSION}.zip"
           STAGE="$(mktemp -d)/${PLUGIN_DIR}"
-
-          mkdir -p "${STAGE}/dist" "${STAGE}/assets"
-          cp orca-plugin.json "${STAGE}/"
+          mkdir -p "${STAGE}/dist"
+          cp orca-plugin.json LICENSE README.md "${STAGE}/"
           cp dist/main.js "${STAGE}/dist/"
-          cp -R assets/. "${STAGE}/assets/"
-          if [ -d panel ]; then
-            cp -R panel "${STAGE}/panel"
-          fi
-
-          # Confirm the zip is a loadable plugin root (folder with orca-plugin.json).
+          cp -R assets panel "${STAGE}/"
+          rm -rf "${STAGE}/assets/screenshots/src"
           test -f "${STAGE}/orca-plugin.json"
-          test -f "${STAGE}/dist/main.js"
-
           (cd "$(dirname "${STAGE}")" && zip -r "${GITHUB_WORKSPACE}/${ZIP_NAME}" "${PLUGIN_DIR}")
-
-          {
-            echo "VERSION=${VERSION}"
-            echo "SHORT_SHA=${SHORT_SHA}"
-            echo "TAG=v${VERSION}-${SHORT_SHA}"
-            echo "ZIP_NAME=${ZIP_NAME}"
-          } >> "${GITHUB_ENV}"
-
-          echo "Packed ${ZIP_NAME} (${VERSION}, ${SHORT_SHA})"
-          unzip -l "${ZIP_NAME}"
+          echo "ZIP_NAME=${ZIP_NAME}" >> "${GITHUB_ENV}"
 
       - name: Write release notes
         run: |
-          set -euo pipefail
-          PANEL_LINE=""
-          if [ -d panel ]; then
-            PANEL_LINE="- \`panel/\`"
-          fi
           cat > release-notes.md <<EOF
-          ## Discord Presence ${VERSION} (build ${SHORT_SHA})
+          ## Rich Presence for Discord ${VERSION}
 
-          Plugin id: \`chron0.discord-presence\`
-
-          **Product version** in \`orca-plugin.json\` / \`package.json\` is **${VERSION}**.
-          This GitHub tag (\`${TAG}\`) is unique per \`main\` push so Releases do not collide.
-          The zip filename stays \`chron0.discord-presence.zip\` so
-          [the latest download URL](https://github.com/jondmarien/orca-discord-presence/releases/latest/download/chron0.discord-presence.zip) does not change.
+          Plugin id: \`jondmarien.discord-presence\`
 
           ### Install
 
-          1. Download [\`chron0.discord-presence.zip\`](https://github.com/jondmarien/orca-discord-presence/releases/latest/download/chron0.discord-presence.zip).
-          2. Unzip it.
-          3. Orca → **Settings → Plugins** → enable **Plugin system** → **Install plugin** → **Local folder**.
-          4. Paste the full path to the unzipped folder that contains \`orca-plugin.json\`.
-          5. Approve consent, then run **Discord Presence: Show Status**.
+          - **From Orca's plugin directory:** <https://www.onorca.dev/plugins/jondmarien/orca-discord-presence>
+          - **From Git:** Orca → Settings → Plugins → Add plugin → From a Git URL…, then paste \`https://github.com/jondmarien/orca-discord-presence#${GITHUB_REF_NAME}\`
+          - **From the zip:** unzip \`${ZIP_NAME}\`, then Orca → Settings → Plugins → Add plugin → Local folder, and choose the unzipped \`rich-presence-for-discord\` folder.
 
-          Orca does not install from the zip file itself — point it at the unpacked folder.
-
-          ### Contents
-
-          - \`orca-plugin.json\`
-          - \`dist/main.js\`
-          - \`assets/\`
-          ${PANEL_LINE}
+          Upgrading from \`chron0.discord-presence\`: uninstall the old copy first; its settings do not carry over.
 
           Commit: ${GITHUB_SHA}
           EOF
@@ -113,12 +88,11 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG }}
-          name: Discord Presence ${{ env.VERSION }} (build ${{ env.SHORT_SHA }})
+          tag_name: ${{ github.ref_name }}
+          name: Rich Presence for Discord ${{ env.VERSION }}
           body_path: release-notes.md
-          files: chron0.discord-presence.zip
+          files: ${{ env.ZIP_NAME }}
           fail_on_unmatched_files: true
           make_latest: true
-          target_commitish: ${{ github.sha }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
