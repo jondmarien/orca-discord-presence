@@ -485,6 +485,8 @@ async function activateWithSecrets(options: {
   failSecretSet?: boolean
   deps?: Parameters<typeof import('../src/main').default>[1]
 }) {
+  const hostLines: string[] = []
+  const panelHandlers = new Map<string, (input: unknown) => unknown>()
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-token-'))
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
   process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
@@ -502,7 +504,7 @@ async function activateWithSecrets(options: {
   let feed: ((e: { key: string }) => void) | null = null
   const has = (method: string) => method.startsWith('secrets.')
   const orca: OrcaHost = {
-    log: () => {},
+    log: (message) => void hostLines.push(message),
     commands: { register: (id, handler) => handlers.set(id, handler) },
     events: { on: (event, handler) => void eventHandlers.set(event, handler) },
     host: {
@@ -541,10 +543,19 @@ async function activateWithSecrets(options: {
         feed = handler
         return { dispose: () => {} }
       }
+    },
+    panels: {
+      handle: (name, fn) => {
+        panelHandlers.set(name, fn)
+        return { dispose: () => void panelHandlers.delete(name) }
+      },
+      post: () => {}
     }
   }
   await activate(orca, options.deps)
   return {
+    hostLines,
+    panelHandlers,
     handlers,
     eventHandlers,
     notifications,
@@ -638,6 +649,83 @@ test('configure with a failing keyring returns ok:false and never falls back to 
   expect(run.settingsSets.some((entry) => entry.key === 'bridgeToken')).toBe(false)
   expect(run.notifications.join('\n').includes('fresh-token')).toBe(false)
   await run.finish()
+})
+
+/**
+ * Fake Discord clients that connect to their first candidate and log every
+ * `setActivity`, so tests can tell which controller published.
+ */
+function fakeDiscordClients() {
+  const created: Array<{ candidates?: () => string[] }> = []
+  const sets: number[] = []
+  const createClient = (options: { candidates?: () => string[] }) => {
+    const index = created.length
+    created.push(options)
+    let path: string | null = null
+    return {
+      connect: async () => {
+        path = options.candidates?.()[0] ?? null
+      },
+      isConnected: () => path !== null,
+      connectedPath: () => path,
+      setActivity: async () => {
+        sets.push(index)
+        return null
+      },
+      clearActivity: async () => null,
+      close: async () => {
+        path = null
+      },
+      destroySocketForTest: () => {}
+    }
+  }
+  return { created, sets, createClient }
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('a failed token save applies no other configure field and does not rebuild the controller', async () => {
+  const fake = fakeDiscordClients()
+  const run = await activateWithSecrets({
+    protection: 'os-keyring',
+    settings: {},
+    failSecretSet: true,
+    deps: { detect: async () => [], createClient: fake.createClient }
+  })
+  try {
+    await wait(100)
+    const clientsBefore = fake.created.length
+    const result = (await run.handlers.get('presence.configure')?.({
+      applicationId: '1234567890123456789',
+      bridgeToken: 'new'
+    })) as { ok: boolean }
+    expect(result.ok).toBe(false)
+    expect(run.settingsSets.some((entry) => entry.key === 'applicationId')).toBe(false)
+    expect(run.hostLines.some((line) => line.includes('discord.app_id_rebind'))).toBe(false)
+    expect(fake.created.length).toBe(clientsBefore)
+  } finally {
+    await run.finish()
+  }
+})
+
+test('rebuilding the controller for a new Application ID republishes the current snapshot', async () => {
+  const fake = fakeDiscordClients()
+  const run = await activateWithSecrets({
+    protection: 'unavailable',
+    settings: {},
+    deps: { detect: async () => [], createClient: fake.createClient }
+  })
+  try {
+    await wait(100)
+    const clientsBefore = fake.created.length
+    run.state.stored = { ...run.state.stored, applicationId: '1234567890123456789' }
+    run.feed()
+    await wait(400)
+    expect(fake.created.length).toBe(clientsBefore + 1)
+    expect(fake.sets.includes(clientsBefore)).toBe(true)
+  } finally {
+    await run.finish()
+  }
 })
 
 test('a settings re-read does not wipe a secrets-held token', async () => {

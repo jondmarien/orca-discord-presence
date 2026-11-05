@@ -2131,6 +2131,9 @@ async function activate(orca, deps = {}) {
       diagnostics?.line("info", applicationIdChanged ? "discord.app_id_rebind" : "discord.client_rebind", applicationIdChanged ? { applicationId: nextSettings.applicationId } : { client: nextSettings.discordClient });
       await controller?.stop();
       controller = createController(nextSettings);
+      if (!deactivated) {
+        await refresh(undefined, { force: true });
+      }
     } else {
       await controller?.setSettings(nextSettings);
     }
@@ -2138,26 +2141,25 @@ async function activate(orca, deps = {}) {
   }
   async function persist(nextSettings) {
     const previous = settings;
-    let tokenFailure = null;
-    for (const [key, value] of Object.entries(nextSettings)) {
-      if (previous[key] === value) {
-        continue;
-      }
-      const write = key === "bridgeToken" ? saveBridgeToken(orca.host, String(value)).then((store) => {
+    if (nextSettings.bridgeToken !== previous.bridgeToken) {
+      try {
+        const store = await saveBridgeToken(orca.host, String(nextSettings.bridgeToken));
         tokenStore = store;
         tokenWarnings = store === "settings" ? [SECRETS_UNAVAILABLE_WARNING] : [];
-      }) : orca.host.call("settings.set", { key, value: toSettingsValue(value) });
-      await write.catch((error) => {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        orca.log(`failed to persist bridgeToken: ${message}`);
+        throw error instanceof Error ? error : new Error(message);
+      }
+    }
+    for (const [key, value] of Object.entries(nextSettings)) {
+      if (key === "bridgeToken" || previous[key] === value) {
+        continue;
+      }
+      await orca.host.call("settings.set", { key, value: toSettingsValue(value) }).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         orca.log(`failed to persist ${key}: ${message}`);
-        if (key === "bridgeToken") {
-          tokenFailure = error instanceof Error ? error : new Error(message);
-        }
       });
-    }
-    if (tokenFailure) {
-      await applySettings({ ...nextSettings, bridgeToken: previous.bridgeToken });
-      throw tokenFailure;
     }
     await applySettings(nextSettings);
   }

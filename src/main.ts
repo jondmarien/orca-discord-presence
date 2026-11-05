@@ -499,6 +499,11 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       )
       await controller?.stop()
       controller = createController(nextSettings)
+      // Why: a fresh controller has published nothing, so the presence would
+      // go blank until the next event or heartbeat.
+      if (!deactivated) {
+        await refresh(undefined, { force: true })
+      }
     } else {
       await controller?.setSettings(nextSettings)
     }
@@ -516,31 +521,31 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
    */
   async function persist(nextSettings: PresenceSettings) {
     const previous = settings
-    let tokenFailure: Error | null = null
-    for (const [key, value] of Object.entries(nextSettings)) {
-      if (previous[key as keyof PresenceSettings] === value) {
-        continue
-      }
-      const write =
-        key === 'bridgeToken'
-          ? saveBridgeToken(orca.host, String(value)).then((store) => {
-              tokenStore = store
-              tokenWarnings = store === 'settings' ? [SECRETS_UNAVAILABLE_WARNING] : []
-            })
-          : orca.host.call('settings.set', { key, value: toSettingsValue(value) })
-      await write.catch((error: unknown) => {
+    // Why: the token goes first. A keyring failure then leaves everything as
+    // it was; writing the other fields first would apply them behind an
+    // `ok:false` result, and an Application ID change would rebuild the
+    // controller for nothing.
+    if (nextSettings.bridgeToken !== previous.bridgeToken) {
+      try {
+        const store = await saveBridgeToken(orca.host, String(nextSettings.bridgeToken))
+        tokenStore = store
+        tokenWarnings = store === 'settings' ? [SECRETS_UNAVAILABLE_WARNING] : []
+      } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        orca.log(`failed to persist ${key}: ${message}`)
+        orca.log(`failed to persist bridgeToken: ${message}`)
         // Why: a token the keyring refused must not look saved; the caller
         // reports it and the old token stays in effect.
-        if (key === 'bridgeToken') {
-          tokenFailure = error instanceof Error ? error : new Error(message)
-        }
-      })
+        throw error instanceof Error ? error : new Error(message)
+      }
     }
-    if (tokenFailure) {
-      await applySettings({ ...nextSettings, bridgeToken: previous.bridgeToken })
-      throw tokenFailure
+    for (const [key, value] of Object.entries(nextSettings)) {
+      if (key === 'bridgeToken' || previous[key as keyof PresenceSettings] === value) {
+        continue
+      }
+      await orca.host.call('settings.set', { key, value: toSettingsValue(value) }).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        orca.log(`failed to persist ${key}: ${message}`)
+      })
     }
     await applySettings(nextSettings)
   }
