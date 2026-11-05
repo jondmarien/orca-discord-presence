@@ -1,6 +1,6 @@
 # Fork rebuild + upstream Orca PRs: design
 
-- **Date:** 2026-11-04 · **Status:** Draft, awaiting approval
+- **Date:** 2026-11-04 · **Status:** Approved 2026-11-04. Issues filed: stablyai/orca#38340 (prompt kind), #38341 (UI focus), #38342 (panels in paired clients), #38343 (client relay)
 - **Supersedes:** §5–§7 of `2026-11-04-stock-orca-and-upstream-apis-design.md`. That spec's §6.1–§6.3 API designs still hold except where this one changes them.
 - **Context:** plugin v1.0.0 shipped on stock Orca and is in onorca.dev review. This is the post-1.0 work. Remote presence through an Orca bridge or account system is **deferred to a later version** and is out of scope here.
 
@@ -156,11 +156,12 @@ The plugin side is a separate small PR per API, released as **1.1.x**:
 
 Each feature activates only when `orca.host.has(...)` is true. Until upstream merges, it works on the fork.
 
-## 7. Open questions for the author
+## 7. Author decisions (2026-11-04)
 
-1. **X handle** for the PR template's Author section (optional), or should we leave it blank?
-2. **Issue timing.** Open all four issues now, so the maintainer sees the roadmap, or one at a time as each PR gets close?
-3. **#19023.** Close it now with a comment that links the new issues, or after the first new PR is up?
+1. **X handle:** included in the PR Author section. The value is still to come from the author.
+2. **Issues:** all four were opened at once, so the maintainer sees the roadmap (#38340–#38343).
+3. **#19023:** close and supersede it **after** the first new PR is up.
+4. **Prompt kind scope:** the issue proposes `prompt?: 'question'` only. `blocked` already covers permission prompts. The derivation reuses `src/shared/agent-status/contracts/agent-pending-prompt.ts`.
 
 ## 8. Calls made by Claude (please check)
 
