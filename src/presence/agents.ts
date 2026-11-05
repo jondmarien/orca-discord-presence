@@ -24,6 +24,8 @@ export type AgentStatusEvent = {
   terminalId?: string
   state: string
   receivedAt: number
+  /** Agent CLI name from `agents.list` (`claude`, `codex`, ...). */
+  kind?: string
 }
 
 /**
@@ -36,6 +38,7 @@ export type AgentSlot = {
   rawState: string
   canonicalState: CanonicalAgentState
   receivedAt: number
+  kind?: string
 }
 
 /**
@@ -172,7 +175,7 @@ export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEven
     if (typeof source.state !== 'string') {
       continue
     }
-    events.push({
+    const event: AgentStatusEvent = {
       workspaceId: '',
       paneKey: '',
       terminalId: source.terminalId,
@@ -181,7 +184,11 @@ export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEven
         typeof source.stateStartedAt === 'number' && Number.isFinite(source.stateStartedAt)
           ? source.stateStartedAt
           : nowMs
-    })
+    }
+    if (typeof source.agent === 'string' && source.agent.length > 0) {
+      event.kind = source.agent
+    }
+    events.push(event)
   }
   return events
 }
@@ -283,13 +290,18 @@ export function createAgentTable({
   return {
     upsert(event) {
       const canonicalState = canonicalizeAgentState(event.state)
-      map.set(agentSlotKey(event), {
+      const key = agentSlotKey(event)
+      // Why: `agent.status.changed` has no agent name, so a later event must
+      // not erase the `kind` the seeded `agents.list` row supplied.
+      const kind = event.kind ?? map.get(key)?.kind
+      map.set(key, {
         workspaceId: event.workspaceId,
         paneKey: event.paneKey,
         ...(event.terminalId ? { terminalId: event.terminalId } : {}),
         rawState: event.state,
         canonicalState,
-        receivedAt: event.receivedAt
+        receivedAt: event.receivedAt,
+        ...(kind ? { kind } : {})
       })
       prune()
       schedulePrune()

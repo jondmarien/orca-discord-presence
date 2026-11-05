@@ -535,13 +535,17 @@ function parseAgentsList(result, nowMs) {
     if (typeof source.state !== "string") {
       continue;
     }
-    events.push({
+    const event = {
       workspaceId: "",
       paneKey: "",
       terminalId: source.terminalId,
       state: source.state,
       receivedAt: typeof source.stateStartedAt === "number" && Number.isFinite(source.stateStartedAt) ? source.stateStartedAt : nowMs
-    });
+    };
+    if (typeof source.agent === "string" && source.agent.length > 0) {
+      event.kind = source.agent;
+    }
+    events.push(event);
   }
   return events;
 }
@@ -626,13 +630,16 @@ function createAgentTable({
   return {
     upsert(event) {
       const canonicalState = canonicalizeAgentState(event.state);
-      map.set(agentSlotKey(event), {
+      const key = agentSlotKey(event);
+      const kind = event.kind ?? map.get(key)?.kind;
+      map.set(key, {
         workspaceId: event.workspaceId,
         paneKey: event.paneKey,
         ...event.terminalId ? { terminalId: event.terminalId } : {},
         rawState: event.state,
         canonicalState,
-        receivedAt: event.receivedAt
+        receivedAt: event.receivedAt,
+        ...kind ? { kind } : {}
       });
       prune();
       schedulePrune();
@@ -1547,8 +1554,33 @@ function summarizePanelActivity(activity) {
     state: typeof activity.state === "string" ? activity.state : null
   };
 }
+var AGENT_ROW_PRIORITY = {
+  blocked: 3,
+  waiting: 2,
+  working: 1,
+  done: 0
+};
+function summarizePanelAgents(slots) {
+  return slots.map((slot) => ({
+    kind: slot.kind && slot.kind.length > 0 ? slot.kind : "agent",
+    state: slot.canonicalState,
+    sinceMs: slot.receivedAt
+  })).sort((a, b) => AGENT_ROW_PRIORITY[b.state] - AGENT_ROW_PRIORITY[a.state] || a.sinceMs - b.sinceMs);
+}
+function summarizePanelActivityCard(activity) {
+  if (!activity || typeof activity.details !== "string") {
+    return null;
+  }
+  return {
+    details: activity.details,
+    state: typeof activity.state === "string" ? activity.state : null,
+    largeImageKey: activity.assets.large_image,
+    smallImageKey: activity.assets.small_image,
+    startMs: activity.timestamps ? activity.timestamps.start * 1000 : null
+  };
+}
 function buildPresencePanelSnapshot(input) {
-  const { version, status, settings, logs, now = new Date } = input;
+  const { version, status, settings, logs, timeline, agents, now = new Date } = input;
   return {
     version,
     generatedAt: now.toISOString(),
@@ -1574,8 +1606,65 @@ function buildPresencePanelSnapshot(input) {
       showOpenButton: settings.showOpenButton,
       showAgentCount: settings.showAgentCount
     },
+    timeline: [...timeline],
+    agents: summarizePanelAgents(agents),
+    activityCard: summarizePanelActivityCard(status.lastActivity),
     logs: logs.map(redactPanelLogLine),
     logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT
+  };
+}
+
+// src/presence/timeline.ts
+var TIMELINE_MINUTES = 30;
+var MINUTE_MS = 60000;
+var PRIORITY2 = {
+  blocked: 3,
+  waiting: 2,
+  working: 1,
+  idle: 0
+};
+function createTimeline({ now = () => Date.now() } = {}) {
+  const buckets = new Map;
+  let firstMinute = null;
+  function prune(current) {
+    for (const minute of buckets.keys()) {
+      if (minute <= current - TIMELINE_MINUTES) {
+        buckets.delete(minute);
+      }
+    }
+  }
+  return {
+    record(state) {
+      const minute = Math.floor(now() / MINUTE_MS);
+      if (firstMinute === null) {
+        firstMinute = minute;
+      }
+      const existing = buckets.get(minute);
+      if (existing === undefined || PRIORITY2[state] > PRIORITY2[existing]) {
+        buckets.set(minute, state);
+      }
+      prune(minute);
+    },
+    slots() {
+      const current = Math.floor(now() / MINUTE_MS);
+      const out = [];
+      let carried = null;
+      let seedMinute = -Infinity;
+      for (const [minute, state] of buckets) {
+        if (minute <= current - TIMELINE_MINUTES && minute > seedMinute) {
+          seedMinute = minute;
+          carried = state;
+        }
+      }
+      for (let minute = current - TIMELINE_MINUTES + 1;minute <= current; minute += 1) {
+        const own = buckets.get(minute);
+        if (own !== undefined) {
+          carried = own;
+        }
+        out.push(firstMinute !== null && minute >= firstMinute ? carried : null);
+      }
+      return out;
+    }
   };
 }
 
@@ -1620,6 +1709,7 @@ function invalidParams(message) {
 }
 var controller = null;
 var agentTable = null;
+var timeline = null;
 var heartbeat = null;
 var diagnostics = null;
 var logRing = null;
@@ -1646,7 +1736,9 @@ function currentPanelSnapshot() {
     version: PLUGIN_VERSION,
     status: controller.status(),
     settings: controller.settings(),
-    logs: logRing.lines()
+    logs: logRing.lines(),
+    timeline: timeline?.slots() ?? [],
+    agents: agentTable?.slots() ?? []
   });
 }
 function publishPanelSnapshot(mode) {
@@ -1746,6 +1838,7 @@ async function activate(orca) {
       pushAgentRefresh();
     }
   });
+  timeline = createTimeline();
   controller = createController(settings);
   async function applySettings(nextSettings) {
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId;
@@ -1817,6 +1910,7 @@ async function activate(orca) {
     if (options.force) {
       await controller?.forceTransmit(resume);
     }
+    timeline?.record(summary.agentState === undefined || summary.agentState === "done" ? "idle" : summary.agentState);
     publishPanelSnapshot("debounced");
   }
   pushAgentRefresh = () => {

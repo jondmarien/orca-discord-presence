@@ -194,8 +194,8 @@ test('parseAgentsList maps rows and drops null terminalId', () => {
       10
     )
   ).toEqual([
-    { workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: 7 },
-    { workspaceId: '', paneKey: '', terminalId: 't2', state: 'done', receivedAt: 10 }
+    { workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: 7, kind: 'claude' },
+    { workspaceId: '', paneKey: '', terminalId: 't2', state: 'done', receivedAt: 10, kind: 'codex' }
   ])
 })
 
@@ -224,4 +224,15 @@ test('seeded agent then event for same terminalId counts once', () => {
   expect(summary.agentCount).toBe(1)
   expect(summary.agentState).toBe('blocked')
   expect(table.removeWorkspace('w1')).toBe(true)
+})
+
+test('agent kind survives a later event without kind', () => {
+  const { table } = tableHarness()
+  const [seeded] = parseAgentsList({ agents: [{ terminalId: 't1', state: 'working', agent: 'claude' }] }, 1)
+  expect(seeded?.kind).toBe('claude')
+  expect(parseAgentsList({ agents: [{ terminalId: 't2', state: 'working', agent: '' }] }, 1)[0]).not.toHaveProperty('kind')
+  table.upsert(seeded!)
+  table.upsert({ workspaceId: 'w', paneKey: 'p', terminalId: 't1', state: 'waiting', receivedAt: 1_000_000 })
+  expect(table.slots()[0]?.kind).toBe('claude')
+  expect(table.slots()[0]?.canonicalState).toBe('waiting')
 })

@@ -33,6 +33,7 @@ import { createPresenceController, type PresenceController } from './presence/co
 import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
 import { buildPresencePanelSnapshot } from './presence/panel-snapshot'
+import { createTimeline } from './presence/timeline'
 import {
   normalizeSettings,
   nextDetailLevel,
@@ -215,6 +216,7 @@ export type OrcaHost = {
 
 let controller: PresenceController | null = null
 let agentTable: ReturnType<typeof createAgentTable> | null = null
+let timeline: ReturnType<typeof createTimeline> | null = null
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
 let logRing: LogRing | null = null
@@ -250,7 +252,9 @@ function currentPanelSnapshot() {
     version: PLUGIN_VERSION,
     status: controller.status(),
     settings: controller.settings(),
-    logs: logRing.lines()
+    logs: logRing.lines(),
+    timeline: timeline?.slots() ?? [],
+    agents: agentTable?.slots() ?? []
   })
 }
 
@@ -382,6 +386,7 @@ export default async function activate(orca: OrcaHost) {
     }
   })
 
+  timeline = createTimeline()
   controller = createController(settings)
 
   /**
@@ -496,6 +501,10 @@ export default async function activate(orca: OrcaHost) {
     if (options.force) {
       await controller?.forceTransmit(resume)
     }
+    // Why: `done` has no timeline colour of its own; it reads as idle.
+    timeline?.record(
+      summary.agentState === undefined || summary.agentState === 'done' ? 'idle' : summary.agentState
+    )
     publishPanelSnapshot('debounced')
   }
 

@@ -63,6 +63,8 @@ test('buildPresencePanelSnapshot omits secrets and summarizes activity', () => {
       bridgeToken: 'super-secret-token',
       applicationId: SHIPPED_APPLICATION_ID
     },
+    timeline: [],
+    agents: [],
     logs: ['[jondmarien.discord-presence] info bridge.publish token=super-secret-token']
   })
   expect(snapshot.version).toBe(PLUGIN_VERSION)
@@ -89,7 +91,58 @@ test('summarizePanelActivity and conventional log hint', () => {
     version: '0.4.0',
     status: statusWith({ logFile: null }),
     settings: DEFAULT_SETTINGS,
+    timeline: [],
+    agents: [],
     logs: []
   })
   expect(emptyFile.logHint).toBe(CONVENTIONAL_LOG_HINT)
+})
+
+test('snapshot agents expose only kind/state/sinceMs', () => {
+  const snapshot = buildPresencePanelSnapshot({
+    version: '1.0.0',
+    status: statusWith(),
+    settings: DEFAULT_SETTINGS,
+    timeline: ['idle', null, 'working'],
+    logs: [],
+    agents: [
+      { workspaceId: 'secret-ws', paneKey: 'secret-pane', terminalId: 'term-secret', rawState: 'running', canonicalState: 'working', receivedAt: 200 },
+      { workspaceId: '', paneKey: '', rawState: 'x', canonicalState: 'blocked', receivedAt: 500, kind: 'codex' },
+      { workspaceId: '', paneKey: '', rawState: 'x', canonicalState: 'working', receivedAt: 100, kind: 'claude' }
+    ]
+  })
+  for (const row of snapshot.agents) {
+    expect(Object.keys(row)).toEqual(['kind', 'state', 'sinceMs'])
+  }
+  expect(snapshot.agents).toEqual([
+    { kind: 'codex', state: 'blocked', sinceMs: 500 },
+    { kind: 'claude', state: 'working', sinceMs: 100 },
+    { kind: 'agent', state: 'working', sinceMs: 200 }
+  ])
+  expect(snapshot.timeline).toEqual(['idle', null, 'working'])
+  expect(snapshotLeaksSecrets(snapshot, ['secret-ws', 'secret-pane', 'term-secret'])).toBe(false)
+})
+
+test('activityCard maps keys and ms timestamp', () => {
+  const base = { version: '1.0.0', settings: DEFAULT_SETTINGS, timeline: [], agents: [], logs: [] }
+  const card = buildPresencePanelSnapshot({
+    ...base,
+    status: statusWith({
+      lastActivity: {
+        details: 'acme',
+        state: 'claude',
+        timestamps: { start: 1_700_000_000 },
+        assets: { large_image: 'orca', large_text: 'Orca', small_image: 'state-working', small_text: 'working' }
+      }
+    })
+  }).activityCard
+  expect(card).toEqual({
+    details: 'acme',
+    state: 'claude',
+    largeImageKey: 'orca',
+    smallImageKey: 'state-working',
+    startMs: 1_700_000_000_000
+  })
+  expect(buildPresencePanelSnapshot({ ...base, status: statusWith({ lastActivity: null }) }).activityCard).toBe(null)
+  expect(buildPresencePanelSnapshot({ ...base, status: statusWith() }).activityCard?.startMs).toBe(null)
 })
