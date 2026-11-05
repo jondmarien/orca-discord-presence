@@ -346,6 +346,8 @@
     </div>
 
     <script>
+      // Why: a top-level `var orca` would assign to the frozen window.orca and throw, so keep everything in a function scope.
+      ;(function () {
       'use strict'
       var orca = window.orca
       var REQUEST_TIMEOUT_MS = 5000
@@ -549,6 +551,7 @@
         }
         refresh()
       }
+      })()
     </script>
   </body>
 </html>
