@@ -570,6 +570,24 @@ pre.log {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Refresh button: the glyph spins while a refresh request is pending. */
+.seg button .glyph {
+  display: inline-block;
+}
+.seg button.spin .glyph {
+  animation: refresh-spin 0.8s linear infinite;
+}
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .seg button.spin .glyph {
+    animation: none;
+  }
+}
     </style>
   </head>
   <body>
@@ -581,9 +599,14 @@ pre.log {
           <span class="dot" id="dot" aria-hidden="true"></span>
           <b id="indicator-label">Waiting for worker snapshot</b>
         </div>
-        <div class="seg sm" id="view-switch" role="group" aria-label="Panel view">
-          <button type="button" class="on" id="view-full">Full</button>
-          <button type="button" id="view-minimal">Minimal</button>
+        <div class="row">
+          <div class="seg sm" id="view-switch" role="group" aria-label="Panel view">
+            <button type="button" class="on" id="view-full">Full</button>
+            <button type="button" id="view-minimal">Minimal</button>
+          </div>
+          <div class="seg sm" role="group" aria-label="Refresh">
+            <button type="button" id="btn-refresh" aria-label="Refresh" title="Refresh now"><span class="glyph" aria-hidden="true">⟳</span></button>
+          </div>
         </div>
       </header>
       <p class="flash" id="flash"></p>
@@ -1237,6 +1260,30 @@ function refresh() {
   })
 }
 
+// Why: forces the worker to resync agents, workspace and Discord clients. The
+// button is disabled while pending so a mash is one request; render() touches
+// only changed nodes, so the returned snapshot does not rebuild the panel.
+function forceRefresh() {
+  var button = $('btn-refresh')
+  if (button.disabled) return Promise.resolve()
+  setBusy(button, true)
+  setClass(button, 'spin', true)
+  var done = function () {
+    setBusy(button, false)
+    setClass(button, 'spin', false)
+  }
+  return request('presence.refresh', {}).then(
+    function (snapshot) {
+      done()
+      render(snapshot)
+    },
+    function (error) {
+      done()
+      flash('Refresh failed: ' + errorText(error))
+    }
+  )
+}
+
 function run(command, doneMessage) {
   return request('presence.run', { command: command }).then(
     function (result) {
@@ -1299,6 +1346,7 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
     chooseView('minimal')
   })
   loadView()
+  $('btn-refresh').addEventListener('click', forceRefresh)
   $('btn-status').addEventListener('click', function () {
     run('presence.status', 'Status sent as a notification.')
   })

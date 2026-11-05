@@ -683,13 +683,18 @@ async function activateWithPanels(settings: Record<string, unknown> = {}) {
   const posts: Array<{ name: string; payload: unknown }> = []
   const sets: Array<{ key: string; value: unknown }> = []
   const state = { stored: { ...settings } }
+  const calls: string[] = []
   const orca: OrcaHost = {
     log: () => {},
     commands: { register: () => {} },
     events: { on: (event, handler) => void eventHandlers.set(event, handler) },
     host: {
-      has: () => false,
+      has: (method) => method === 'agents.list',
       call: async (method, args) => {
+        calls.push(method)
+        if (method === 'agents.list') {
+          return { agents: [{ terminalId: 'tl', agent: 'claude', title: null, state: 'working', stateStartedAt: 1 }] }
+        }
         if (method === 'settings.get') {
           return { settings: state.stored }
         }
@@ -717,6 +722,7 @@ async function activateWithPanels(settings: Record<string, unknown> = {}) {
     eventHandlers,
     posts,
     sets,
+    calls,
     snapshot,
     run,
     async finish() {
@@ -966,6 +972,25 @@ test('a chosen client that starts after the fallback connected takes over on the
     expect(created.at(-1)?.candidates?.()).toEqual([vesktop.path])
     const after = (await run.handlers.get('presence.status')?.()) as { clientFallback: boolean }
     expect(after.clientFallback).toBe(false)
+  } finally {
+    await run.finish()
+  }
+})
+
+test('presence.refresh re-syncs agents and returns a snapshot; a second call within 2s does not re-probe', async () => {
+  const run = await activateWithPanels()
+  try {
+    const refresh = run.panelHandlers.get('presence.refresh')
+    expect(refresh).toBeDefined()
+    run.calls.length = 0
+    const first = (await refresh?.({})) as PresencePanelSnapshot
+    expect(run.calls.filter((m) => m === 'agents.list')).toHaveLength(1)
+    expect(run.calls).toContain('workspace.readContext')
+    expect(first.agents).toHaveLength(1)
+    run.calls.length = 0
+    const second = (await refresh?.({})) as PresencePanelSnapshot
+    expect(run.calls).toEqual([])
+    expect(second.agents).toHaveLength(1)
   } finally {
     await run.finish()
   }

@@ -545,6 +545,30 @@ function refresh() {
   })
 }
 
+// Why: forces the worker to resync agents, workspace and Discord clients. The
+// button is disabled while pending so a mash is one request; render() touches
+// only changed nodes, so the returned snapshot does not rebuild the panel.
+function forceRefresh() {
+  var button = $('btn-refresh')
+  if (button.disabled) return Promise.resolve()
+  setBusy(button, true)
+  setClass(button, 'spin', true)
+  var done = function () {
+    setBusy(button, false)
+    setClass(button, 'spin', false)
+  }
+  return request('presence.refresh', {}).then(
+    function (snapshot) {
+      done()
+      render(snapshot)
+    },
+    function (error) {
+      done()
+      flash('Refresh failed: ' + errorText(error))
+    }
+  )
+}
+
 function run(command, doneMessage) {
   return request('presence.run', { command: command }).then(
     function (result) {
@@ -607,6 +631,7 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
     chooseView('minimal')
   })
   loadView()
+  $('btn-refresh').addEventListener('click', forceRefresh)
   $('btn-status').addEventListener('click', function () {
     run('presence.status', 'Status sent as a notification.')
   })

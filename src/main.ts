@@ -764,6 +764,25 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   // older hosts and browser clients have no `orca.panels`, and the panel shows
   // its static "needs Orca desktop" note there.
   panels?.handle('presence.snapshot', () => currentPanelSnapshot())
+
+  // Why: the panel's Refresh button forces a full resync (agents, focused
+  // workspace, Discord clients). The rate limit keeps a mashed button from
+  // probing sockets repeatedly; a call inside the window just answers with the
+  // current snapshot.
+  const PANEL_REFRESH_MIN_MS = 2000
+  let lastPanelRefreshAt = 0
+  panels?.handle('presence.refresh', async () => {
+    const clock = Date.now()
+    if (clock - lastPanelRefreshAt < PANEL_REFRESH_MIN_MS) {
+      return currentPanelSnapshot()
+    }
+    lastPanelRefreshAt = clock
+    await syncAgentsFromList()
+    await redetect(true)
+    // `refresh` re-reads `workspace.readContext` and force-transmits.
+    await refresh(undefined, { force: true })
+    return currentPanelSnapshot()
+  })
   panels?.handle('presence.run', async (input) => {
     const command = (input as { command?: unknown } | null | undefined)?.command
     if (typeof command !== 'string' || !(PANEL_COMMANDS as readonly string[]).includes(command)) {

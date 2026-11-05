@@ -193,11 +193,14 @@ function fullSnapshot(timeline: Array<string[] | null>) {
 /**
  * Run the built script with a fake plugin API and return the test hook.
  */
-function mountPanel(hostCall?: (name: string, input: Record<string, unknown>) => Promise<unknown>) {
+function mountPanel(
+  hostCall?: (name: string, input: Record<string, unknown>) => Promise<unknown>,
+  pluginRequest?: (name: string, input: unknown, opts: unknown) => Promise<unknown>
+) {
   const html = buildPanelHtml()
   const { byId, document } = makeDom(html)
   const orca = {
-    plugin: { request: () => new Promise(() => {}), on() {} },
+    plugin: { request: pluginRequest ?? (() => new Promise(() => {})), on() {} },
     host: { has: () => false, ...(hostCall ? { call: hostCall } : {}) },
     on() {}
   }
@@ -558,4 +561,41 @@ test('strip still accepts a bare string slot as one state', () => {
   const { byId, hook } = mountPanel()
   hook?.render(fullSnapshot(Array.from({ length: 30 }, () => 'idle' as never)))
   expect(byId.get('strip')?.children[0].getAttribute('data-state')).toBe('idle')
+})
+
+test('refresh button sits in the shared header, calls presence.refresh, and is disabled while pending', async () => {
+  let release: (value: unknown) => void = () => {}
+  const requests: Array<[string, unknown, unknown]> = []
+  const { byId, hook } = mountPanel(undefined, (name, input, opts) => {
+    requests.push([name, input, opts])
+    if (name === 'presence.refresh') return new Promise((resolve) => (release = resolve))
+    return new Promise(() => {})
+  })
+  const button = byId.get('btn-refresh') as FakeElement
+  expect(button.getAttribute('aria-label')).toBeNull()
+  expect(buildPanelHtml()).toContain('aria-label="Refresh"')
+  expect(buildPanelHtml()).toContain('title="Refresh now"')
+  // Header is outside the full/minimal sections, so both views show it.
+  for (const view of ['full-a', 'min-hero']) expect(byId.get(view)).toBeDefined()
+  hook?.render(fullSnapshot([]))
+  button.dispatch('click')
+  expect(button.disabled).toBe(true)
+  expect(button.className.includes('spin')).toBe(true)
+  expect(requests.at(-1)).toEqual(['presence.refresh', {}, { timeoutMs: 5000 }])
+  const next = fullSnapshot([])
+  release(next)
+  await settle()
+  expect(button.disabled).toBe(false)
+  expect(button.className.includes('spin')).toBe(false)
+})
+
+test('refresh button reports a failed request', async () => {
+  const { byId } = mountPanel(undefined, (name) =>
+    name === 'presence.refresh' ? Promise.reject(new Error('worker busy')) : new Promise(() => {})
+  )
+  const button = byId.get('btn-refresh') as FakeElement
+  button.dispatch('click')
+  await settle()
+  expect(byId.get('flash')?.textContent).toContain('worker busy')
+  expect(button.disabled).toBe(false)
 })

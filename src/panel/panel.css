@@ -555,3 +555,21 @@ pre.log {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Refresh button: the glyph spins while a refresh request is pending. */
+.seg button .glyph {
+  display: inline-block;
+}
+.seg button.spin .glyph {
+  animation: refresh-spin 0.8s linear infinite;
+}
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .seg button.spin .glyph {
+    animation: none;
+  }
+}

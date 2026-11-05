@@ -2331,6 +2331,19 @@ async function activate(orca, deps = {}) {
     return { ok: true, changed: result.changed, ...view };
   });
   panels?.handle("presence.snapshot", () => currentPanelSnapshot());
+  const PANEL_REFRESH_MIN_MS = 2000;
+  let lastPanelRefreshAt = 0;
+  panels?.handle("presence.refresh", async () => {
+    const clock = Date.now();
+    if (clock - lastPanelRefreshAt < PANEL_REFRESH_MIN_MS) {
+      return currentPanelSnapshot();
+    }
+    lastPanelRefreshAt = clock;
+    await syncAgentsFromList();
+    await redetect(true);
+    await refresh(undefined, { force: true });
+    return currentPanelSnapshot();
+  });
   panels?.handle("presence.run", async (input) => {
     const command = input?.command;
     if (typeof command !== "string" || !PANEL_COMMANDS.includes(command)) {

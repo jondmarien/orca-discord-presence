@@ -25,9 +25,14 @@
           <span class="dot" id="dot" aria-hidden="true"></span>
           <b id="indicator-label">Waiting for worker snapshot</b>
         </div>
-        <div class="seg sm" id="view-switch" role="group" aria-label="Panel view">
-          <button type="button" class="on" id="view-full">Full</button>
-          <button type="button" id="view-minimal">Minimal</button>
+        <div class="row">
+          <div class="seg sm" id="view-switch" role="group" aria-label="Panel view">
+            <button type="button" class="on" id="view-full">Full</button>
+            <button type="button" id="view-minimal">Minimal</button>
+          </div>
+          <div class="seg sm" role="group" aria-label="Refresh">
+            <button type="button" id="btn-refresh" aria-label="Refresh" title="Refresh now"><span class="glyph" aria-hidden="true">⟳</span></button>
+          </div>
         </div>
       </header>
       <p class="flash" id="flash"></p>
