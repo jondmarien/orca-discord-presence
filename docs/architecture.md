@@ -1,9 +1,9 @@
 # Architecture
 
 Author: Jonathan Marien  
-Date: 2026-09-05
+Date: 2026-11-04
 
-This note describes how `chron0.discord-presence` is wired. Runtime behavior is implemented in TypeScript under `src/`; Orca loads the bundled Node ESM at `dist/main.js`.
+This note describes how `jondmarien.discord-presence` is wired. Runtime behavior is implemented in TypeScript under `src/`; Orca loads the bundled Node ESM at `dist/main.js`.
 
 ## Process model
 
@@ -13,13 +13,26 @@ Orca starts a trusted plugin worker and calls `export default function activate(
 
 The worker is **idle-reaped after 5 minutes** of no host calls. An open Discord socket does not count as activity. A 90 s `workspace.readContext` heartbeat (`HEARTBEAT_MS` in `src/main.ts`) both keeps the worker alive and picks up branch changes, which emit no event.
 
-Manifest-declared events (`agent.status.changed`, `worktree.created`, `worktree.removed`) also wake a sleeping worker. Dynamic-only subscriptions would not. There is **no** focused-window or active-tab event in the host API this plugin uses.
+Manifest-declared events (`agent.status.changed`, `workspace.changed`, `workspace.removed`) also wake a sleeping worker. Dynamic-only subscriptions would not. There is **no** focused-window or active-tab event in the stock host API.
+
+## Where the worker runs
+
+Paired Orca clients and `orca serve` run plugins on the host, not on the client. When Windows controls a Linux Orca, the worker runs on Linux; with `orca serve` it runs on the SSH server. Discord's IPC socket or pipe exists only on the machine where Discord runs, so a worker on a different machine publishes through the companion bridge. Vesktop on the same Linux host as the worker uses local IPC.
+
+| Setup | Worker runs on | Discord path |
+|---|---|---|
+| Local desktop | That desktop | Local IPC |
+| Linux host with Vesktop, controlled remotely | Linux host | Local IPC on the host |
+| Linux host, Discord on Windows | Linux host | Companion on Windows |
+| `orca serve` on an SSH server | SSH server | Companion next to Discord |
 
 ## Module map
 
 ```
 activate (src/main.ts)
-  ├─ normalizeSettings(settings.get) + applyBridgeEnvOverrides
+  ├─ normalizeSettings(settings.get) + bridge token from secrets (settings fallback) + applyBridgeEnvOverrides
+  ├─ agents.list → seed agent table (when the host has it)
+  ├─ settings.onDidChange → re-read settings → controller.setSettings (no reload)
   ├─ createDiagnosticSink (orca.log + state-dir file)
   ├─ createDiscordClient({ clientId: applicationId })
   ├─ createBridgeTransport()
@@ -28,9 +41,9 @@ activate (src/main.ts)
   ├─ presence.configure → applyConfigure (fail-fast) → persist; App ID change recreates the IPC client
   ├─ presence.clear → controller.clear (hold; heartbeat does not republish)
   ├─ presence.reload → refresh → controller.reload (close + reconnect + SET_ACTIVITY)
-  ├─ agent.status.changed → agent table (worktreeId + paneKey) → aggregate → update
+  ├─ agent.status.changed → agent table → aggregate → update
   ├─ events / heartbeat → workspace.readContext (or minimal snapshot) → update + forceTransmit on heartbeat/status (heartbeat does not lift Clear)
-  ├─ panel snapshot → log ring + redacted JSON embedded in panel/index.html (writable installs)
+  ├─ panels.handle('presence.snapshot' / 'presence.run') + panels.post('presence.snapshot', redacted snapshot)
   └─ deactivate → controller.stop → clear local + remote + close socket (idempotent)
 ```
 
@@ -46,14 +59,14 @@ activate (src/main.ts)
 | [`src/presence/controller.ts`](../src/presence/controller.ts) | Snapshot merge, 15 s debounce, reconnect, **local-then-bridge** publish, **Reload RPC**. |
 | [`src/presence/expiry.ts`](../src/presence/expiry.ts) | `AGENT_RETENTION_MS` (30m stale / 60s done) plus older 30s/60s helpers for future focus/tool providers ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)). |
 | [`src/presence/agent-state.ts`](../src/presence/agent-state.ts) | Alias table → `working` / `blocked` / `waiting` / `done`. |
-| [`src/presence/agents.ts`](../src/presence/agents.ts) | Multi-agent table keyed by `worktreeId` + `paneKey`. |
-| [`src/presence/configure.ts`](../src/presence/configure.ts) | Fail-fast `applyConfigure` for Application ID / `openUrl` / toggles. |
+| [`src/presence/agents.ts`](../src/presence/agents.ts) | Multi-agent table. Seeded from `agents.list`, updated by `agent.status.changed`; one entry per terminal. |
+| [`src/presence/configure.ts`](../src/presence/configure.ts) | Fail-fast `applyConfigure` for Application ID / `openUrl` / toggles / `bridgeToken`. |
+| [`src/presence/bridge-token.ts`](../src/presence/bridge-token.ts) | Bridge token in Orca secrets; plugin-settings fallback with a warning when no keyring is available. |
 | [`src/presence/bridge.ts`](../src/presence/bridge.ts) | Companion URL/token hygiene + `POST`/`DELETE /activity`. |
 | [`src/presence/log.ts`](../src/presence/log.ts) | Structured `orca.log` + capped state-dir file. Optional `onEmit` feeds the panel ring. |
 | [`src/presence/log-ring.ts`](../src/presence/log-ring.ts) | Bounded in-memory tail for the sidebar snapshot. |
 | [`src/presence/panel-snapshot.ts`](../src/presence/panel-snapshot.ts) | Redacted panel JSON (no App ID, no token, no bridge URL). |
-| [`src/presence/panel-html.ts`](../src/presence/panel-html.ts) | Embed / write `panel/index.html` when the install is writable. |
-| [`panel/index.html`](../panel/index.html) | Sandboxed sidebar UI. Official `orca-panel-action` bridge only. |
+| [`panel/index.html`](../panel/index.html) | Sidebar UI. Talks to the worker through `window.orca.plugin.request`. |
 | [`companion/`](../companion/) | OS-agnostic HTTP listener → same Discord IPC client (Linux/macOS/Windows). |
 
 Tests live under `test/` and use Bun’s test runner. Client tests stand up a fake IPC server; controller tests inject a fake clock and client.
@@ -103,15 +116,15 @@ A user command that changes settings bypasses the debounce so the palette feels 
 
 ## Sidebar panel
 
-`orca-plugin.json` contributes one panel (`id: presence`, Lucide `settings`, `panel/index.html`). The host loads that HTML in a sandboxed iframe (`plugin:chron0.discord-presence/presence`).
+`orca-plugin.json` contributes one panel (`id: presence`, title `Rich Presence`, `panel/index.html`). The host loads it in a sandboxed iframe.
 
-The panel talks to the host only through `postMessage`:
+The panel uses the stock plugin frame API:
 
-- `{ type: 'orca-panel-action', requestId, action, params }` → `workspace.readContext` or `notifications.show`
-- `{ type: 'orca-panel-action-result', requestId, ok, value?, error? }`
-- Watchdog: `orca-panel-ping` / `orca-panel-pong`
+- `window.orca.plugin.request('presence.snapshot')` returns a redacted snapshot (status, settings summary, log tail).
+- `window.orca.plugin.request('presence.run', { command })` runs one of the plugin's commands.
+- The worker pushes updates with `panels.post('presence.snapshot', snapshot)`, coalesced during chatty agent events. The panel listens with `orca.plugin.on('presence.snapshot', ...)`.
 
-It cannot persist settings or read the log file. The worker optionally rewrites `#presence-snapshot` in `panel/index.html` (activate, Show Status, Reload RPC, debounced heartbeat) when the install directory is writable. The same rewrite stamps `#plugin-version`, `#version-badge`, and About from `PLUGIN_VERSION` (or the snapshot’s `version`) so the shell cannot drift from `package.json` / `orca-plugin.json`. Immutable marketplace copies keep the committed `null` snapshot — the shipped `#plugin-version` JSON still paints the current badge / About — and still get live workspace via the bridge.
+The worker registers the handlers with `panels.handle` only when the host has it. Outside the Orca desktop app (for example a browser client without `plugin.request`) the panel hides its UI and shows a static note, "Open this panel in the Orca desktop app to see live status." The snapshot never contains the Application ID, bridge URL, bridge token, or button URL. The panel does not rewrite its own HTML.
 
 ## Activity expiry (future providers)
 
@@ -138,7 +151,8 @@ Text fields are clamped to 128 characters. See [privacy.md](privacy.md) for whic
 
 - **Authoring / CI:** Bun (`bun install`, `bun test`, `bun run typecheck`, `bun run build`).
 - **Runtime:** Node/Electron plugin worker. `dist/main.js` must stay free of `Bun.file` / `Bun.spawn`.
-- **Identity:** `orca-plugin.json` `publisher` + `id` → `chron0.discord-presence`. Do not rename.
-- **Panel:** `contributes.panels[0]` id `presence`, sidebar key `plugin:chron0.discord-presence/presence`. The iframe may call only `workspace.readContext` and `notifications.show`. It replies to `orca-panel-ping` with `orca-panel-pong`. Settings writes and live file logs wait on host B4.
-- **Companion:** `bun run companion` / `bun run start` in `companion/`. Runs on Linux, macOS, or Windows. Optional `bun build companion/main.ts --compile`. Zero extra production dependencies; Node `http` + shared IPC modules.
-- **Focus:** the worker does not subscribe to UI focus/tab events (none are exposed). Snapshot sources are `agent.status.changed` and `workspace.readContext` only.
+- **Identity:** install id `jondmarien.discord-presence` (manifest `id: discord-presence`, no `publisher`; the host derives it from the repo owner). Manifest v2, `execution: trusted-worker`, `engines.orca >= 1.4.248`. Settings are declared in `contributes.settings`.
+- **Capabilities:** `workspace:read`, `agent:read`, `storage:own`, `settings:own`, `secrets:own`, `notifications:show`.
+- **Logs:** state-dir file under `jondmarien-discord-presence/plugin.log` (override `ORCA_PRESENCE_LOG_FILE`). `ORCA_PRESENCE_DISCORD_IPC` overrides the Discord IPC path.
+- **Companion:** runs from source with `bun run companion` (or `bun run start` in `companion/`) on Linux, macOS, or Windows. A compiled binary (`bun run companion:compile`) is optional, local only, and never committed. Zero extra production dependencies; Node `http` + shared IPC modules.
+- **Focus:** the worker does not subscribe to UI focus/tab events (stock Orca exposes none). Snapshot sources are `agents.list`, `agent.status.changed`, `workspace.changed` and `workspace.readContext`.

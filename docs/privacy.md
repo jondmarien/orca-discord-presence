@@ -1,9 +1,9 @@
 # Privacy
 
 Author: Jonathan Marien  
-Date: 2026-09-05
+Date: 2026-11-04
 
-`chron0.discord-presence` is privacy-first by default. This note is the disclosure contract: what can leave the machine, what never does, and which setting unlocks each field.
+`jondmarien.discord-presence` is privacy-first by default. This note is the disclosure contract: what can leave the machine, what never does, and which setting unlocks each field.
 
 The **only** module that chooses identifying strings is [`src/presence/activity.ts`](../src/presence/activity.ts). The Discord client, HTTP bridge, and companion transmit whatever that builder returns (or clear when it returns `null`). Downstream code does not re-check gates. The companion is not a second privacy filter.
 
@@ -26,12 +26,12 @@ From `DEFAULT_SETTINGS` in [`src/presence/settings.ts`](../src/presence/settings
 
 When an activity is produced, Discord’s servers render it on your profile. That path is:
 
-1. Plugin worker → local Discord desktop IPC socket (`SET_ACTIVITY`), **or** (only if you enable the bridge and local IPC is down) plugin worker → `POST /activity` on the companion you configured → that machine’s Discord IPC.
+1. Plugin worker → local Discord desktop IPC socket (`SET_ACTIVITY`), **or** (only if you enable the bridge and local IPC is down) plugin worker → `POST /activity` on the companion you configured → that machine’s Discord IPC. The worker runs on the machine that hosts the workspace, so for a paired client or `orca serve` that is the host, not your client. Discord on a different machine needs the companion.
 2. Discord desktop → Discord’s presence service.
 
 There is no analytics host and no Discord bot. The HTTP client exists **only** for the opt-in companion. Browser Discord is not used and cannot receive these writes (no IPC).
 
-The bridge token is a shared secret between the Orca host and the companion. It is stored in `settings:own` (or env) and sent as `Authorization: Bearer`. It is never sent to Discord and is never printed by **Show Status**.
+The bridge token is a shared secret between the Orca host and the companion. It is set with **Rich Presence: Configure** (`bridgeToken` argument) and stored in Orca secrets (`secrets:own`). If the host has no OS keyring, it is kept in plugin settings instead and **Show Status** shows a warning. An env override (`ORCA_PRESENCE_BRIDGE_TOKEN`) also works. It is sent as `Authorization: Bearer`. It is never sent to Discord and is never printed by **Show Status**.
 
 | Transmitted | When |
 |---|---|
@@ -88,11 +88,11 @@ Host strings are canonicalized first (`running` / `active` → working, `error` 
 - `openUrl` must be `https:` with no URL credentials, max 512 characters. Otherwise it becomes `""`.
 - `openButtonLabel` is trimmed and capped at 32 characters; empty becomes `Open Orca`.
 
-Commands persist the full normalized object via `settings.set` (one key per field). **Configure** fail-fast rejects a junk Application ID or `openUrl` instead of storing them. The diagnostics panel displays a redacted snapshot; it cannot call `settings.set`. The panel never includes `applicationId`, `bridgeToken`, `bridgeUrl`, or `openUrl`.
+Settings are declared in `orca-plugin.json` `contributes.settings` and edited in Orca Settings; the worker re-reads them when they change. Commands persist through `settings.set`. **Configure** fail-fast rejects a junk Application ID or `openUrl` instead of storing them. The panel displays a redacted snapshot and cannot write settings. The snapshot never includes `applicationId`, `bridgeToken`, `bridgeUrl`, or `openUrl`.
 
 ## Capabilities
 
-The consent dialog lists `workspace:read`, `events:subscribe`, `storage`, `settings:own`, and `notifications:show`. There is no `secrets` capability. The sidebar panel only uses `workspace:read` and `notifications:show`.
+The consent dialog lists `workspace:read`, `agent:read`, `storage:own`, `settings:own`, `secrets:own`, and `notifications:show`. `secrets:own` is used only for the bridge token. There is no terminal write and no network capability; the only HTTP client is the opt-in companion bridge.
 
 ## Operator advice
 
@@ -100,4 +100,4 @@ The consent dialog lists `workspace:read`, `events:subscribe`, `storage`, `setti
 - Treat repository / branch names as client-identifying once `full` + `showBranch` is on.
 - **Show Status** prints the last transmitted activity JSON in the plugin log and the on-disk file — use that to audit what is public.
 - Leave `bridgeEnabled` off unless you intend to send that same JSON to a companion you control (any OS). Prefer Tailscale or an SSH tunnel over a raw LAN bind.
-- The debug file is local-only. Turn `debugLogging` off if you do not want activity JSON on disk. The bridge token is never written.
+- The debug file (`jondmarien-discord-presence/plugin.log` in the state directory) is local-only. Turn `debugLogging` off if you do not want activity JSON on disk. The bridge token is never written to it.
