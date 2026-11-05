@@ -470,6 +470,7 @@ async function activateWithSecrets(options: {
   settings: Record<string, unknown>
   secret?: string | null
   failSecretSet?: boolean
+  deps?: Parameters<typeof import('../src/main').default>[1]
 }) {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-token-'))
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
@@ -529,7 +530,7 @@ async function activateWithSecrets(options: {
       }
     }
   }
-  await activate(orca)
+  await activate(orca, options.deps)
   return {
     handlers,
     eventHandlers,
@@ -908,5 +909,51 @@ test('a null workspace context clears the previous workspace from the published 
     await run.finish()
   } finally {
     await server.stop(true)
+  }
+})
+
+test('a chosen client that starts after the fallback connected takes over on the next detect', async () => {
+  const scans: Array<Array<{ id: string; label: string; path: string }>> = [
+    [{ id: 'discord:0', label: 'Discord', path: '/run/user/1/discord-ipc-0' }]
+  ]
+  const vesktop = { id: 'vesktop:0', label: 'Vesktop', path: '/run/user/1/app/dev.vencord.Vesktop/discord-ipc-0' }
+  const created: Array<{ candidates?: () => string[] }> = []
+  let scan = 0
+  const run = await activateWithSecrets({
+    protection: 'unavailable',
+    settings: { discordClient: 'vesktop:0' },
+    deps: {
+      detect: async () => scans[Math.min(scan++, scans.length - 1)] ?? [],
+      createClient: (options) => {
+        created.push(options)
+        let path: string | null = null
+        return {
+          connect: async () => {
+            path = options.candidates?.()[0] ?? null
+          },
+          isConnected: () => path !== null,
+          connectedPath: () => path,
+          setActivity: async () => null,
+          clearActivity: async () => null,
+          close: async () => {
+            path = null
+          },
+          destroySocketForTest: () => {}
+        }
+      }
+    }
+  })
+  try {
+    const before = (await run.handlers.get('presence.status')?.()) as { clientFallback: boolean }
+    expect(before.clientFallback).toBe(true)
+    const clientsBefore = created.length
+    scans.push([...scans[0], vesktop])
+    await run.handlers.get('presence.reload')?.()
+    expect(created.length).toBe(clientsBefore + 1)
+    expect(created.at(-1)?.candidates?.()).toEqual([vesktop.path])
+    const after = (await run.handlers.get('presence.status')?.()) as { clientFallback: boolean }
+    expect(after.clientFallback).toBe(false)
+  } finally {
+    await run.finish()
   }
 })

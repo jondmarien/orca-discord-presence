@@ -14,8 +14,9 @@
 
 import os from 'node:os'
 import { inspectApplicationId } from './discord/app-id'
-import { createDiscordClient } from './discord/client'
+import { createDiscordClient, type DiscordClient } from './discord/client'
 import {
+  AUTO_CLIENT,
   detectDiscordClients,
   resolveClientCandidates,
   summarizeClients,
@@ -331,6 +332,12 @@ function publishPanelSnapshot(mode: 'immediate' | 'debounced') {
   panelPostTimer.unref?.()
 }
 
+/** Test seams for {@link activate}: Discord detection and client construction. */
+export type ActivateDeps = {
+  detect?: typeof detectDiscordClients
+  createClient?: typeof createDiscordClient
+}
+
 /**
  * Plugin entry. Loads persisted settings, constructs the Discord client and
  * presence controller, registers commands and events, and starts the
@@ -338,8 +345,11 @@ function publishPanelSnapshot(mode: 'immediate' | 'debounced') {
  * `refresh` is deferred so activate can return before the handshake timeout.
  *
  * @param orca - Host API injected by the Orca plugin worker.
+ * @param deps - Test seams; the host passes none.
  */
-export default async function activate(orca: OrcaHost) {
+export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) {
+  const detectClients = deps.detect ?? detectDiscordClients
+  const makeDiscordClient = deps.createClient ?? createDiscordClient
   deactivated = false
   const stored = (await orca.host.call('settings.get').catch(() => ({ settings: {} }))) as {
     settings?: unknown
@@ -401,20 +411,31 @@ export default async function activate(orca: OrcaHost) {
       return
     }
     lastDetectAt = Date.now()
-    const found = await detectDiscordClients()
-    if (!deactivated) {
-      detected = found
+    const found = await detectClients()
+    if (deactivated) {
+      return
+    }
+    detected = found
+    // Why: a chosen client that starts after the fallback connected would never
+    // get presence, since the live socket stays up. Rebuild through the same
+    // path a `discordClient` change takes; the caller republishes afterwards.
+    const chosen = settings.discordClient === AUTO_CLIENT ? undefined : found.find((client) => client.id === settings.discordClient)
+    const connectedPath = activeDiscord?.connectedPath() ?? null
+    if (chosen && connectedPath !== null && connectedPath !== chosen.path) {
+      await applySettings(settings, { rebind: true })
     }
   }
 
+  let activeDiscord: DiscordClient | null = null
   function createController(nextSettings: PresenceSettings): PresenceController {
-    const discord = createDiscordClient({
+    const discord = makeDiscordClient({
       clientId: nextSettings.applicationId,
       candidates: () =>
         resolveClientCandidates(nextSettings.discordClient, detected, defaultDiscordIpcCandidates())
           .candidates,
       log: (message, level = 'error') => diagnostics?.line(level, 'discord.client', { reason: message })
     })
+    activeDiscord = discord
     return createPresenceController({
       client: discord,
       describeClient: () =>
@@ -461,14 +482,14 @@ export default async function activate(orca: OrcaHost) {
    * Why: shared by `persist` (our own writes) and the `onDidChange` feed (edits
    * in Orca's Settings page), so both paths rebind the same way.
    */
-  async function applySettings(nextSettings: PresenceSettings) {
+  async function applySettings(nextSettings: PresenceSettings, options: { rebind?: boolean } = {}) {
     // Why: both are fixed when the Discord client is built (handshake client_id,
     // candidate list), so either change recreates it.
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId
     const clientChanged = nextSettings.discordClient !== settings.discordClient
     settings = nextSettings
     diagnostics?.setDebugEnabled(nextSettings.debugLogging)
-    if (applicationIdChanged || clientChanged) {
+    if (applicationIdChanged || clientChanged || options.rebind) {
       diagnostics?.line(
         'info',
         applicationIdChanged ? 'discord.app_id_rebind' : 'discord.client_rebind',

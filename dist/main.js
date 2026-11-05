@@ -1998,7 +1998,9 @@ function publishPanelSnapshot(mode) {
   panelPostTimer = setTimeout(flush, PANEL_POST_DEBOUNCE_MS);
   panelPostTimer.unref?.();
 }
-async function activate(orca) {
+async function activate(orca, deps = {}) {
+  const detectClients = deps.detect ?? detectDiscordClients;
+  const makeDiscordClient = deps.createClient ?? createDiscordClient;
   deactivated = false;
   const stored = await orca.host.call("settings.get").catch(() => ({ settings: {} }));
   const rawSettings = stored?.settings && typeof stored.settings === "object" ? stored.settings : {};
@@ -2047,17 +2049,25 @@ async function activate(orca) {
       return;
     }
     lastDetectAt = Date.now();
-    const found = await detectDiscordClients();
-    if (!deactivated) {
-      detected = found;
+    const found = await detectClients();
+    if (deactivated) {
+      return;
+    }
+    detected = found;
+    const chosen = settings.discordClient === AUTO_CLIENT ? undefined : found.find((client) => client.id === settings.discordClient);
+    const connectedPath = activeDiscord?.connectedPath() ?? null;
+    if (chosen && connectedPath !== null && connectedPath !== chosen.path) {
+      await applySettings(settings, { rebind: true });
     }
   }
+  let activeDiscord = null;
   function createController(nextSettings) {
-    const discord = createDiscordClient({
+    const discord = makeDiscordClient({
       clientId: nextSettings.applicationId,
       candidates: () => resolveClientCandidates(nextSettings.discordClient, detected, defaultDiscordIpcCandidates()).candidates,
       log: (message, level = "error") => diagnostics?.line(level, "discord.client", { reason: message })
     });
+    activeDiscord = discord;
     return createPresenceController({
       client: discord,
       describeClient: () => summarizeClients({
@@ -2089,12 +2099,12 @@ async function activate(orca) {
   const storedTimeline = orca.host.has("storage.get") ? await orca.host.call("storage.get", { key: TIMELINE_STORAGE_KEY }).catch(() => null) : null;
   timeline = createTimeline({ restore: storedTimeline?.value });
   controller = createController(settings);
-  async function applySettings(nextSettings) {
+  async function applySettings(nextSettings, options = {}) {
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId;
     const clientChanged = nextSettings.discordClient !== settings.discordClient;
     settings = nextSettings;
     diagnostics?.setDebugEnabled(nextSettings.debugLogging);
-    if (applicationIdChanged || clientChanged) {
+    if (applicationIdChanged || clientChanged || options.rebind) {
       diagnostics?.line("info", applicationIdChanged ? "discord.app_id_rebind" : "discord.client_rebind", applicationIdChanged ? { applicationId: nextSettings.applicationId } : { client: nextSettings.discordClient });
       await controller?.stop();
       controller = createController(nextSettings);
