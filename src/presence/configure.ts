@@ -1,5 +1,5 @@
 /**
- * Command-first settings patch for **Discord Presence: Configure**.
+ * Command-first settings patch for **Rich Presence: Configure**.
  *
  * Host `invokeCommand` may pass optional `args`. Invalid Application IDs
  * and `openUrl` values fail fast — they are not silently stored. Empty

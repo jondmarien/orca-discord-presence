@@ -76,7 +76,7 @@ export type PresenceControllerOptions = {
 }
 
 /**
- * Snapshot returned by **Discord Presence: Show Status**.
+ * Snapshot returned by **Rich Presence: Show Status**.
  *
  * `enabled` is true only when the master switch is on **and**
  * `detailLevel !== 'off'`. `lastActivity` is the last payload successfully
@@ -138,7 +138,7 @@ export type PresenceController = {
   forceTransmit: (resume?: boolean) => Promise<void>
   /**
    * Close the IPC socket (clears activity first), reconnect, and
-   * re-`SET_ACTIVITY`. Palette: **Discord Presence: Reload RPC**.
+   * re-`SET_ACTIVITY`. Palette: **Rich Presence: Reload RPC**.
    */
   reload: () => Promise<void>
   /**
