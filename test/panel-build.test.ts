@@ -47,7 +47,13 @@ class FakeElement {
       else this.classList.remove(name)
     }
   }
-  addEventListener() {}
+  listeners = new Map<string, Array<() => void>>()
+  addEventListener(type: string, fn: () => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn])
+  }
+  dispatch(type: string) {
+    for (const fn of this.listeners.get(type) ?? []) fn()
+  }
   setAttribute(name: string, value: string) {
     this.attrs.set(name, String(value))
   }
@@ -177,12 +183,12 @@ function fullSnapshot(timeline: Array<string | null>) {
 /**
  * Run the built script with a fake plugin API and return the test hook.
  */
-function mountPanel() {
+function mountPanel(hostCall?: (name: string, input: Record<string, unknown>) => Promise<unknown>) {
   const html = buildPanelHtml()
   const { byId, document } = makeDom(html)
   const orca = {
     plugin: { request: () => new Promise(() => {}), on() {} },
-    host: { has: () => false },
+    host: { has: () => false, ...(hostCall ? { call: hostCall } : {}) },
     on() {}
   }
   const sandbox = vm.createContext({ document, navigator: {}, orca, setInterval: () => 0 })
@@ -227,4 +233,117 @@ test('full view renders card, tiles and agent rows', () => {
   odd.activityCard.smallImageKey = '../../etc/passwd'
   hook?.render(odd)
   expect(byId.get('dcard-img')?.getAttribute('src')).toBe('../assets/state-idle.png')
+})
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+const FULL_ONLY = ['full-a', 'full-b', 'full-c']
+const hidden = (byId: Map<string, FakeElement>, id: string) => byId.get(id)?.className.split(/\s+/).includes('hidden')
+
+test('junk panelView falls back to full', async () => {
+  for (const stored of ['sideways', 42, null, { value: 'sideways' }, undefined]) {
+    const { byId } = mountPanel(async (name) => (name === 'storage.get' ? stored : undefined))
+    await settle()
+    expect(FULL_ONLY.some((id) => hidden(byId, id))).toBe(false)
+    expect(hidden(byId, 'min-hero')).toBe(true)
+  }
+  // Storage unavailable: the call rejects.
+  const failing = mountPanel(async () => {
+    throw new Error('storage unavailable')
+  })
+  await settle()
+  expect(FULL_ONLY.some((id) => hidden(failing.byId, id))).toBe(false)
+  // Positive control: a stored 'minimal' wins.
+  const minimal = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
+  await settle()
+  expect(hidden(minimal.byId, 'min-hero')).toBe(false)
+})
+
+test('view switch persists the choice with storage.set', async () => {
+  const calls: Array<[string, Record<string, unknown>]> = []
+  const { byId } = mountPanel(async (name, input) => {
+    calls.push([name, input])
+    return undefined
+  })
+  await settle()
+  byId.get('view-minimal')?.dispatch('click')
+  await settle()
+  expect(hidden(byId, 'min-hero')).toBe(false)
+  expect(calls).toContainEqual(['storage.set', { key: 'panelView', value: 'minimal' }])
+})
+
+test('minimal view hides full-only sections', async () => {
+  const { byId, hook } = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
+  hook?.render(fullSnapshot(Array.from({ length: 30 }, () => 'working')))
+  await settle()
+  for (const id of FULL_ONLY) expect(hidden(byId, id)).toBe(true)
+  expect(hidden(byId, 'min-hero')).toBe(false)
+  // Shared: strip and detail control stay.
+  expect(hidden(byId, 'strip-card')).toBe(false)
+  expect(hidden(byId, 'detail-card')).toBe(false)
+  expect(byId.get('min-state')?.textContent).toBe('Working')
+  expect(byId.get('min-meta')?.textContent?.startsWith('3 agents · ')).toBe(true)
+  expect(byId.get('min-details')?.textContent).toBe('\u201cWorking in Orca\u201d')
+  expect(byId.get('min-img')?.getAttribute('src')).toBe('../assets/state-working.png')
+  expect(byId.get('view-minimal')?.className.includes('on')).toBe(true)
+})
+
+test('minimal glow follows the current state', async () => {
+  const { byId, hook } = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
+  for (const state of ['working', 'waiting', 'blocked', 'idle']) {
+    const snap = fullSnapshot([])
+    snap.activityCard.smallImageKey = `state-${state}`
+    hook?.render(snap)
+    expect(byId.get('min-hero')?.getAttribute('data-state')).toBe(state)
+  }
+  const none = fullSnapshot([])
+  none.activityCard = null as never
+  hook?.render(none)
+  expect(byId.get('min-hero')?.getAttribute('data-state')).toBe('idle')
+})
+
+test('settings.set rejection reverts switch', async () => {
+  const calls: Array<[string, Record<string, unknown>]> = []
+  const { byId, hook } = mountPanel(async (name, input) => {
+    calls.push([name, input])
+    if (name === 'settings.set') throw new Error('rate limited')
+    return undefined
+  })
+  hook?.render(fullSnapshot([])) // showBranch: false in the snapshot
+  const sw = byId.get('sw-showBranch') as FakeElement
+  expect(sw.checked).toBe(false)
+  sw.checked = true
+  sw.dispatch('change')
+  expect(sw.getAttribute('aria-busy')).toBe('true')
+  expect(sw.disabled).toBe(true)
+  await settle()
+  expect(calls).toContainEqual(['settings.set', { key: 'showBranch', value: true }])
+  expect(sw.checked).toBe(false)
+  expect(sw.getAttribute('aria-busy')).toBe('false')
+  expect(sw.disabled).toBe(false)
+  expect(byId.get('flash')?.textContent).toContain('rate limited')
+})
+
+test('detail control writes detailLevel and reverts on failure', async () => {
+  let fail = false
+  const calls: Array<[string, Record<string, unknown>]> = []
+  const { byId, hook } = mountPanel(async (name, input) => {
+    calls.push([name, input])
+    if (name === 'settings.set' && fail) throw new Error('invalid value')
+    return undefined
+  })
+  hook?.render(fullSnapshot([]))
+  const seg = byId.get('detail-seg') as FakeElement
+  const buttons = seg.children
+  // The shim has no querySelectorAll over built HTML, so the panel must find
+  // its buttons through #detail-seg children.
+  expect(buttons.length).toBe(4)
+  buttons[2].dispatch('click')
+  await settle()
+  expect(calls).toContainEqual(['settings.set', { key: 'detailLevel', value: 'workspace' }])
+  fail = true
+  buttons[3].dispatch('click')
+  await settle()
+  expect(byId.get('flash')?.textContent).toContain('invalid value')
+  expect(buttons[1].className.includes('on')).toBe(true)
+  expect(buttons[3].className.includes('on')).toBe(false)
 })

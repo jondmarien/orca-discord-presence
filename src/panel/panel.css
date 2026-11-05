@@ -132,19 +132,32 @@ body {
   padding: 2px;
   background: var(--card);
 }
-.seg span {
+.seg span,
+.seg button {
   padding: 3px 9px;
+  border: 0;
   border-radius: 6px;
+  background: none;
+  font: inherit;
   font-size: 12px;
   color: var(--muted-fg);
 }
-.seg.sm span {
+.seg button {
+  cursor: pointer;
+}
+.seg.sm span,
+.seg.sm button {
   padding: 2px 8px;
   font-size: 11px;
 }
-.seg span.on {
+.seg span.on,
+.seg button.on {
   background: var(--c-none);
   color: var(--fg);
+}
+.seg button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 /* Discord card keeps its own palette in both themes: it previews Discord. */
@@ -291,14 +304,17 @@ body {
   color: #b5bcc4;
 }
 
-/* Switches (display-only until Task 3 wires them) */
+/* Switches: real checkboxes, so keyboard and screen readers work. */
 .sw {
+  appearance: none;
   width: 28px;
   height: 16px;
+  margin: 0;
   border-radius: 999px;
   background: #3a3a3a;
   position: relative;
   flex: none;
+  cursor: pointer;
 }
 .sw::after {
   content: '';
@@ -310,11 +326,95 @@ body {
   border-radius: 50%;
   background: #ececec;
 }
-.sw.on {
+.sw:checked {
   background: var(--c-working);
 }
-.sw.on::after {
+.sw:checked::after {
   left: 14px;
+}
+.sw:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.sw:focus-visible,
+.seg button:focus-visible {
+  outline: 2px solid var(--c-working);
+  outline-offset: 1px;
+}
+
+/* Minimal view: state glow hero. The glow colour is one custom property,
+   set from data-state, so every state reuses the same gradient. */
+.hero {
+  --glow: 154, 163, 173;
+  position: relative;
+  overflow: hidden;
+  min-height: 150px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(var(--glow), 0.35);
+  background:
+    radial-gradient(120% 90% at 85% 15%, rgba(var(--glow), 0.45), rgba(var(--glow), 0) 60%),
+    linear-gradient(160deg, color-mix(in srgb, rgb(var(--glow)) 14%, #0d0e10), #0d0e10 70%);
+  color: #f2f3f5;
+}
+.hero[data-state='working'] {
+  --glow: 18, 184, 240;
+}
+.hero[data-state='waiting'] {
+  --glow: 245, 184, 0;
+}
+.hero[data-state='blocked'] {
+  --glow: 232, 16, 16;
+}
+.hero .live {
+  font-size: 12px;
+  color: color-mix(in srgb, rgb(var(--glow)) 35%, #fff);
+}
+.hero .big {
+  margin-top: 14px;
+  font-size: 30px;
+  font-weight: 700;
+}
+.hero .tim {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, rgb(var(--glow)) 35%, #fff);
+}
+.hero .quote {
+  max-width: 170px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #9a9a9a;
+  overflow-wrap: anywhere;
+}
+.hero img {
+  position: absolute;
+  right: -10px;
+  bottom: -14px;
+  width: 132px;
+  height: 132px;
+  filter: drop-shadow(0 10px 30px rgba(var(--glow), 0.35));
+}
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(var(--glow));
+  animation: pulse 1.6s infinite;
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(var(--glow), 0.7);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 8px rgba(var(--glow), 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+  }
 }
 
 .btn {

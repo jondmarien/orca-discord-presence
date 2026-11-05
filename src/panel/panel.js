@@ -3,6 +3,14 @@ var REQUEST_TIMEOUT_MS = 5000
 var TIMELINE_CELLS = 30
 var STATES = ['working', 'waiting', 'blocked', 'idle']
 var STATE_ASSET_RE = /^state-(working|waiting|blocked|idle)$/
+var DETAIL_LEVELS = [
+  ['off', 'Off'],
+  ['generic', 'Generic'],
+  ['workspace', 'Workspace'],
+  ['full', 'Full']
+]
+var VIEW_KEY = 'panelView'
+var FULL_ONLY_IDS = ['full-a', 'full-b', 'full-c']
 var SWITCH_FIELDS = ['showAgentState', 'showAgentCount', 'showElapsed', 'showBranch', 'showTerminals', 'showMachine']
 
 function $(id) {
@@ -82,6 +90,7 @@ var timerStartMs = null
 function tickTimer() {
   if (timerStartMs == null) return
   setText('dcard-timer', formatElapsed(Date.now() - timerStartMs) + ' elapsed')
+  updateMeta()
 }
 
 function buildStrip() {
@@ -177,11 +186,41 @@ function renderCard(snapshot) {
   tickTimer()
 }
 
+// Why: the hero reads the same icon key as the card, so both views agree.
+function stateOf(snapshot) {
+  var card = snapshot.activityCard
+  var match = card && STATE_ASSET_RE.exec(card.smallImageKey)
+  return match ? match[1] : 'idle'
+}
+
+function renderMinimal(snapshot, agents) {
+  var state = stateOf(snapshot)
+  var card = snapshot.activityCard
+  var summary = snapshot.status.lastActivity
+  var details = card ? card.details : summary && summary.details
+  setAttr($('min-hero'), 'data-state', state)
+  setAttr($('min-img'), 'src', '../assets/' + 'state-' + state + '.png')
+  setText('min-state', state.charAt(0).toUpperCase() + state.slice(1))
+  setText('min-details', details ? '\u201c' + details + '\u201d' : '')
+  updateMeta()
+}
+
+// Timer + agent count share one node; only its text changes each second.
+var minAgents = 0
+function updateMeta() {
+  var parts = [minAgents + (minAgents === 1 ? ' agent' : ' agents')]
+  if (timerStartMs != null) parts.push(formatElapsed(Date.now() - timerStartMs))
+  setText('min-meta', parts.join(' \u00b7 '))
+}
+
+var lastSnapshot = null
 function render(snapshot) {
   setAttr($('status-bar'), 'class', barClass(snapshot))
   setText('indicator-label', indicatorLabel(snapshot))
   if (!snapshot || !snapshot.status) return
+  lastSnapshot = snapshot
   var fields = snapshot.fields || {}
+  minAgents = Array.isArray(snapshot.agents) ? snapshot.agents.length : 0
   renderCard(snapshot)
   renderStrip(snapshot.timeline)
   var agents = Array.isArray(snapshot.agents) ? snapshot.agents : []
@@ -190,16 +229,9 @@ function render(snapshot) {
   var sink = sinkTile(snapshot)
   setText('tile-sink', sink[0])
   setText('tile-sink-sub', sink[1])
-  var detailEls = $('detail-seg').children
-  for (var i = 0; i < detailEls.length; i += 1) {
-    setClass(detailEls[i], 'on', detailEls[i].getAttribute('data-detail') === snapshot.status.detailLevel)
-  }
+  renderMinimal(snapshot, agents)
+  renderControls(snapshot)
   renderAgents(agents)
-  SWITCH_FIELDS.forEach(function (name) {
-    var el = $('sw-' + name)
-    setClass(el, 'on', fields[name])
-    setAttr(el, 'aria-checked', fields[name] ? 'true' : 'false')
-  })
   setText('btn-toggle', fields.enabled === false ? 'Resume' : 'Pause')
   var logs = snapshot.logs || []
   setText('logs-summary', 'Logs (' + logs.length + ')')
@@ -213,6 +245,125 @@ function render(snapshot) {
       if (atBottom) view.scrollTop = view.scrollHeight
     }
   }
+}
+
+var pending = {}
+
+// Why: a write that fails must not leave the control showing a value the
+// worker never accepted, so every control re-reads the last snapshot.
+function renderControls(snapshot) {
+  var fields = snapshot.fields || {}
+  var detailEls = $('detail-seg').children
+  for (var i = 0; i < detailEls.length; i += 1) {
+    var level = detailEls[i].getAttribute('data-detail')
+    setClass(detailEls[i], 'on', level === snapshot.status.detailLevel)
+    setAttr(detailEls[i], 'aria-pressed', level === snapshot.status.detailLevel ? 'true' : 'false')
+  }
+  SWITCH_FIELDS.forEach(function (name) {
+    var el = $('sw-' + name)
+    if (el && !pending[name] && el.checked !== !!fields[name]) el.checked = !!fields[name]
+  })
+}
+
+function setBusy(el, busy) {
+  el.disabled = busy
+  el.setAttribute('aria-busy', busy ? 'true' : 'false')
+}
+
+function writeSetting(key, value, els) {
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') {
+    flash('Settings are not available in this host.')
+    if (lastSnapshot) renderControls(lastSnapshot)
+    return Promise.resolve()
+  }
+  pending[key] = true
+  els.forEach(function (el) {
+    setBusy(el, true)
+  })
+  var done = function () {
+    pending[key] = false
+    els.forEach(function (el) {
+      setBusy(el, false)
+    })
+    if (lastSnapshot) renderControls(lastSnapshot)
+  }
+  return Promise.resolve()
+    .then(function () {
+      return host.call('settings.set', { key: key, value: value })
+    })
+    .then(done, function (error) {
+      flash(errorText(error))
+      done()
+    })
+}
+
+function wireControls() {
+  SWITCH_FIELDS.forEach(function (name) {
+    var el = $('sw-' + name)
+    el.addEventListener('change', function () {
+      writeSetting(name, !!el.checked, [el])
+    })
+  })
+  var seg = $('detail-seg')
+  DETAIL_LEVELS.forEach(function (level) {
+    var button = document.createElement('button')
+    button.setAttribute('type', 'button')
+    button.setAttribute('data-detail', level[0])
+    button.textContent = level[1]
+    button.addEventListener('click', function () {
+      var buttons = Array.prototype.slice.call(seg.children)
+      writeSetting('detailLevel', level[0], buttons)
+    })
+    seg.appendChild(button)
+  })
+}
+
+// View: 'full' unless storage holds exactly 'minimal'. Storage may be absent,
+// reject, or hold junk; none of that may break the panel.
+var view = 'full'
+function applyView(next) {
+  view = next === 'minimal' ? 'minimal' : 'full'
+  FULL_ONLY_IDS.forEach(function (id) {
+    setClass($(id), 'hidden', view === 'minimal')
+  })
+  setClass($('min-hero'), 'hidden', view !== 'minimal')
+  setClass($('view-full'), 'on', view === 'full')
+  setClass($('view-minimal'), 'on', view === 'minimal')
+}
+
+function storedView(result) {
+  return result && typeof result === 'object' ? result.value : result
+}
+
+function loadView() {
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') return Promise.resolve()
+  return Promise.resolve()
+    .then(function () {
+      return host.call('storage.get', { key: VIEW_KEY })
+    })
+    .then(
+      function (result) {
+        applyView(storedView(result))
+      },
+      function () {
+        applyView('full')
+      }
+    )
+}
+
+function chooseView(next) {
+  applyView(next)
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') return
+  Promise.resolve()
+    .then(function () {
+      return host.call('storage.set', { key: VIEW_KEY, value: view })
+    })
+    .catch(function () {
+      // Why: the choice still applies for this session when it cannot be saved.
+    })
 }
 
 function request(name, input) {
@@ -283,6 +434,14 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
   note.classList.remove('hidden')
 } else {
   wireLogs()
+  wireControls()
+  $('view-full').addEventListener('click', function () {
+    chooseView('full')
+  })
+  $('view-minimal').addEventListener('click', function () {
+    chooseView('minimal')
+  })
+  loadView()
   $('btn-status').addEventListener('click', function () {
     run('presence.status', 'Status sent as a notification.')
   })

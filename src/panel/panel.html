@@ -26,12 +26,21 @@
           <b id="indicator-label">Waiting for worker snapshot</b>
         </div>
         <div class="seg sm" id="view-switch" role="group" aria-label="Panel view">
-          <span class="on" id="view-full">Full</span>
-          <span id="view-minimal">Minimal</span>
+          <button type="button" class="on" id="view-full">Full</button>
+          <button type="button" id="view-minimal">Minimal</button>
         </div>
       </header>
       <p class="flash" id="flash"></p>
 
+      <section class="hero hidden" id="min-hero" data-state="idle" aria-label="Current state">
+        <div class="row"><span class="pulse" aria-hidden="true"></span><span class="live">Live on Discord</span></div>
+        <div class="big" id="min-state">Idle</div>
+        <div class="tim" id="min-meta"></div>
+        <div class="quote" id="min-details"></div>
+        <img id="min-img" src="../assets/state-idle.png" alt="" width="132" height="132" />
+      </section>
+
+      <div class="col" id="full-a">
       <section class="dcard" aria-label="Discord profile preview">
         <div class="kicker">Playing a game</div>
         <div class="row top">
@@ -44,8 +53,9 @@
           </div>
         </div>
       </section>
+      </div>
 
-      <section class="card" aria-label="Last 30 minutes">
+      <section class="card" id="strip-card" aria-label="Last 30 minutes">
         <div class="row between mb6">
           <span class="h">Last 30 min</span>
           <span class="muted small">now →</span>
@@ -59,7 +69,7 @@
         </div>
       </section>
 
-      <div class="tiles">
+      <div class="tiles" id="full-b">
         <div class="card tile">
           <div class="l">Agents</div>
           <div class="v" id="tile-agents">0</div>
@@ -72,16 +82,12 @@
         </div>
       </div>
 
-      <section class="card" aria-label="Detail level">
+      <section class="card" id="detail-card" aria-label="Detail level">
         <div class="h mb6">Detail level</div>
-        <div class="seg" id="detail-seg" role="group">
-          <span data-detail="off">Off</span>
-          <span data-detail="generic">Generic</span>
-          <span data-detail="workspace">Workspace</span>
-          <span data-detail="full">Full</span>
-        </div>
+        <div class="seg" id="detail-seg" role="group" aria-label="Detail level"></div>
       </section>
 
+      <div class="col" id="full-c">
       <section class="card col" aria-label="Agents">
         <div class="h">Agents</div>
         <div class="col g6" id="agents-list"></div>
@@ -90,12 +96,12 @@
 
       <section class="card col g7" aria-label="Show on Discord">
         <div class="h">Show on Discord</div>
-        <div class="row between"><span>Agent state</span><span class="sw" id="sw-showAgentState" role="switch" aria-checked="false"></span></div>
-        <div class="row between"><span>Agent count</span><span class="sw" id="sw-showAgentCount" role="switch" aria-checked="false"></span></div>
-        <div class="row between"><span>Elapsed timer</span><span class="sw" id="sw-showElapsed" role="switch" aria-checked="false"></span></div>
-        <div class="row between"><span>Branch</span><span class="sw" id="sw-showBranch" role="switch" aria-checked="false"></span></div>
-        <div class="row between"><span>Terminal count</span><span class="sw" id="sw-showTerminals" role="switch" aria-checked="false"></span></div>
-        <div class="row between"><span>Machine name</span><span class="sw" id="sw-showMachine" role="switch" aria-checked="false"></span></div>
+        <div class="row between"><span>Agent state</span><input type="checkbox" class="sw" id="sw-showAgentState" role="switch" /></div>
+        <div class="row between"><span>Agent count</span><input type="checkbox" class="sw" id="sw-showAgentCount" role="switch" /></div>
+        <div class="row between"><span>Elapsed timer</span><input type="checkbox" class="sw" id="sw-showElapsed" role="switch" /></div>
+        <div class="row between"><span>Branch</span><input type="checkbox" class="sw" id="sw-showBranch" role="switch" /></div>
+        <div class="row between"><span>Terminal count</span><input type="checkbox" class="sw" id="sw-showTerminals" role="switch" /></div>
+        <div class="row between"><span>Machine name</span><input type="checkbox" class="sw" id="sw-showMachine" role="switch" /></div>
       </section>
 
       <div class="row g6">
@@ -113,6 +119,7 @@
         </div>
         <pre class="log" id="log-view">No log lines yet. Click Status to generate some.</pre>
       </details>
+      </div>
     </div>
 
     <script>
