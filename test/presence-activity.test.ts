@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test'
-import { buildActivity } from '../src/presence/activity'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { buildActivity, localAssetName } from '../src/presence/activity'
+import { createAgentTable } from '../src/presence/agents'
 import { normalizeSettings } from '../src/presence/settings'
 
 const SNAPSHOT = {
@@ -109,24 +112,47 @@ test('machineLabel overrides the detected machine name', () => {
   expect(activity?.state).toBe('work-laptop')
 })
 
-test('agent state done renders as idle with the idle asset', () => {
+test('agent state done renders as completed with the completed asset', () => {
   const activity = buildActivity(
     { ...SNAPSHOT, agentState: 'done' },
     settingsWith({ detailLevel: 'full' }),
     NOW_MS
   )
-  expect(activity?.state).toBe('idle')
-  expect(activity?.assets.small_image).toBe('state-idle')
+  expect(activity?.state).toBe('completed')
+  expect(activity?.assets.small_image).toBe('completed')
+  expect(activity?.assets.small_text).toBe('completed')
 })
 
-test('an unrecognized agent state falls back to idle rather than leaking it', () => {
+test('no agent state renders as idle with the idle asset', () => {
+  const activity = buildActivity(
+    { ...SNAPSHOT, agentState: undefined },
+    settingsWith({ detailLevel: 'full' }),
+    NOW_MS
+  )
+  expect(activity?.state).toBe('idle')
+  expect(activity?.assets.small_image).toBe('idle')
+  expect(activity?.assets.small_text).toBe('idle')
+})
+
+test('a raw idle state renders as idle, not completed', () => {
+  const activity = buildActivity(
+    { ...SNAPSHOT, agentState: 'idle' },
+    settingsWith({ detailLevel: 'full' }),
+    NOW_MS
+  )
+  expect(activity?.state).toBe('idle')
+  expect(activity?.assets.small_image).toBe('idle')
+})
+
+test('an unrecognized agent state reads idle rather than leaking or claiming completion', () => {
   const activity = buildActivity(
     { ...SNAPSHOT, agentState: 'exfiltrating-secrets' },
     settingsWith({ detailLevel: 'full' }),
     NOW_MS
   )
   expect(activity?.state).toBe('idle')
-  expect(activity?.assets.small_image).toBe('state-idle')
+  expect(activity?.assets.small_image).toBe('idle')
+  expect(activity?.assets.small_text).toBe('idle')
 })
 
 test('showElapsed emits unix seconds, not milliseconds', () => {
@@ -168,7 +194,7 @@ test('running aliases to the working asset and label', () => {
     NOW_MS
   )
   expect(activity?.state).toBe('working')
-  expect(activity?.assets.small_image).toBe('state-working')
+  expect(activity?.assets.small_image).toBe('working')
   expect(activity?.assets.small_text).toBe('working')
 })
 
@@ -179,7 +205,7 @@ test('needs_input aliases to waiting for input', () => {
     NOW_MS
   )
   expect(activity?.state).toBe('waiting for input')
-  expect(activity?.assets.small_image).toBe('state-waiting')
+  expect(activity?.assets.small_image).toBe('waiting')
 })
 
 test('an unrecognized agent state is omitted from the serialized payload', () => {
@@ -254,4 +280,27 @@ test('an empty state string is omitted rather than sent blank', () => {
     NOW_MS
   )
   expect(activity && 'state' in activity).toBe(false)
+})
+
+test('every Discord asset key carries the -v2 suffix and maps back to a local file', () => {
+  const activity = buildActivity({ ...SNAPSHOT, agentState: 'blocked' }, normalizeSettings({}), NOW_MS)
+  expect(activity?.assets.large_image).toBe('orca-v2')
+  expect(activity?.assets.small_image).toBe('blocked')
+  expect(localAssetName('blocked')).toBe('state-blocked')
+  expect(existsSync(join(import.meta.dir, '..', 'assets', `${localAssetName(activity!.assets.small_image)}.png`))).toBe(true)
+})
+
+test('a chat title in the agent table never reaches the Discord or bridge payload', () => {
+  const table = createAgentTable({ now: () => 1_000_000 })
+  const title = 'Secret chat: rotate prod keys'
+  table.upsert({ workspaceId: 'w', paneKey: 'p', terminalId: 't1', state: 'working', receivedAt: 1_000_000, kind: 'claude', title })
+  const summary = table.summarize()
+  const activity = buildActivity(
+    { ...SNAPSHOT, ...summary },
+    settingsWith({ detailLevel: 'full', showAgentCount: true, showTerminals: true, showMachine: true }),
+    NOW_MS
+  )
+  // The bridge POSTs exactly this activity as JSON.
+  expect(JSON.stringify(activity)).not.toContain(title)
+  expect(JSON.stringify(summary)).not.toContain(title)
 })

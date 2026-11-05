@@ -1,0 +1,164 @@
+<style>
+  .wrap { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start; }
+  .col { display:flex; flex-direction:column; gap:10px; }
+  .lbl { font-weight:600; font-size:15px; margin:4px 2px; }
+  .sub2 { font-size:12px; opacity:.7; margin:0 2px 6px; max-width:340px; }
+  .pick { cursor:pointer; border-radius:14px; padding:6px; border:2px solid transparent; }
+  .pick.selected { border-color:#5b8cff; }
+
+  .frame { width:340px; background:#111214; color:#ececec; border:1px solid #2a2a2a; border-radius:12px;
+           font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .card { background:#18191b; border:1px solid #2a2a2a; border-radius:10px; padding:10px 12px; }
+  .muted { color:#9a9a9a; }
+  .row { display:flex; align-items:center; gap:8px; }
+  .between { justify-content:space-between; }
+  .h { font-weight:600; font-size:11px; color:#9a9a9a; text-transform:uppercase; letter-spacing:.06em; }
+  .tiles { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .tile .v { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .tile .l { font-size:11px; color:#9a9a9a; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .chip { font-size:11px; padding:1px 8px; border-radius:999px; font-weight:600; }
+  .w { background:rgba(18,184,240,.15); color:#3fc8f5; } .wa { background:rgba(245,184,0,.15); color:#f5c23a; }
+  .seg { display:inline-flex; border:1px solid #2a2a2a; border-radius:8px; padding:2px; background:#18191b; }
+  .seg span { padding:3px 9px; border-radius:6px; font-size:12px; color:#9a9a9a; }
+  .seg span.on { background:#262626; color:#ececec; }
+  .seg.sm span { padding:2px 8px; font-size:11px; }
+  .sw { width:28px; height:16px; border-radius:999px; background:#3a3a3a; position:relative; flex:none; }
+  .sw::after { content:""; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%; background:#ececec; }
+  .sw.on { background:#12b8f0; } .sw.on::after { left:14px; }
+  .btn { border:1px solid #2a2a2a; background:#18191b; color:#ececec; border-radius:8px; padding:4px 10px; font-size:12px; }
+  .mix { display:flex; height:6px; border-radius:999px; overflow:hidden; background:#262626; }
+  details.logs summary { cursor:pointer; color:#9a9a9a; font-size:12px; }
+  .dcard { background:#232428; border-radius:10px; padding:12px; border:1px solid #2f3136; }
+  .dcard .kicker { font-size:11px; font-weight:700; color:#b5bac1; text-transform:uppercase; letter-spacing:.04em; margin-bottom:8px; }
+  .dcard img { width:64px; height:64px; border-radius:12px; }
+  .dcard .t1 { font-weight:700; color:#f2f3f5; } .dcard .t2,.dcard .t3 { color:#dbdee1; font-size:12px; }
+  .dcard .t4 { color:#23a55a; font-size:12px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .strip { display:flex; gap:2px; height:20px; }
+  .strip i { flex:1; border-radius:2px; }
+  .leg { display:flex; gap:10px; margin-top:7px; font-size:11px; color:#9a9a9a; }
+  .leg span { display:flex; align-items:center; gap:4px; }
+  .glow { position:relative; border-radius:12px; overflow:hidden; padding:16px; min-height:150px;
+          background: radial-gradient(120% 90% at 85% 15%, rgba(18,184,240,.45), rgba(18,184,240,0) 60%), linear-gradient(160deg,#0b1a24,#0d0e10 70%);
+          border:1px solid rgba(18,184,240,.35); }
+  .glow img { position:absolute; right:-10px; bottom:-14px; width:132px; height:132px; filter: drop-shadow(0 10px 30px rgba(18,184,240,.35)); }
+  .glow .big { font-size:30px; font-weight:700; }
+  .glow .tim { font-size:13px; font-variant-numeric:tabular-nums; color:#bfe9fb; }
+  .pulse { width:8px; height:8px; border-radius:50%; background:#12b8f0; animation:pl 1.6s infinite; }
+  @keyframes pl { 0% { box-shadow:0 0 0 0 rgba(18,184,240,.7) } 70%,100% { box-shadow:0 0 0 8px rgba(18,184,240,0) } }
+
+  /* covers: 1600x1000 shown at 40% = 640x400 */
+  .cover { width:640px; height:400px; border-radius:10px; overflow:hidden; position:relative; border:1px solid #2a2a2a; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; color:#f2f3f5; }
+  .c1 { background: radial-gradient(70% 60% at 50% 100%, rgba(18,184,240,.25), rgba(0,0,0,0) 70%), #121316; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; }
+  .c1 h1 { margin:0; font-size:32px; font-weight:700; letter-spacing:-.01em; }
+  .c1 p { margin:0; font-size:14px; color:#b5bac1; }
+  .c1 img { width:560px; border-radius:8px; border:1px solid #2a2a2a; }
+  .c2 { background: linear-gradient(135deg,#0b1a24 0%,#111214 55%,#1d1410 100%); }
+  .c2 .left { position:absolute; left:40px; top:56px; width:280px; }
+  .c2 h1 { margin:0 0 10px; font-size:34px; line-height:1.1; font-weight:700; }
+  .c2 p { margin:0 0 18px; color:#b5bac1; font-size:14px; }
+  .c2 .icons { display:flex; gap:10px; }
+  .c2 .icons img { width:52px; height:52px; }
+  .c2 .dcard { position:absolute; right:40px; top:110px; width:250px; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+</style>
+
+<h2>Full view, Minimal view, and plugin-page cover</h2>
+<p class="subtitle">Both panel views share the “Last 30 min” strip. The header switch flips between them. Click a cover option below.</p>
+
+<div class="wrap">
+  <div class="col">
+    <div class="lbl">Full view (default)</div>
+    <div class="frame">
+      <div class="row between">
+        <div class="row"><span class="dot" style="background:#23a55a"></span><b>Connected · local</b></div>
+        <div class="seg sm"><span class="on">Full</span><span>Minimal</span></div>
+      </div>
+      <div class="dcard">
+        <div class="kicker">Playing a game</div>
+        <div class="row" style="gap:12px; align-items:flex-start">
+          <img src="../../../../assets/state-working.png" alt="">
+          <div><div class="t1">Orca</div><div class="t2">Working in Orca</div><div class="t3">Agent working · 3 agents</div><div class="t4">00:42:17 elapsed</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row between" style="margin-bottom:6px"><span class="h">Last 30 min</span><span class="muted" style="font-size:11px">now →</span></div>
+        <div class="strip"><i style="background:#262626"></i><i style="background:#262626"></i><i style="background:#9aa3ad"></i><i style="background:#9aa3ad"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#f5b800"></i><i style="background:#e81010"></i><i style="background:#f5b800"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#f5b800"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i></div>
+        <div class="leg"><span><i class="dot" style="background:#12b8f0"></i>working</span><span><i class="dot" style="background:#f5b800"></i>waiting</span><span><i class="dot" style="background:#e81010"></i>blocked</span><span><i class="dot" style="background:#9aa3ad"></i>idle</span></div>
+      </div>
+      <div class="tiles">
+        <div class="card tile"><div class="l">Agents</div><div class="v">3</div><div class="mix" style="margin-top:6px"><i style="flex:2;background:#12b8f0"></i><i style="flex:1;background:#f5b800"></i></div></div>
+        <div class="card tile"><div class="l">Sending to</div><div class="v">Local</div><div class="l">Discord IPC</div></div>
+      </div>
+      <div class="card"><div class="h" style="margin-bottom:6px">Detail level</div><div class="seg"><span>Off</span><span class="on">Generic</span><span>Workspace</span><span>Full</span></div></div>
+      <div class="card col" style="gap:6px">
+        <div class="h">Agents</div>
+        <div class="row between"><span>claude</span><span class="chip w">working · 12m</span></div>
+        <div class="row between"><span>codex</span><span class="chip w">working · 3m</span></div>
+        <div class="row between"><span>claude</span><span class="chip wa">waiting · 40s</span></div>
+      </div>
+      <div class="card col" style="gap:7px">
+        <div class="h">Show on Discord</div>
+        <div class="row between"><span>Agent state</span><span class="sw on"></span></div>
+        <div class="row between"><span>Agent count</span><span class="sw on"></span></div>
+        <div class="row between"><span>Elapsed timer</span><span class="sw on"></span></div>
+        <div class="row between"><span>Branch</span><span class="sw"></span></div>
+        <div class="row between"><span>Terminal count</span><span class="sw"></span></div>
+        <div class="row between"><span>Machine name</span><span class="sw"></span></div>
+      </div>
+      <div class="row" style="gap:6px"><span class="btn">Reload</span><span class="btn">Clear</span><span class="btn">Pause</span><span class="btn" style="margin-left:auto">Status</span></div>
+      <details class="logs"><summary>Logs (80)</summary></details>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="lbl">Minimal view</div>
+    <div class="frame">
+      <div class="row between">
+        <div class="row"><span class="dot" style="background:#23a55a"></span><b>Connected · local</b></div>
+        <div class="seg sm"><span>Full</span><span class="on">Minimal</span></div>
+      </div>
+      <div class="glow">
+        <div class="row"><span class="pulse"></span><span style="font-size:12px;color:#bfe9fb">Live on Discord</span></div>
+        <div class="big" style="margin-top:14px">Working</div>
+        <div class="tim">3 agents · 00:42:17</div>
+        <div class="muted" style="margin-top:10px;font-size:12px;max-width:170px">“Working in Orca”</div>
+        <img src="../../../../assets/state-working.png" alt="">
+      </div>
+      <div class="card">
+        <div class="row between" style="margin-bottom:6px"><span class="h">Last 30 min</span><span class="muted" style="font-size:11px">now →</span></div>
+        <div class="strip"><i style="background:#262626"></i><i style="background:#262626"></i><i style="background:#9aa3ad"></i><i style="background:#9aa3ad"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#f5b800"></i><i style="background:#e81010"></i><i style="background:#f5b800"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#f5b800"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i><i style="background:#12b8f0"></i></div>
+      </div>
+      <div class="seg" style="align-self:flex-start"><span>Off</span><span class="on">Generic</span><span>Workspace</span><span>Full</span></div>
+    </div>
+    <div class="sub2" style="margin-top:8px">The glow follows state: cyan working, amber waiting, red blocked, grey idle. Pulse stops with reduced motion.</div>
+  </div>
+</div>
+
+<h3 style="margin-top:34px">Plugin page cover (1600×1000, shown at 40%)</h3>
+<div class="wrap">
+  <div class="col pick" data-choice="cover-a" onclick="toggleSelect(this)">
+    <div class="lbl">Cover A · your README banner, framed</div>
+    <div class="cover c1">
+      <h1>Rich Presence for Discord</h1>
+      <p>Your Orca workspace and agent state, live on your profile.</p>
+      <img src="../../../../assets/banner-states.png" alt="">
+    </div>
+  </div>
+  <div class="col pick" data-choice="cover-b" onclick="toggleSelect(this)">
+    <div class="lbl">Cover B · title + state icons + profile card</div>
+    <div class="cover c2">
+      <div class="left">
+        <h1>Rich Presence for Discord</h1>
+        <p>Workspace and agent state on your Discord profile. Every field opt-in.</p>
+        <div class="icons"><img src="../../../../assets/state-working.png" alt=""><img src="../../../../assets/state-waiting.png" alt=""><img src="../../../../assets/state-blocked.png" alt=""><img src="../../../../assets/state-idle.png" alt=""></div>
+      </div>
+      <div class="dcard">
+        <div class="kicker">Playing a game</div>
+        <div class="row" style="gap:12px; align-items:flex-start">
+          <img src="../../../../assets/state-working.png" alt="">
+          <div><div class="t1">Orca</div><div class="t2">Working in Orca</div><div class="t3">Agent working · 3 agents</div><div class="t4">00:42:17 elapsed</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

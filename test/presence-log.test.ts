@@ -22,10 +22,10 @@ test('resolveLogFilePath prefers the env override, then XDG, then ~/.local/state
       { XDG_STATE_HOME: '/custom/state' },
       { homedir: '/home/jon', tmpdir: '/tmp', platform: 'linux' }
     )
-  ).toBe('/custom/state/chron0-discord-presence/plugin.log')
+  ).toBe('/custom/state/jondmarien-discord-presence/plugin.log')
   expect(
     resolveLogFilePath({}, { homedir: '/home/jon', tmpdir: '/tmp', platform: 'linux' })
-  ).toBe('/home/jon/.local/state/chron0-discord-presence/plugin.log')
+  ).toBe('/home/jon/.local/state/jondmarien-discord-presence/plugin.log')
 })
 
 test('resolveLogFilePath uses LOCALAPPDATA on Windows', () => {
@@ -34,14 +34,14 @@ test('resolveLogFilePath uses LOCALAPPDATA on Windows', () => {
       { LOCALAPPDATA: 'C:\\Users\\jon\\AppData\\Local' },
       { homedir: 'C:\\Users\\jon', tmpdir: 'C:\\Temp', platform: 'win32' }
     )
-  ).toBe(path.join('C:\\Users\\jon\\AppData\\Local', 'chron0-discord-presence', 'plugin.log'))
+  ).toBe(path.join('C:\\Users\\jon\\AppData\\Local', 'jondmarien-discord-presence', 'plugin.log'))
 })
 
 test('formatLogLine prefixes the plugin id and quotes spaced values', () => {
   const line = formatLogLine('error', 'discord.connect_failed', {
     reason: 'no discord ipc socket accepted a connection'
   })
-  expect(line.startsWith('[chron0.discord-presence] error discord.connect_failed')).toBe(true)
+  expect(line.startsWith('[jondmarien.discord-presence] error discord.connect_failed')).toBe(true)
   expect(line.includes('reason="no discord ipc socket accepted a connection"')).toBe(true)
 })
 

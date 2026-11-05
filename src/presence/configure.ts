@@ -1,5 +1,5 @@
 /**
- * Command-first settings patch for **Discord Presence: Configure**.
+ * Command-first settings patch for **Rich Presence: Configure**.
  *
  * Host `invokeCommand` may pass optional `args`. Invalid Application IDs
  * and `openUrl` values fail fast — they are not silently stored. Empty
@@ -11,6 +11,7 @@
  */
 
 import { isPlausibleApplicationId } from '../discord/app-id'
+import { normalizeBridgeToken } from './bridge'
 import {
   normalizeOpenButtonLabel,
   normalizeOpenUrl,
@@ -131,6 +132,19 @@ export function applyConfigure(current: PresenceSettings, args: unknown): Presen
     if (source.showAgentCount !== current.showAgentCount) {
       next.showAgentCount = source.showAgentCount
       changed.push('showAgentCount')
+    }
+  }
+
+  // Why: the token is the only way to set it now that it is not a declared
+  // setting. The caller routes the write to secrets; the value is never echoed.
+  if ('bridgeToken' in source) {
+    if (typeof source.bridgeToken !== 'string') {
+      return { ok: false, error: 'bridgeToken must be a string (empty clears it)' }
+    }
+    const bridgeToken = normalizeBridgeToken(source.bridgeToken)
+    if (bridgeToken !== current.bridgeToken) {
+      next.bridgeToken = bridgeToken
+      changed.push('bridgeToken')
     }
   }
 

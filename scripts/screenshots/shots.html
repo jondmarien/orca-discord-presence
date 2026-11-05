@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; }
+  body { width: 1600px; height: 1000px; overflow: hidden; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #f2f3f5;
+         background: linear-gradient(135deg, #0b1a24 0%, #111214 55%, #1d1410 100%); }
+  .shot { display: none; width: 1600px; height: 1000px; position: relative; }
+  .shot.on { display: block; }
+  .copy { position: absolute; left: 80px; top: 0; bottom: 0; width: 340px; display: flex; flex-direction: column; justify-content: center; }
+  .kicker { font-size: 18px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #3fc8f5; margin-bottom: 18px; }
+  h1 { margin: 0 0 20px; font-size: 42px; line-height: 1.08; font-weight: 700; }
+  p { margin: 0; font-size: 20px; line-height: 1.5; color: #b5bac1; }
+  .imgs { position: absolute; right: 80px; top: 0; bottom: 0; display: flex; gap: 36px; align-items: center; }
+  .imgs img { border-radius: 18px; box-shadow: 0 40px 120px rgba(0,0,0,.55); border: 1px solid #2a2a2a; display: block; }
+  .stack { display: flex; flex-direction: column; gap: 32px; align-items: flex-end; }
+</style>
+</head>
+<body>
+  <div class="shot" id="full">
+    <div class="copy">
+      <div class="kicker">Full view</div>
+      <h1>See exactly what Discord shows</h1>
+      <p>A live preview of your profile card, the last 30 minutes of agent activity, every agent with its chat name, and switches for each field you share.</p>
+    </div>
+    <div class="imgs">
+      <img src="../../assets/screenshots/src/full-top.png" style="height:740px" alt="" />
+      <img src="../../assets/screenshots/src/full-bottom.png" style="height:500px" alt="" />
+    </div>
+  </div>
+  <div class="shot" id="minimal">
+    <div class="copy">
+      <div class="kicker" style="color:#3ecf7a">Minimal view</div>
+      <h1>One glance, on your profile</h1>
+      <p>The hero takes on your agents' state: working, waiting, blocked or completed. Friends see the same state on your Discord profile, with a timer.</p>
+    </div>
+    <div class="imgs">
+      <img src="../../assets/screenshots/src/minimal.png" style="width:820px" alt="" />
+    </div>
+  </div>
+  <script>
+    var id = (location.hash || '#full').slice(1)
+    document.getElementById(id).classList.add('on')
+  </script>
+</body>
+</html>

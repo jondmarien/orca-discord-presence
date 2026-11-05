@@ -3,3 +3,4 @@ node_modules/
 *.tsbuildinfo
 companion/orca-presence-companion
 companion/orca-presence-companion.exe
+.superpowers/

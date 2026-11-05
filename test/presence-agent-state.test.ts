@@ -23,7 +23,11 @@ test('needs_input maps to waiting', () => {
 test('complete and finished map to done', () => {
   expect(canonicalizeAgentState('complete')).toBe('done')
   expect(canonicalizeAgentState('finished')).toBe('done')
-  expect(canonicalizeAgentState('idle')).toBe('done')
+})
+
+test('a raw idle state is idle, not done', () => {
+  expect(canonicalizeAgentState('idle')).toBe('idle')
+  expect(canonicalizeAgentState(' Idle ')).toBe('idle')
 })
 
 test('canonical Orca states pass through', () => {
@@ -33,9 +37,9 @@ test('canonical Orca states pass through', () => {
   expect(canonicalizeAgentState('done')).toBe('done')
 })
 
-test('unknown or missing states become done (idle) and never stay raw', () => {
-  expect(canonicalizeAgentState('exfiltrating-secrets')).toBe('done')
-  expect(canonicalizeAgentState(undefined)).toBe('done')
-  expect(canonicalizeAgentState('')).toBe('done')
-  expect(canonicalizeAgentState('   ')).toBe('done')
+test('unknown or missing states become idle and never stay raw', () => {
+  expect(canonicalizeAgentState('exfiltrating-secrets')).toBe('idle')
+  expect(canonicalizeAgentState(undefined)).toBe('idle')
+  expect(canonicalizeAgentState('')).toBe('idle')
+  expect(canonicalizeAgentState('   ')).toBe('idle')
 })

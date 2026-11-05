@@ -3,7 +3,7 @@
  *
  * This module is the privacy boundary. Every identifying string must pass a
  * detail-level gate here; nothing downstream re-checks. Unknown agent states
- * never leave this file verbatim — they map to idle.
+ * never leave this file verbatim — they map to a known state.
  *
  * @module presence/activity
  * @author Jonathan Marien
@@ -66,10 +66,10 @@ export type DiscordActivity = {
     large_text: string
     /**
      * Small image key: `state-working` | `state-blocked` | `state-waiting`
-     * | `state-idle`.
+     * | `state-completed` | `state-idle` (each with the asset suffix).
      */
     small_image: string
-    /** Human label matching the small asset (`working`, `idle`, …). */
+    /** Human label matching the small asset (`working`, `completed`, `idle`, …). */
     small_text: string
   }
   /**
@@ -80,16 +80,48 @@ export type DiscordActivity = {
 }
 
 /**
+ * Suffix on every Discord art asset key.
+ *
+ * Why: Discord caches asset art by key name for hours or days, so redesigned
+ * icons ship under new keys (`orca-v2`) uploaded to the
+ * shipped application. Bump this when the art changes again.
+ */
+export const DISCORD_ASSET_SUFFIX = '-v2'
+
+/**
+ * Bare state names used as Discord small-image keys. Why: the small image is a
+ * badge-only asset (`working`, `completed`, …) drawn over the large `orca-v2`
+ * icon, so Discord shows a clean status dot instead of a shrunken full icon.
+ */
+const SMALL_STATE_KEYS: ReadonlySet<string> = new Set(['working', 'blocked', 'waiting', 'completed', 'idle'])
+
+/**
+ * Local file name (in `assets/`) the panel shows for a Discord asset key.
+ *
+ * Why: the panel draws the full state icon (`state-working.png`), not the
+ * badge, so bare state keys map to their `state-*` file; suffixed keys lose
+ * {@link DISCORD_ASSET_SUFFIX}.
+ */
+export function localAssetName(key: string): string {
+  if (SMALL_STATE_KEYS.has(key)) {
+    return `state-${key}`
+  }
+  return key.endsWith(DISCORD_ASSET_SUFFIX) ? key.slice(0, -DISCORD_ASSET_SUFFIX.length) : key
+}
+
+/**
  * Canonical agent states and their Discord labels / Rich Presence asset
  * keys. Incoming host strings are folded through
- * {@link canonicalizeAgentState} first; anything unknown becomes idle so a
- * future or malformed state can never be transmitted verbatim.
+ * {@link canonicalizeAgentState} first; anything unknown becomes `idle` so a
+ * future or malformed state can never be transmitted verbatim, and never
+ * claims completion.
  */
 const AGENT_STATE_LABELS = {
-  working: { label: 'working', asset: 'state-working' },
-  blocked: { label: 'blocked', asset: 'state-blocked' },
-  waiting: { label: 'waiting for input', asset: 'state-waiting' },
-  done: { label: 'idle', asset: 'state-idle' }
+  working: { label: 'working', asset: 'working' },
+  blocked: { label: 'blocked', asset: 'blocked' },
+  waiting: { label: 'waiting for input', asset: 'waiting' },
+  done: { label: 'completed', asset: 'completed' },
+  idle: { label: 'idle', asset: 'idle' }
 } as const
 
 /**
@@ -100,7 +132,8 @@ function clamp(text: string): string {
 }
 
 /**
- * Map an agent state string to a known label/asset, or idle.
+ * Map an agent state string to a known label/asset. Missing and unknown
+ * strings are idle (never echoed).
  */
 function agentVisual(state: string | undefined) {
   const canonical = canonicalizeAgentState(state)
@@ -177,7 +210,7 @@ export function buildActivity(
   const activity: DiscordActivity = {
     details: clamp(buildDetails(snapshot, settings)),
     assets: {
-      large_image: 'orca',
+      large_image: `orca${DISCORD_ASSET_SUFFIX}`,
       large_text: 'Orca',
       small_image: small.asset,
       small_text: small.label

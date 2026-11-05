@@ -1,9 +1,12 @@
 import { expect, test } from 'bun:test'
+import { summarizePanelAgents } from '../src/presence/panel-snapshot'
 import { AGENT_RETENTION_MS } from '../src/presence/expiry'
 import {
+  agentSlotKey,
   createAgentTable,
+  parseAgentsList,
   parseAgentStatusPayload,
-  parseWorktreeRemovedId
+  parseWorkspaceRemovedId
 } from '../src/presence/agents'
 
 type FakeTimer = {
@@ -44,10 +47,10 @@ function tableHarness() {
   return { table, advance, nowRef: () => now, changes }
 }
 
-test('parseAgentStatusPayload reads worktreeId, paneKey, state, and receivedAt', () => {
+test('parseAgentStatusPayload reads workspaceId, paneKey, state, and receivedAt', () => {
   const parsed = parseAgentStatusPayload(
     {
-      worktreeId: 'repo::/tmp/a',
+      workspaceId: 'repo::/tmp/a',
       paneKey: 'tab:one',
       state: 'running',
       receivedAt: 1_700_000_000_000
@@ -55,7 +58,7 @@ test('parseAgentStatusPayload reads worktreeId, paneKey, state, and receivedAt',
     9
   )
   expect(parsed).toEqual({
-    worktreeId: 'repo::/tmp/a',
+    workspaceId: 'repo::/tmp/a',
     paneKey: 'tab:one',
     state: 'running',
     receivedAt: 1_700_000_000_000
@@ -65,7 +68,7 @@ test('parseAgentStatusPayload reads worktreeId, paneKey, state, and receivedAt',
 test('parseAgentStatusPayload fills missing ids and receivedAt', () => {
   const parsed = parseAgentStatusPayload({ state: 'working' }, 42)
   expect(parsed).toEqual({
-    worktreeId: '',
+    workspaceId: '',
     paneKey: '',
     state: 'working',
     receivedAt: 42
@@ -81,13 +84,13 @@ test('parseAgentStatusPayload ignores a payload without a state string', () => {
 test('two paneKeys stay distinct and summarize with agentCount', () => {
   const { table } = tableHarness()
   table.upsert({
-    worktreeId: 'wt',
+    workspaceId: 'wt',
     paneKey: 'a',
     state: 'working',
     receivedAt: 1_000_000
   })
   table.upsert({
-    worktreeId: 'wt',
+    workspaceId: 'wt',
     paneKey: 'b',
     state: 'waiting',
     receivedAt: 1_000_100
@@ -100,13 +103,28 @@ test('two paneKeys stay distinct and summarize with agentCount', () => {
 
 test('aggregate priority is blocked over waiting over working over done', () => {
   const { table } = tableHarness()
-  table.upsert({ worktreeId: 'w', paneKey: '1', state: 'done', receivedAt: 1 })
-  table.upsert({ worktreeId: 'w', paneKey: '2', state: 'working', receivedAt: 2 })
+  table.upsert({ workspaceId: 'w', paneKey: '1', state: 'done', receivedAt: 1 })
+  table.upsert({ workspaceId: 'w', paneKey: '2', state: 'working', receivedAt: 2 })
   expect(table.summarize().agentState).toBe('working')
-  table.upsert({ worktreeId: 'w', paneKey: '3', state: 'needs_input', receivedAt: 3 })
+  table.upsert({ workspaceId: 'w', paneKey: '3', state: 'needs_input', receivedAt: 3 })
   expect(table.summarize().agentState).toBe('waiting')
-  table.upsert({ worktreeId: 'w', paneKey: '4', state: 'error', receivedAt: 4 })
+  table.upsert({ workspaceId: 'w', paneKey: '4', state: 'error', receivedAt: 4 })
   expect(table.summarize().agentState).toBe('blocked')
+})
+
+test('one done agent summarizes as done, which the panel shows as completed', () => {
+  const { table } = tableHarness()
+  table.upsert({ workspaceId: 'w', paneKey: '1', state: 'done', receivedAt: 1_000_000 })
+  expect(table.summarize().agentState).toBe('done')
+  expect(table.summarize().agentCount).toBe(1)
+})
+
+test('an idle agent summarizes as idle, below done', () => {
+  const { table } = tableHarness()
+  table.upsert({ workspaceId: 'w', paneKey: '1', state: 'idle', receivedAt: 1_000_000 })
+  expect(table.summarize().agentState).toBe('idle')
+  table.upsert({ workspaceId: 'w', paneKey: '2', state: 'done', receivedAt: 1_000_000 })
+  expect(table.summarize().agentState).toBe('done')
 })
 
 test('an empty table has no agent state', () => {
@@ -121,7 +139,7 @@ test('an empty table has no agent state', () => {
 test('done agents drop after 60 seconds and refresh the table', async () => {
   const { table, advance, changes } = tableHarness()
   table.upsert({
-    worktreeId: 'w',
+    workspaceId: 'w',
     paneKey: 'p',
     state: 'complete',
     receivedAt: 1_000_000
@@ -137,7 +155,7 @@ test('done agents drop after 60 seconds and refresh the table', async () => {
 test('stale non-done agents drop after 30 minutes', async () => {
   const { table, advance } = tableHarness()
   table.upsert({
-    worktreeId: 'w',
+    workspaceId: 'w',
     paneKey: 'p',
     state: 'working',
     receivedAt: 1_000_000
@@ -148,18 +166,178 @@ test('stale non-done agents drop after 30 minutes', async () => {
   expect(table.summarize().agentCount).toBe(0)
 })
 
-test('removeWorktree drops only matching slots', () => {
+test('removeWorkspace drops only matching slots', () => {
   const { table } = tableHarness()
-  table.upsert({ worktreeId: 'keep', paneKey: 'a', state: 'working', receivedAt: 1 })
-  table.upsert({ worktreeId: 'gone', paneKey: 'a', state: 'working', receivedAt: 1 })
-  expect(table.removeWorktree('gone')).toBe(true)
+  table.upsert({ workspaceId: 'keep', paneKey: 'a', state: 'working', receivedAt: 1 })
+  table.upsert({ workspaceId: 'gone', paneKey: 'a', state: 'working', receivedAt: 1 })
+  expect(table.removeWorkspace('gone')).toBe(true)
   expect(table.summarize().agentCount).toBe(1)
-  expect(table.slots()[0]?.worktreeId).toBe('keep')
+  expect(table.slots()[0]?.workspaceId).toBe('keep')
 })
 
-test('parseWorktreeRemovedId reads worktreeId or id', () => {
-  expect(parseWorktreeRemovedId({ worktreeId: 'repo::/x' })).toBe('repo::/x')
-  expect(parseWorktreeRemovedId({ id: 'wt-2' })).toBe('wt-2')
-  expect(parseWorktreeRemovedId('wt-3')).toBe('wt-3')
-  expect(parseWorktreeRemovedId({})).toBeNull()
+test('parseWorkspaceRemovedId reads workspaceId', () => {
+  expect(parseWorkspaceRemovedId({ workspaceId: 'w1', kind: 'git', path: '/x' })).toBe('w1')
+  expect(parseWorkspaceRemovedId({ workspaceId: '  ' })).toBeNull()
+  expect(parseWorkspaceRemovedId({})).toBeNull()
+  expect(parseWorkspaceRemovedId(null)).toBeNull()
+})
+
+test('agentSlotKey prefers terminalId, else workspace + pane', () => {
+  expect(agentSlotKey({ workspaceId: 'w', paneKey: 'p', terminalId: 't1' })).toBe('t:t1')
+  expect(agentSlotKey({ workspaceId: 'w', paneKey: 'p' })).toBe('p:w\u001fp')
+  expect(agentSlotKey({ workspaceId: 'w', paneKey: 'p', terminalId: '' })).toBe('p:w\u001fp')
+})
+
+test('parseAgentStatusPayload reads terminalId and null workspaceId', () => {
+  expect(
+    parseAgentStatusPayload(
+      { workspaceId: null, paneKey: 'k', terminalId: 't9', state: 'working', receivedAt: 5 },
+      1
+    )
+  ).toEqual({ workspaceId: '', paneKey: 'k', terminalId: 't9', state: 'working', receivedAt: 5 })
+})
+
+test('parseAgentsList maps rows and drops null terminalId', () => {
+  expect(
+    parseAgentsList(
+      {
+        agents: [
+          { terminalId: 't1', title: null, agent: 'claude', state: 'working', stateStartedAt: 7 },
+          { terminalId: null, title: null, agent: null, state: 'idle', stateStartedAt: 8 },
+          { terminalId: 't2', title: 'x', agent: 'codex', state: 'done' }
+        ]
+      },
+      10
+    )
+  ).toEqual([
+    { workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: 10, stateStartedAt: 7, kind: 'claude' },
+    { workspaceId: '', paneKey: '', terminalId: 't2', state: 'done', receivedAt: 10, kind: 'codex', title: 'x' }
+  ])
+})
+
+test('agent.status.changed title is parsed; blank or non-string titles are dropped', () => {
+  const base = { workspaceId: 'w', paneKey: 'k', state: 'working' }
+  expect(parseAgentStatusPayload({ ...base, title: 'Fix login bug' }, 5)?.title).toBe('Fix login bug')
+  expect(parseAgentStatusPayload({ ...base, title: '' }, 5)).not.toHaveProperty('title')
+  expect(parseAgentStatusPayload({ ...base, title: 7 }, 5)).not.toHaveProperty('title')
+  expect(parseAgentStatusPayload(base, 5)).not.toHaveProperty('title')
+})
+
+test('a seeded title survives a later event without one, and a new title replaces it', () => {
+  const { table } = tableHarness()
+  const at = 1_000_000
+  table.upsert({ workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: at, title: 'First chat' })
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'blocked', receivedAt: at })
+  expect(table.slots()[0]?.title).toBe('First chat')
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'blocked', receivedAt: at, title: 'Renamed' })
+  expect(table.slots()[0]?.title).toBe('Renamed')
+})
+
+test('parseAgentsList tolerates junk', () => {
+  expect(parseAgentsList(null, 1)).toEqual([])
+  expect(parseAgentsList({}, 1)).toEqual([])
+  expect(parseAgentsList({ agents: 'x' }, 1)).toEqual([])
+})
+
+test('seeded agent then event for same terminalId counts once', () => {
+  const { table } = tableHarness()
+  for (const event of parseAgentsList(
+    { agents: [{ terminalId: 't1', title: null, agent: 'claude', state: 'working', stateStartedAt: 1 }] },
+    10
+  )) {
+    table.upsert(event)
+  }
+  table.upsert({
+    workspaceId: 'w1',
+    paneKey: 'tab:leaf',
+    terminalId: 't1',
+    state: 'blocked',
+    receivedAt: 20
+  })
+  const summary = table.summarize()
+  expect(summary.agentCount).toBe(1)
+  expect(summary.agentState).toBe('blocked')
+  expect(table.removeWorkspace('w1')).toBe(true)
+})
+
+test('agent kind survives a later event without kind', () => {
+  const { table } = tableHarness()
+  const [seeded] = parseAgentsList({ agents: [{ terminalId: 't1', state: 'working', agent: 'claude' }] }, 1)
+  expect(seeded?.kind).toBe('claude')
+  expect(parseAgentsList({ agents: [{ terminalId: 't2', state: 'working', agent: '' }] }, 1)[0]).not.toHaveProperty('kind')
+  table.upsert(seeded!)
+  table.upsert({ workspaceId: 'w', paneKey: 'p', terminalId: 't1', state: 'waiting', receivedAt: 1_000_000 })
+  expect(table.slots()[0]?.kind).toBe('claude')
+  expect(table.slots()[0]?.canonicalState).toBe('waiting')
+})
+
+test('a listed agent working past the stale window survives prune and keeps its true start', () => {
+  const { table, nowRef } = tableHarness()
+  const startedAt = nowRef() - 45 * 60_000
+  for (const event of parseAgentsList(
+    { agents: [{ terminalId: 't1', agent: 'claude', state: 'working', stateStartedAt: startedAt }] },
+    nowRef()
+  )) {
+    table.upsert(event)
+  }
+  expect(table.prune()).toBe(false)
+  expect(table.slots()).toHaveLength(1)
+  expect(summarizePanelAgents(table.slots())[0]?.sinceMs).toBe(startedAt)
+  expect(table.summarize().stateStartedAtMs).toBe(startedAt)
+})
+
+function seedList(table: ReturnType<typeof tableHarness>['table'], now: number, state: string, startedAt: number) {
+  for (const event of parseAgentsList({ agents: [{ terminalId: 't1', agent: 'claude', state, stateStartedAt: startedAt }] }, now)) {
+    table.upsert(event)
+  }
+}
+
+test('a listed done row finished 30 minutes ago is pruned immediately', () => {
+  const { table, nowRef } = tableHarness()
+  seedList(table, nowRef(), 'done', nowRef() - 30 * 60_000)
+  expect(table.slots()).toHaveLength(0)
+})
+
+test('a listed done row finished 2 minutes ago stays listed', () => {
+  const { table, nowRef } = tableHarness()
+  seedList(table, nowRef(), 'done', nowRef() - 2 * 60_000)
+  expect(table.slots()).toHaveLength(1)
+  expect(table.slots()[0]?.receivedAt).toBe(nowRef() - 2 * 60_000)
+})
+
+test('a re-sync of a completed slot does not extend its receivedAt', () => {
+  const { table, nowRef } = tableHarness()
+  const finishedAt = nowRef() - 2 * 60_000
+  seedList(table, nowRef(), 'done', finishedAt)
+  seedList(table, nowRef() + 60_000, 'done', finishedAt)
+  expect(table.slots()[0]?.receivedAt).toBe(finishedAt)
+})
+
+test('a later completion of the same terminal gets its own retention', () => {
+  const { table, nowRef } = tableHarness()
+  const firstDone = nowRef() - 2 * 60_000
+  seedList(table, nowRef(), 'done', firstDone)
+  const secondDone = nowRef() - 10_000
+  seedList(table, nowRef(), 'done', secondDone)
+  expect(table.slots()[0]?.receivedAt).toBe(secondDone)
+  expect(table.slots()[0]?.stateStartedAt).toBe(secondDone)
+})
+
+test('same-state event keeps stateStartedAt; a state change resets it', () => {
+  const { table, nowRef } = tableHarness()
+  const t0 = nowRef()
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'working', receivedAt: t0, stateStartedAt: t0 - 5000 })
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'working', receivedAt: t0 + 10 })
+  expect(table.slots()[0]?.stateStartedAt).toBe(t0 - 5000)
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'blocked', receivedAt: t0 + 20 })
+  expect(table.slots()[0]?.stateStartedAt).toBe(t0 + 20)
+})
+
+test('a list re-sync keeps the workspaceId a status event supplied', () => {
+  const { table, nowRef } = tableHarness()
+  const at = nowRef()
+  table.upsert({ workspaceId: 'w1', paneKey: 'k', terminalId: 't1', state: 'working', receivedAt: at })
+  table.upsert({ workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: at })
+  expect(table.removeWorkspace('w1')).toBe(true)
+  expect(table.slots()).toHaveLength(0)
 })

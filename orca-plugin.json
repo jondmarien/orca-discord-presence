@@ -1,50 +1,273 @@
 {
-  "manifestVersion": 1,
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "execution": "trusted-worker",
   "id": "discord-presence",
-  "publisher": "chron0",
-  "name": "Discord Rich Presence",
-  "version": "0.5.0",
-  "description": "Shows your current Orca workspace, branch, and agent state as Discord Rich Presence. Every field is opt-in.",
-  "engines": { "orca": ">=1.4.0" },
+  "name": "Rich Presence for Discord",
+  "version": "1.0.0",
+  "icon": "assets/icon.png",
+  "cover": {
+    "path": "assets/cover.png",
+    "alt": "Rich Presence for Discord: title, four agent state icons, Discord profile card showing Working in Orca"
+  },
+  "screenshots": [
+    {
+      "path": "assets/screenshots/full.png",
+      "alt": "Rich Presence panel Full view: Discord profile preview, last 30 minutes of agent states, agent list with chat names, and Show on Discord switches",
+      "caption": "Full view"
+    },
+    {
+      "path": "assets/screenshots/minimal.png",
+      "alt": "Rich Presence panel Minimal view: state-coloured hero showing Working with 2 agents and a timer, plus the 30-minute strip",
+      "caption": "Minimal view"
+    }
+  ],
+  "description": "Shows your Orca workspace, branch and agent state on your Discord profile. Every field is opt-in. Not affiliated with Discord.",
+  "author": {
+    "name": "Jonathan Marien",
+    "url": "https://github.com/jondmarien"
+  },
+  "repository": "https://github.com/jondmarien/orca-discord-presence",
+  "homepage": "https://github.com/jondmarien/orca-discord-presence",
+  "license": "MIT",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
   "pluginApi": 1,
   "main": "dist/main.js",
   "contributes": {
     "panels": [
       {
         "id": "presence",
-        "title": "Discord Presence",
-        "icon": "settings",
+        "title": "Rich Presence",
+        "icon": "activity",
         "entry": "panel/index.html"
       }
     ],
     "commands": [
-      { "id": "presence.toggle", "title": "Discord Presence: Enable/Disable" },
-      { "id": "presence.status", "title": "Discord Presence: Show Status" },
-      { "id": "presence.reload", "title": "Discord Presence: Reload RPC" },
-      { "id": "presence.detail-level", "title": "Discord Presence: Cycle Detail Level" },
-      { "id": "presence.toggle-branch", "title": "Discord Presence: Toggle Branch" },
-      { "id": "presence.toggle-agent-state", "title": "Discord Presence: Toggle Agent State" },
-      { "id": "presence.toggle-terminals", "title": "Discord Presence: Toggle Terminal Count" },
-      { "id": "presence.toggle-machine", "title": "Discord Presence: Toggle Machine Name" },
-      { "id": "presence.toggle-elapsed", "title": "Discord Presence: Toggle Elapsed Timer" },
-      { "id": "presence.toggle-bridge", "title": "Discord Presence: Toggle Bridge" },
-      { "id": "presence.debug-logging", "title": "Discord Presence: Toggle Debug Logging" },
-      { "id": "presence.toggle-open-button", "title": "Discord Presence: Toggle Open Button" },
-      { "id": "presence.toggle-agent-count", "title": "Discord Presence: Toggle Agent Count" },
-      { "id": "presence.clear", "title": "Discord Presence: Clear" },
-      { "id": "presence.configure", "title": "Discord Presence: Configure" }
+      {
+        "id": "presence.toggle",
+        "title": "Rich Presence: Enable/Disable"
+      },
+      {
+        "id": "presence.status",
+        "title": "Rich Presence: Show Status"
+      },
+      {
+        "id": "presence.reload",
+        "title": "Rich Presence: Reload RPC"
+      },
+      {
+        "id": "presence.detail-level",
+        "title": "Rich Presence: Cycle Detail Level"
+      },
+      {
+        "id": "presence.toggle-branch",
+        "title": "Rich Presence: Toggle Branch"
+      },
+      {
+        "id": "presence.toggle-agent-state",
+        "title": "Rich Presence: Toggle Agent State"
+      },
+      {
+        "id": "presence.toggle-terminals",
+        "title": "Rich Presence: Toggle Terminal Count"
+      },
+      {
+        "id": "presence.toggle-machine",
+        "title": "Rich Presence: Toggle Machine Name"
+      },
+      {
+        "id": "presence.toggle-elapsed",
+        "title": "Rich Presence: Toggle Elapsed Timer"
+      },
+      {
+        "id": "presence.toggle-bridge",
+        "title": "Rich Presence: Toggle Bridge"
+      },
+      {
+        "id": "presence.debug-logging",
+        "title": "Rich Presence: Toggle Debug Logging"
+      },
+      {
+        "id": "presence.toggle-open-button",
+        "title": "Rich Presence: Toggle Open Button"
+      },
+      {
+        "id": "presence.toggle-agent-count",
+        "title": "Rich Presence: Toggle Agent Count"
+      },
+      {
+        "id": "presence.clear",
+        "title": "Rich Presence: Clear"
+      },
+      {
+        "id": "presence.configure",
+        "title": "Rich Presence: Configure"
+      }
+    ],
+    "settings": [
+      {
+        "key": "enabled",
+        "title": "Show Rich Presence",
+        "description": "Master switch. Off clears your Discord activity.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "detailLevel",
+        "title": "Detail level",
+        "description": "How much Orca detail Discord may see. Generic shows no repo, branch or machine name.",
+        "type": "string",
+        "default": "generic",
+        "enum": [
+          "off",
+          "generic",
+          "workspace",
+          "full"
+        ],
+        "enumLabels": [
+          "Off",
+          "Generic",
+          "Workspace",
+          "Full"
+        ]
+      },
+      {
+        "key": "applicationId",
+        "title": "Discord Application ID",
+        "description": "Your own Discord Application ID. Leave as is to use the shipped one; an invalid value falls back to it.",
+        "type": "string",
+        "default": "1545653843239374848",
+        "maxLength": 20
+      },
+      {
+        "key": "machineLabel",
+        "title": "Machine name",
+        "description": "Name shown instead of this computer's hostname. Only used when \"Show machine name\" is on and detail is not Generic. Empty uses the hostname.",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "key": "showBranch",
+        "title": "Show git branch",
+        "description": "Include the branch name. Needs detail level Full.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "showAgentState",
+        "title": "Show agent state",
+        "description": "Show whether an agent is working, waiting or blocked.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "showTerminals",
+        "title": "Show terminal count",
+        "description": "Include how many terminals are open.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "showMachine",
+        "title": "Show machine name",
+        "description": "Include the machine name. Needs detail level Full.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "showElapsed",
+        "title": "Show elapsed timer",
+        "description": "Show how long the current agent state has lasted.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "bridgeEnabled",
+        "title": "Use HTTP bridge",
+        "description": "Send presence to the companion app when Discord is not reachable locally, for example from a remote machine.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "bridgeUrl",
+        "title": "Bridge URL",
+        "description": "Base URL of the Orca Presence companion that talks to Discord (http or https). Empty when unused.",
+        "type": "string",
+        "default": "",
+        "maxLength": 512,
+        "placeholder": "http://127.0.0.1:3848"
+      },
+      {
+        "key": "debugLogging",
+        "title": "Debug logging",
+        "description": "Write detailed diagnostics to the plugin log.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "openUrl",
+        "title": "Button URL",
+        "description": "HTTPS link for the optional Discord button. Empty means no button.",
+        "type": "string",
+        "default": "",
+        "maxLength": 512,
+        "placeholder": "https://"
+      },
+      {
+        "key": "showOpenButton",
+        "title": "Show button",
+        "description": "Attach the button to your activity. Needs a Button URL.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "openButtonLabel",
+        "title": "Button label",
+        "description": "Text on the Discord button (1-32 characters).",
+        "type": "string",
+        "default": "Open Orca",
+        "maxLength": 32
+      },
+      {
+        "key": "showAgentCount",
+        "title": "Show agent count",
+        "description": "Include how many agents are running.",
+        "type": "boolean",
+        "default": false
+      }
     ],
     "events": [
-      { "on": "agent.status.changed" },
-      { "on": "worktree.created" },
-      { "on": "worktree.removed" }
+      {
+        "on": "agent.status.changed"
+      },
+      {
+        "on": "workspace.removed"
+      },
+      {
+        "on": "workspace.changed"
+      }
     ]
   },
   "capabilities": [
-    { "kind": "workspace:read" },
-    { "kind": "events:subscribe" },
-    { "kind": "storage" },
-    { "kind": "settings:own" },
-    { "kind": "notifications:show" }
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "agent:read"
+    },
+    {
+      "kind": "storage:own"
+    },
+    {
+      "kind": "settings:own"
+    },
+    {
+      "kind": "secrets:own"
+    },
+    {
+      "kind": "notifications:show"
+    }
   ]
 }

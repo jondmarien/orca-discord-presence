@@ -1,8 +1,12 @@
 import { expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_OPEN_BUTTON_LABEL,
   DEFAULT_SETTINGS,
   DETAIL_LEVELS,
+  SETTING_KEYS_DECLARED,
   SHIPPED_APPLICATION_ID,
   normalizeOpenButtonLabel,
   normalizeOpenUrl,
@@ -27,6 +31,15 @@ test('defaults are privacy-preserving', () => {
   expect(DEFAULT_SETTINGS.showOpenButton).toBe(false)
   expect(DEFAULT_SETTINGS.openButtonLabel).toBe(DEFAULT_OPEN_BUTTON_LABEL)
   expect(DEFAULT_SETTINGS.showAgentCount).toBe(false)
+  expect(DEFAULT_SETTINGS.discordClient).toBe('auto')
+})
+
+test('discordClient normalizes: trimmed, capped at 64, junk or empty is auto', () => {
+  expect(normalizeSettings({ discordClient: ' vesktop:0 ' }).discordClient).toBe('vesktop:0')
+  expect(normalizeSettings({ discordClient: 'x'.repeat(100) }).discordClient).toHaveLength(64)
+  expect(normalizeSettings({ discordClient: '' }).discordClient).toBe('auto')
+  expect(normalizeSettings({ discordClient: 7 }).discordClient).toBe('auto')
+  expect(normalizeSettings({}).discordClient).toBe('auto')
 })
 
 test('normalize fills gaps and drops unknown keys', () => {
@@ -131,4 +144,46 @@ test('normalizeSettings accepts openUrl and drops an invalid one', () => {
     'https://example.com/x'
   )
   expect(normalizeSettings({ openUrl: 'http://example.com' }).openUrl).toBe('')
+})
+
+test('declared settings match DEFAULT_SETTINGS', () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')) as {
+    contributes: {
+      settings: Array<{
+        key: string
+        type: string
+        description?: string
+        default: unknown
+        enum?: string[]
+        enumLabels?: string[]
+        maxLength?: number
+      }>
+    }
+  }
+  const entries = manifest.contributes.settings
+  expect(entries.length).toBeLessThanOrEqual(64)
+  expect(entries.map((entry) => entry.key).sort()).toEqual([...SETTING_KEYS_DECLARED].sort())
+  expect(entries.some((entry) => entry.key === 'bridgeToken')).toBe(false)
+  // Why: the picker lists runtime-detected clients, which a static manifest
+  // cannot, so `discordClient` lives in the panel and is not declared.
+  expect(entries.some((entry) => entry.key === 'discordClient')).toBe(false)
+  expect(SETTING_KEYS_DECLARED).not.toContain('bridgeToken')
+  expect(SETTING_KEYS_DECLARED).not.toContain('discordClient')
+  expect(SETTING_KEYS_DECLARED).toHaveLength(Object.keys(DEFAULT_SETTINGS).length - 2)
+  for (const key of SETTING_KEYS_DECLARED) {
+    const entry = entries.find((candidate) => candidate.key === key)
+    expect(entry).toBeDefined()
+    const expected = key === 'machineLabel' ? '' : DEFAULT_SETTINGS[key]
+    expect(entry?.default).toBe(expected as string | boolean)
+    expect(entry?.type).toBe(typeof expected)
+  }
+  const byKey = (key: string) => entries.find((entry) => entry.key === key)
+  expect(byKey('detailLevel')?.enum).toEqual(['off', 'generic', 'workspace', 'full'])
+  expect(byKey('detailLevel')?.enumLabels).toEqual(['Off', 'Generic', 'Workspace', 'Full'])
+  expect(byKey('applicationId')?.maxLength).toBe(20)
+  expect(byKey('openButtonLabel')?.maxLength).toBe(32)
+  expect(byKey('openUrl')?.maxLength).toBe(512)
+  expect(byKey('bridgeUrl')?.maxLength).toBe(512)
+  expect(byKey('bridgeUrl')?.description?.toLowerCase()).toContain('companion')
 })

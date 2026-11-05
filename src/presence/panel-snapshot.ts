@@ -12,10 +12,13 @@
  * @date 2026-09-05
  */
 
-import type { DiscordActivity } from './activity'
+import { localAssetName, type DiscordActivity } from './activity'
+import type { CanonicalAgentState } from './agent-state'
+import type { AgentSlot } from './agents'
 import type { PresenceStatus } from './controller'
 import { LOG_DIR_NAME, LOG_FILE_NAME } from './log'
 import type { PresenceSettings } from './settings'
+import type { TimelineSlot } from './timeline'
 
 /**
  * Conventional POSIX log path shown when the worker has not supplied one.
@@ -28,6 +31,28 @@ export const CONVENTIONAL_LOG_HINT = `~/.local/state/${LOG_DIR_NAME}/${LOG_FILE_
 export type PresencePanelActivitySummary = {
   details: string
   state: string | null
+}
+
+/**
+ * One agent row: no workspace, pane or terminal id ever. `title` is the chat
+ * name, local panel only (never Discord, bridge or logs), truncated.
+ */
+export type PresencePanelAgent = {
+  kind: string
+  title?: string
+  state: CanonicalAgentState
+  sinceMs: number
+}
+
+/**
+ * The Discord card as the panel previews it (`startMs` is epoch ms).
+ */
+export type PresencePanelActivityCard = {
+  details: string
+  state: string | null
+  largeImageKey: string
+  smallImageKey: string
+  startMs: number | null
 }
 
 /**
@@ -45,6 +70,8 @@ export type PresencePanelFields = {
   debugLogging: boolean
   showOpenButton: boolean
   showAgentCount: boolean
+  /** `auto` or a detected client id (never a socket path). */
+  discordClient: string
 }
 
 /**
@@ -56,6 +83,11 @@ export type PresencePanelSnapshot = {
   status: {
     enabled: boolean
     connected: boolean
+    /** The Discord app connected over IPC, or `null`. */
+    client: PresenceStatus['client']
+    /** Detected Discord apps; `id` and `label` only, never a path. */
+    clients: PresenceStatus['clients']
+    clientFallback: boolean
     sink: PresenceStatus['sink']
     detailLevel: PresenceSettings['detailLevel']
     bridgeEnabled: boolean
@@ -64,6 +96,9 @@ export type PresencePanelSnapshot = {
     logFile: string | null
   }
   fields: PresencePanelFields
+  timeline: TimelineSlot[]
+  agents: PresencePanelAgent[]
+  activityCard: PresencePanelActivityCard | null
   logs: string[]
   logHint: string
 }
@@ -76,6 +111,8 @@ export type PresencePanelSnapshotInput = {
   status: PresenceStatus
   settings: PresenceSettings
   logs: readonly string[]
+  timeline: TimelineSlot[]
+  agents: readonly AgentSlot[]
   /** Clock for `generatedAt`. Defaults to `new Date()`. */
   now?: Date
 }
@@ -112,14 +149,70 @@ export function summarizePanelActivity(
   }
 }
 
+const AGENT_ROW_PRIORITY: Record<CanonicalAgentState, number> = {
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  done: 1,
+  idle: 0
+}
+
+/** Longest chat title the panel snapshot carries, ellipsis included. */
+export const PANEL_TITLE_MAX = 80
+
+function panelTitle(title: string | undefined): string | undefined {
+  const text = typeof title === 'string' ? title.trim() : ''
+  if (!text) {
+    return undefined
+  }
+  return text.length > PANEL_TITLE_MAX ? `${text.slice(0, PANEL_TITLE_MAX - 1)}…` : text
+}
+
+/**
+ * Privacy-safe agent rows, highest-priority state first, then oldest first.
+ *
+ * Why: slots carry workspace ids, pane keys and terminal ids. Rebuilding each
+ * row from kind, title, state and time means none of those can reach the panel.
+ */
+export function summarizePanelAgents(slots: readonly AgentSlot[]): PresencePanelAgent[] {
+  return slots
+    .map((slot) => ({
+      kind: slot.kind && slot.kind.length > 0 ? slot.kind : 'agent',
+      ...(panelTitle(slot.title) ? { title: panelTitle(slot.title) } : {}),
+      state: slot.canonicalState,
+      sinceMs: slot.stateStartedAt ?? slot.receivedAt
+    }))
+    .sort(
+      (a, b) => AGENT_ROW_PRIORITY[b.state] - AGENT_ROW_PRIORITY[a.state] || a.sinceMs - b.sinceMs
+    )
+}
+
+/**
+ * Discord card preview from the last transmitted activity.
+ */
+export function summarizePanelActivityCard(
+  activity: DiscordActivity | null | undefined
+): PresencePanelActivityCard | null {
+  if (!activity || typeof activity.details !== 'string') {
+    return null
+  }
+  return {
+    details: activity.details,
+    state: typeof activity.state === 'string' ? activity.state : null,
+    largeImageKey: localAssetName(activity.assets.large_image),
+    smallImageKey: localAssetName(activity.assets.small_image),
+    startMs: activity.timestamps ? activity.timestamps.start * 1000 : null
+  }
+}
+
 /**
  * Compact toast body for **Show Status** from the panel (`notifications.show`).
  *
  * Title stays `Discord Rich Presence` (host cap 120). Body is well under 1000.
  */
 export function formatPanelStatusToast(snapshot: PresencePanelSnapshot): string {
-  const { enabled, connected, sink, detailLevel } = snapshot.status
-  return `enabled=${enabled} connected=${connected} sink=${sink} detail=${detailLevel}`
+  const { enabled, connected, sink, detailLevel, client } = snapshot.status
+  return `enabled=${enabled} connected=${connected} client=${client?.id ?? 'none'} sink=${sink} detail=${detailLevel}`
 }
 
 /**
@@ -127,13 +220,17 @@ export function formatPanelStatusToast(snapshot: PresencePanelSnapshot): string 
  * `machineLabel`, and `openUrl` are intentionally omitted.
  */
 export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): PresencePanelSnapshot {
-  const { version, status, settings, logs, now = new Date() } = input
+  const { version, status, settings, logs, timeline, agents, now = new Date() } = input
   return {
     version,
     generatedAt: now.toISOString(),
     status: {
       enabled: status.enabled,
       connected: status.connected,
+      // Why: rebuilt field by field so a path can never ride along.
+      client: status.client ? { id: status.client.id, label: status.client.label } : null,
+      clients: status.clients.map(({ id, label }) => ({ id, label })),
+      clientFallback: status.clientFallback,
       sink: status.sink,
       detailLevel: status.detailLevel,
       bridgeEnabled: status.bridgeEnabled,
@@ -151,8 +248,12 @@ export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): P
       bridgeEnabled: settings.bridgeEnabled,
       debugLogging: settings.debugLogging,
       showOpenButton: settings.showOpenButton,
-      showAgentCount: settings.showAgentCount
+      showAgentCount: settings.showAgentCount,
+      discordClient: settings.discordClient
     },
+    timeline: [...timeline],
+    agents: summarizePanelAgents(agents),
+    activityCard: summarizePanelActivityCard(status.lastActivity),
     logs: logs.map(redactPanelLogLine),
     logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT
   }

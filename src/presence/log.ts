@@ -16,12 +16,12 @@ import { dirname, join } from 'node:path'
 /**
  * Qualified plugin id — also the log line prefix.
  */
-export const LOG_PLUGIN_ID = 'chron0.discord-presence'
+export const LOG_PLUGIN_ID = 'jondmarien.discord-presence'
 
 /**
  * Directory name under XDG state / LocalAppData.
  */
-export const LOG_DIR_NAME = 'chron0-discord-presence'
+export const LOG_DIR_NAME = 'jondmarien-discord-presence'
 
 /**
  * Log file basename.
@@ -76,7 +76,7 @@ export type LogPathInput = {
  * Pick the on-disk log path.
  *
  * Order: `ORCA_PRESENCE_LOG_FILE`, `XDG_STATE_HOME`, Windows `LOCALAPPDATA`,
- * `~/.local/state/chron0-discord-presence/plugin.log`, then tmpdir.
+ * `~/.local/state/jondmarien-discord-presence/plugin.log`, then tmpdir.
  */
 export function resolveLogFilePath(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,

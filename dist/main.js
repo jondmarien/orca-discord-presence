@@ -50,9 +50,10 @@ function assertPlausibleApplicationId(clientId) {
 // src/discord/client.ts
 import { randomUUID } from "node:crypto";
 import net from "node:net";
-import os from "node:os";
 
 // src/discord/ipc.ts
+import os from "node:os";
+import path from "node:path";
 var SOCKET_INDEX_LIMIT = 10;
 var SANDBOX_SUBDIRS = [
   "",
@@ -68,10 +69,16 @@ var OPCODE = {
   PONG: 4
 };
 var MAX_FRAME_BYTES = 1024 * 1024;
+var DISCORD_IPC_ENV = "ORCA_PRESENCE_DISCORD_IPC";
 function trimTrailingSeparator(value) {
   return value.replace(/[\\/]+$/, "");
 }
 function discordIpcCandidates({ platform, env, uid }) {
+  const override = env[DISCORD_IPC_ENV];
+  if (override) {
+    const delimiter = platform === "win32" ? path.win32.delimiter : path.posix.delimiter;
+    return override.split(delimiter).filter((entry) => entry.length > 0);
+  }
   if (platform === "win32") {
     return Array.from({ length: SOCKET_INDEX_LIMIT }, (_unused, index) => `\\\\?\\pipe\\discord-ipc-${index}`);
   }
@@ -98,6 +105,13 @@ function discordIpcCandidates({ platform, env, uid }) {
     }
   }
   return candidates;
+}
+function defaultDiscordIpcCandidates() {
+  return discordIpcCandidates({
+    platform: process.platform,
+    env: process.env,
+    uid: typeof os.userInfo === "function" ? os.userInfo().uid : undefined
+  });
 }
 function encodeFrame(opcode, payload) {
   const body = Buffer.from(JSON.stringify(payload), "utf8");
@@ -202,22 +216,15 @@ function connectToFirstAvailable(candidates) {
       socket.once("error", onError);
       socket.once("connect", () => {
         socket.removeListener("error", onError);
-        resolve(socket);
+        resolve({ socket, path: candidate });
       });
     };
     attempt();
   });
 }
-function defaultCandidates() {
-  return discordIpcCandidates({
-    platform: process.platform,
-    env: process.env,
-    uid: typeof os.userInfo === "function" ? os.userInfo().uid : undefined
-  });
-}
 function createDiscordClient({
   clientId,
-  candidates = defaultCandidates,
+  candidates = defaultDiscordIpcCandidates,
   onClose = () => {},
   log = () => {},
   handshakeTimeoutMs = HANDSHAKE_TIMEOUT_MS,
@@ -228,12 +235,14 @@ function createDiscordClient({
 }) {
   let socket = null;
   let connected = false;
+  let socketPath = null;
   let closeNotified = false;
   let closed = false;
   const pending = new Map;
   let handshakeWait = null;
   function teardown() {
     connected = false;
+    socketPath = null;
     for (const entry of pending.values()) {
       clearTimeout(entry.timer);
       entry.reject(new Error("discord connection closed"));
@@ -311,7 +320,9 @@ function createDiscordClient({
   async function connectOnce() {
     closeNotified = false;
     closed = false;
-    socket = await connectToFirstAvailable(candidates());
+    const answered = await connectToFirstAvailable(candidates());
+    socket = answered.socket;
+    socketPath = answered.path;
     const decoder = createFrameDecoder(handleFrame, (error) => {
       const message = error instanceof Error ? error.message : String(error);
       log(`discord frame error: ${message}`);
@@ -392,6 +403,7 @@ function createDiscordClient({
   return {
     connect,
     isConnected: () => connected,
+    connectedPath: () => connected ? socketPath : null,
     setActivity: (activity) => command("SET_ACTIVITY", { pid: process.pid, activity }),
     clearActivity: () => command("SET_ACTIVITY", { pid: process.pid, activity: null }),
     async close() {
@@ -407,6 +419,131 @@ function createDiscordClient({
       teardown();
     },
     destroySocketForTest: () => socket?.destroy()
+  };
+}
+
+// src/discord/detect.ts
+import fs from "node:fs";
+import net2 from "node:net";
+var AUTO_CLIENT = "auto";
+var PROBE_TIMEOUT_MS = 300;
+var PROBE_CONCURRENCY = 10;
+var FAMILY_LABEL = {
+  vesktop: "Vesktop",
+  "discord-flatpak": "Discord (Flatpak)",
+  "discord-snap": "Discord (Snap)",
+  discord: "Discord"
+};
+function familyOf(path) {
+  if (/^\\\\[?.]\\pipe\\/i.test(path)) {
+    return "pipe";
+  }
+  if (path.includes("dev.vencord.Vesktop")) {
+    return "vesktop";
+  }
+  if (path.includes("app/com.discordapp.Discord")) {
+    return "discord-flatpak";
+  }
+  if (path.includes("snap.discord")) {
+    return "discord-snap";
+  }
+  return "discord";
+}
+function isTempLocation(path) {
+  const primary = [process.env.XDG_RUNTIME_DIR, "/run/user"];
+  if (primary.some((dir) => dir && path.startsWith(`${dir.replace(/\/+$/, "")}/`))) {
+    return false;
+  }
+  const temps = ["/tmp", process.env.TMPDIR, process.env.TMP, process.env.TEMP];
+  return temps.some((dir) => dir && path.startsWith(`${dir.replace(/\/+$/, "")}/`));
+}
+function classifyClientPath(path) {
+  const family = familyOf(path);
+  const index = Number(/discord-ipc-(\d+)$/.exec(path)?.[1] ?? 0);
+  const tag = family !== "pipe" && isTempLocation(path) ? "tmp:" : "";
+  return {
+    id: `${family}:${tag}${index}`,
+    label: family === "pipe" ? `Discord client #${index + 1}` : FAMILY_LABEL[family]
+  };
+}
+function probeSocket(path, timeoutMs) {
+  return new Promise((resolve) => {
+    const socket = net2.createConnection(path);
+    const finish = (present) => {
+      clearTimeout(timer);
+      socket.removeAllListeners();
+      socket.on("error", () => {});
+      socket.destroy();
+      resolve(present);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+async function detectDiscordClients(opts = {}) {
+  try {
+    const { connect = probeSocket, timeoutMs = PROBE_TIMEOUT_MS, realpath = fs.realpathSync } = opts;
+    const candidates = [...new Set(opts.candidates ?? defaultDiscordIpcCandidates())];
+    const present = new Array(candidates.length).fill(false);
+    let next = 0;
+    const worker = async () => {
+      while (next < candidates.length) {
+        const slot = next++;
+        present[slot] = await connect(candidates[slot], timeoutMs).catch(() => false);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, candidates.length) }, worker));
+    const seen = new Set;
+    const seenReal = new Set;
+    const found = [];
+    candidates.forEach((path, slot) => {
+      if (!present[slot]) {
+        return;
+      }
+      let real = path;
+      try {
+        real = realpath(path);
+      } catch {}
+      const { id, label } = classifyClientPath(path);
+      if (!seen.has(id) && !seenReal.has(real)) {
+        seen.add(id);
+        seenReal.add(real);
+        found.push({ id, label, path });
+      }
+    });
+    const perFamily = new Map;
+    for (const client of found) {
+      perFamily.set(client.label, (perFamily.get(client.label) ?? 0) + 1);
+    }
+    const ordinal = new Map;
+    return found.map((client) => {
+      if (client.id.startsWith("pipe:") || (perFamily.get(client.label) ?? 0) < 2) {
+        return client;
+      }
+      const position = (ordinal.get(client.label) ?? 0) + 1;
+      ordinal.set(client.label, position);
+      return { ...client, label: `${client.label} (${position})` };
+    });
+  } catch {
+    return [];
+  }
+}
+function resolveClientCandidates(choice, detected, auto) {
+  if (choice === AUTO_CLIENT) {
+    return { candidates: auto, fallback: false };
+  }
+  const match = detected.find((client) => client.id === choice);
+  return match ? { candidates: [match.path], fallback: false } : { candidates: auto, fallback: true };
+}
+function summarizeClients(input) {
+  const { connectedPath, choice, detected } = input;
+  const known = connectedPath ? detected.find((client) => client.path === connectedPath) : undefined;
+  const client = connectedPath ? known ? { id: known.id, label: known.label } : classifyClientPath(connectedPath) : null;
+  return {
+    client,
+    clients: detected.map(({ id, label }) => ({ id, label })),
+    clientFallback: choice !== AUTO_CLIENT && !detected.some((entry) => entry.id === choice)
   };
 }
 
@@ -434,7 +571,7 @@ var AGENT_STATE_ALIASES = {
   complete: "done",
   completed: "done",
   finished: "done",
-  idle: "done",
+  idle: "idle",
   success: "done",
   cancelled: "done",
   canceled: "done"
@@ -444,19 +581,20 @@ function normalizeStateKey(raw) {
 }
 function canonicalizeAgentState(raw) {
   if (typeof raw !== "string") {
-    return "done";
+    return "idle";
   }
   const key = normalizeStateKey(raw);
   if (!key) {
-    return "done";
+    return "idle";
   }
-  return AGENT_STATE_ALIASES[key] ?? "done";
+  return AGENT_STATE_ALIASES[key] ?? "idle";
 }
 
 // src/presence/expiry.ts
 var AGENT_RETENTION_MS = {
   stale: 1800000,
-  done: 60000
+  done: 600000,
+  idle: 60000
 };
 function isActivityFresh(lastSeenAtMs, nowMs, windowMs) {
   if (!Number.isFinite(lastSeenAtMs) || !Number.isFinite(nowMs) || !Number.isFinite(windowMs)) {
@@ -470,13 +608,17 @@ function isActivityFresh(lastSeenAtMs, nowMs, windowMs) {
 
 // src/presence/agents.ts
 var PRIORITY = {
-  blocked: 3,
-  waiting: 2,
-  working: 1,
-  done: 0
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  done: 1,
+  idle: 0
 };
-function agentSlotKey(worktreeId, paneKey) {
-  return `${worktreeId}\x1F${paneKey}`;
+function agentSlotKey(event) {
+  if (typeof event.terminalId === "string" && event.terminalId.length > 0) {
+    return `t:${event.terminalId}`;
+  }
+  return `p:${event.workspaceId}\x1F${event.paneKey}`;
 }
 function parseAgentStatusPayload(payload, nowMs) {
   if (!payload || typeof payload !== "object") {
@@ -487,31 +629,74 @@ function parseAgentStatusPayload(payload, nowMs) {
     return null;
   }
   const receivedAt = typeof source.receivedAt === "number" && Number.isFinite(source.receivedAt) ? source.receivedAt : nowMs;
-  return {
-    worktreeId: typeof source.worktreeId === "string" ? source.worktreeId : "",
+  const event = {
+    workspaceId: typeof source.workspaceId === "string" ? source.workspaceId : "",
     paneKey: typeof source.paneKey === "string" ? source.paneKey : "",
     state: source.state,
     receivedAt
   };
-}
-function parseWorktreeRemovedId(payload) {
-  if (typeof payload === "string" && payload.trim().length > 0) {
-    return payload.trim();
+  if (typeof source.terminalId === "string" && source.terminalId.length > 0) {
+    event.terminalId = source.terminalId;
   }
+  if (typeof source.title === "string" && source.title.trim().length > 0) {
+    event.title = source.title;
+  }
+  return event;
+}
+function parseWorkspaceRemovedId(payload) {
   if (!payload || typeof payload !== "object") {
     return null;
   }
-  const source = payload;
-  if (typeof source.worktreeId === "string" && source.worktreeId.trim().length > 0) {
-    return source.worktreeId.trim();
+  const id = payload.workspaceId;
+  return typeof id === "string" && id.trim().length > 0 ? id.trim() : null;
+}
+function parseAgentsList(result, nowMs) {
+  if (!result || typeof result !== "object") {
+    return [];
   }
-  if (typeof source.id === "string" && source.id.trim().length > 0) {
-    return source.id.trim();
+  const rows = result.agents;
+  if (!Array.isArray(rows)) {
+    return [];
   }
-  return null;
+  const events = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const source = row;
+    if (typeof source.terminalId !== "string" || source.terminalId.length === 0) {
+      continue;
+    }
+    if (typeof source.state !== "string") {
+      continue;
+    }
+    const startedAt = typeof source.stateStartedAt === "number" && Number.isFinite(source.stateStartedAt) ? source.stateStartedAt : undefined;
+    const canonical = canonicalizeAgentState(source.state);
+    const finished = canonical === "done" || canonical === "idle";
+    const event = {
+      workspaceId: "",
+      paneKey: "",
+      terminalId: source.terminalId,
+      state: source.state,
+      receivedAt: finished ? startedAt ?? nowMs : nowMs
+    };
+    if (startedAt !== undefined) {
+      event.stateStartedAt = startedAt;
+    }
+    if (typeof source.agent === "string" && source.agent.length > 0) {
+      event.kind = source.agent;
+    }
+    if (typeof source.title === "string" && source.title.trim().length > 0) {
+      event.title = source.title;
+    }
+    events.push(event);
+  }
+  return events;
 }
 function retentionWindow(state) {
-  return state === "done" ? AGENT_RETENTION_MS.done : AGENT_RETENTION_MS.stale;
+  if (state === "done")
+    return AGENT_RETENTION_MS.done;
+  return state === "idle" ? AGENT_RETENTION_MS.idle : AGENT_RETENTION_MS.stale;
 }
 function isAgentSlotFresh(slot, nowMs) {
   return isActivityFresh(slot.receivedAt, nowMs, retentionWindow(slot.canonicalState));
@@ -520,7 +705,7 @@ function summarizeSlots(slots) {
   if (slots.length === 0) {
     return { agentCount: 0, agentState: undefined, stateStartedAtMs: undefined };
   }
-  let winner = "done";
+  let winner = "idle";
   let winnerPriority = -1;
   for (const slot of slots) {
     const priority = PRIORITY[slot.canonicalState];
@@ -531,8 +716,9 @@ function summarizeSlots(slots) {
   }
   let started = Number.POSITIVE_INFINITY;
   for (const slot of slots) {
-    if (slot.canonicalState === winner && slot.receivedAt < started) {
-      started = slot.receivedAt;
+    const since = slot.stateStartedAt ?? slot.receivedAt;
+    if (slot.canonicalState === winner && since < started) {
+      started = since;
     }
   }
   return {
@@ -591,20 +777,34 @@ function createAgentTable({
   return {
     upsert(event) {
       const canonicalState = canonicalizeAgentState(event.state);
-      map.set(agentSlotKey(event.worktreeId, event.paneKey), {
-        worktreeId: event.worktreeId,
+      const key = agentSlotKey(event);
+      const kind = event.kind ?? map.get(key)?.kind;
+      const title = event.title ?? map.get(key)?.title;
+      const previous = map.get(key);
+      const workspaceId = event.workspaceId || previous?.workspaceId || "";
+      const newerStart = event.stateStartedAt !== undefined && previous?.stateStartedAt !== undefined && event.stateStartedAt > previous.stateStartedAt;
+      const stateStartedAt = previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined && !newerStart ? previous.stateStartedAt : event.stateStartedAt ?? event.receivedAt;
+      const finished = canonicalState === "done" || canonicalState === "idle";
+      const keepReceived = finished && previous?.canonicalState === canonicalState && !newerStart;
+      const receivedAt = keepReceived ? previous.receivedAt : event.receivedAt;
+      map.set(key, {
+        workspaceId,
         paneKey: event.paneKey,
+        ...event.terminalId ? { terminalId: event.terminalId } : {},
         rawState: event.state,
         canonicalState,
-        receivedAt: event.receivedAt
+        receivedAt,
+        stateStartedAt,
+        ...kind ? { kind } : {},
+        ...title ? { title } : {}
       });
       prune();
       schedulePrune();
     },
-    removeWorktree(worktreeId) {
+    removeWorkspace(workspaceId) {
       let changed = false;
       for (const [key, slot] of map) {
-        if (slot.worktreeId === worktreeId) {
+        if (slot.workspaceId === workspaceId) {
           map.delete(key);
           changed = true;
         }
@@ -773,6 +973,63 @@ function createBridgeTransport({
   };
 }
 
+// src/presence/bridge-token.ts
+var TOKEN_KEY = "bridgeToken";
+var SECRETS_UNAVAILABLE_WARNING = "secrets unavailable; bridge token stored in plugin settings";
+async function keyringAvailable(host) {
+  if (!host.has("secrets.protection")) {
+    return false;
+  }
+  try {
+    const result = await host.call("secrets.protection");
+    return result?.status === "os-keyring";
+  } catch {
+    return false;
+  }
+}
+async function loadBridgeToken(host, settingsToken) {
+  const fallback = {
+    token: settingsToken,
+    store: "settings",
+    warning: SECRETS_UNAVAILABLE_WARNING
+  };
+  if (!host.has("secrets.get") || !await keyringAvailable(host)) {
+    return fallback;
+  }
+  try {
+    const result = await host.call("secrets.get", { key: TOKEN_KEY });
+    return { token: typeof result?.value === "string" ? result.value : "", store: "secrets" };
+  } catch {
+    return fallback;
+  }
+}
+async function saveBridgeToken(host, token) {
+  const method = token ? "secrets.set" : "secrets.delete";
+  if (host.has(method) && await keyringAvailable(host)) {
+    await host.call(method, token ? { key: TOKEN_KEY, value: token } : { key: TOKEN_KEY });
+    return "secrets";
+  }
+  await host.call("settings.set", { key: TOKEN_KEY, value: token });
+  return "settings";
+}
+async function migrateSettingsToken(host, settingsToken) {
+  const loaded = await loadBridgeToken(host, settingsToken);
+  if (loaded.store !== "secrets" || !settingsToken) {
+    return loaded;
+  }
+  let token = loaded.token;
+  try {
+    if (!token) {
+      await host.call("secrets.set", { key: TOKEN_KEY, value: settingsToken });
+      token = settingsToken;
+    }
+    await host.call("settings.set", { key: TOKEN_KEY, value: "" });
+  } catch {
+    return { token: token || settingsToken, store: "secrets" };
+  }
+  return { token, store: "secrets" };
+}
+
 // src/presence/settings.ts
 var DETAIL_LEVELS = ["off", "generic", "workspace", "full"];
 var SHIPPED_APPLICATION_ID = "1545653843239374848";
@@ -796,8 +1053,10 @@ var DEFAULT_SETTINGS = Object.freeze({
   openUrl: "",
   showOpenButton: false,
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
-  showAgentCount: false
+  showAgentCount: false,
+  discordClient: "auto"
 });
+var SETTING_KEYS_DECLARED = Object.keys(DEFAULT_SETTINGS).filter((key) => key !== "bridgeToken" && key !== "discordClient");
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
 function isDetailLevel(value) {
   return typeof value === "string" && DETAIL_LEVELS.includes(value);
@@ -854,6 +1113,7 @@ function normalizeSettings(raw) {
   settings.bridgeToken = normalizeBridgeToken(source.bridgeToken);
   settings.openUrl = normalizeOpenUrl(source.openUrl);
   settings.openButtonLabel = normalizeOpenButtonLabel(source.openButtonLabel === undefined ? DEFAULT_SETTINGS.openButtonLabel : source.openButtonLabel);
+  settings.discordClient = typeof source.discordClient === "string" && source.discordClient.trim().length > 0 ? source.discordClient.trim().slice(0, 64) : DEFAULT_SETTINGS.discordClient;
   return settings;
 }
 function nextDetailLevel(current) {
@@ -947,16 +1207,35 @@ function applyConfigure(current, args) {
       changed.push("showAgentCount");
     }
   }
+  if ("bridgeToken" in source) {
+    if (typeof source.bridgeToken !== "string") {
+      return { ok: false, error: "bridgeToken must be a string (empty clears it)" };
+    }
+    const bridgeToken = normalizeBridgeToken(source.bridgeToken);
+    if (bridgeToken !== current.bridgeToken) {
+      next.bridgeToken = bridgeToken;
+      changed.push("bridgeToken");
+    }
+  }
   return { ok: true, settings: next, changed };
 }
 
 // src/presence/activity.ts
 var DISCORD_TEXT_MAX = 128;
+var DISCORD_ASSET_SUFFIX = "-v2";
+var SMALL_STATE_KEYS = new Set(["working", "blocked", "waiting", "completed", "idle"]);
+function localAssetName(key) {
+  if (SMALL_STATE_KEYS.has(key)) {
+    return `state-${key}`;
+  }
+  return key.endsWith(DISCORD_ASSET_SUFFIX) ? key.slice(0, -DISCORD_ASSET_SUFFIX.length) : key;
+}
 var AGENT_STATE_LABELS = {
-  working: { label: "working", asset: "state-working" },
-  blocked: { label: "blocked", asset: "state-blocked" },
-  waiting: { label: "waiting for input", asset: "state-waiting" },
-  done: { label: "idle", asset: "state-idle" }
+  working: { label: "working", asset: "working" },
+  blocked: { label: "blocked", asset: "blocked" },
+  waiting: { label: "waiting for input", asset: "waiting" },
+  done: { label: "completed", asset: "completed" },
+  idle: { label: "idle", asset: "idle" }
 };
 function clamp(text) {
   return text.length > DISCORD_TEXT_MAX ? `${text.slice(0, DISCORD_TEXT_MAX - 1)}…` : text;
@@ -1002,7 +1281,7 @@ function buildActivity(snapshot, settings, nowMs) {
   const activity = {
     details: clamp(buildDetails(snapshot, settings)),
     assets: {
-      large_image: "orca",
+      large_image: `orca${DISCORD_ASSET_SUFFIX}`,
       large_text: "Orca",
       small_image: small.asset,
       small_text: small.label
@@ -1024,8 +1303,8 @@ function buildActivity(snapshot, settings, nowMs) {
 // src/presence/log.ts
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-var LOG_PLUGIN_ID = "chron0.discord-presence";
-var LOG_DIR_NAME = "chron0-discord-presence";
+var LOG_PLUGIN_ID = "jondmarien.discord-presence";
+var LOG_DIR_NAME = "jondmarien-discord-presence";
 var LOG_FILE_NAME = "plugin.log";
 var MAX_LOG_BYTES = 256 * 1024;
 var LOG_FILE_ENV = "ORCA_PRESENCE_LOG_FILE";
@@ -1118,6 +1397,7 @@ function createPresenceController({
   client,
   settings,
   bridge,
+  describeClient = () => ({ client: null, clients: [], clientFallback: false }),
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer),
@@ -1382,6 +1662,7 @@ function createPresenceController({
     status: () => ({
       enabled: currentSettings.enabled && currentSettings.detailLevel !== "off",
       connected: client.isConnected(),
+      ...describeClient(),
       bridgeEnabled: currentSettings.bridgeEnabled,
       sink: lastSink,
       detailLevel: currentSettings.detailLevel,
@@ -1426,84 +1707,6 @@ function createLogRing(capacity = PANEL_LOG_RING_SIZE) {
   };
 }
 
-// src/presence/panel-html.ts
-import { readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
-// src/version.ts
-var PLUGIN_VERSION = "0.5.0";
-
-// src/presence/panel-html.ts
-var PANEL_HTML_ENV = "ORCA_PRESENCE_PANEL_HTML";
-var PANEL_WRITE_SKIP_ENV = "ORCA_PRESENCE_SKIP_PANEL_WRITE";
-var PANEL_SNAPSHOT_SCRIPT_ID = "presence-snapshot";
-var PANEL_VERSION_SCRIPT_ID = "plugin-version";
-var SNAPSHOT_SCRIPT_RE = /<script id="presence-snapshot" type="application\/json">[\s\S]*?<\/script>/;
-var VERSION_SCRIPT_RE = /<script id="plugin-version" type="application\/json">[\s\S]*?<\/script>/;
-var VERSION_BADGE_RE = /(<[^>]*\bid="version-badge"[^>]*>)[\s\S]*?(<\/span>)/;
-var ABOUT_VERSION_RE = /(<[^>]*\bid="about-version"[^>]*>)[\s\S]*?(<\/dd>)/;
-function resolvePanelHtmlPath(env, metaUrl) {
-  const skip = env[PANEL_WRITE_SKIP_ENV];
-  if (skip === "1" || skip === "true") {
-    return null;
-  }
-  const override = env[PANEL_HTML_ENV];
-  if (typeof override === "string" && override.trim()) {
-    return override.trim();
-  }
-  try {
-    return fileURLToPath(new URL("../panel/index.html", metaUrl));
-  } catch {
-    return null;
-  }
-}
-function serializePanelSnapshot(snapshot) {
-  return JSON.stringify(snapshot).replace(/</g, "\\u003c");
-}
-function stampPanelVersion(html, version) {
-  const script = `<script id="${PANEL_VERSION_SCRIPT_ID}" type="application/json">${JSON.stringify(version)}</script>`;
-  let next = html;
-  if (VERSION_SCRIPT_RE.test(next)) {
-    next = next.replace(VERSION_SCRIPT_RE, script);
-  } else if (SNAPSHOT_SCRIPT_RE.test(next)) {
-    next = next.replace(SNAPSHOT_SCRIPT_RE, (match) => `${match}
-    ${script}`);
-  }
-  next = next.replace(VERSION_BADGE_RE, `$1v${version}$2`);
-  next = next.replace(ABOUT_VERSION_RE, `$1${version}$2`);
-  return next;
-}
-function embedPanelSnapshot(html, snapshot) {
-  if (!SNAPSHOT_SCRIPT_RE.test(html)) {
-    throw new Error("panel snapshot marker missing");
-  }
-  const json = serializePanelSnapshot(snapshot);
-  const replaced = html.replace(SNAPSHOT_SCRIPT_RE, `<script id="${PANEL_SNAPSHOT_SCRIPT_ID}" type="application/json">${json}</script>`);
-  return stampPanelVersion(replaced, snapshot?.version ?? PLUGIN_VERSION);
-}
-function writePanelSnapshot(filePath, snapshot) {
-  try {
-    const current = readFileSync(filePath, "utf8");
-    const next = embedPanelSnapshot(current, snapshot);
-    if (next !== current) {
-      writeFileSync(filePath, next, "utf8");
-    }
-    return { ok: true };
-  } catch (error) {
-    const err = error;
-    if (err?.code === "ENOENT") {
-      return { ok: false, reason: "missing" };
-    }
-    if (err?.code === "EACCES" || err?.code === "EROFS" || err?.code === "EPERM") {
-      return { ok: false, reason: "unwritable" };
-    }
-    if (error instanceof Error && error.message.includes("snapshot marker")) {
-      return { ok: false, reason: "no-marker" };
-    }
-    return { ok: false, reason: error instanceof Error ? error.message : "error" };
-  }
-}
-
 // src/presence/panel-snapshot.ts
 var CONVENTIONAL_LOG_HINT = `~/.local/state/${LOG_DIR_NAME}/${LOG_FILE_NAME}`;
 var SECRET_ASSIGNMENT_RE = /\b(token|bridgetoken|authorization|password|secret)=(?!\*\*\*)(\S+)/gi;
@@ -1519,14 +1722,52 @@ function summarizePanelActivity(activity) {
     state: typeof activity.state === "string" ? activity.state : null
   };
 }
+var AGENT_ROW_PRIORITY = {
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  done: 1,
+  idle: 0
+};
+var PANEL_TITLE_MAX = 80;
+function panelTitle(title) {
+  const text = typeof title === "string" ? title.trim() : "";
+  if (!text) {
+    return;
+  }
+  return text.length > PANEL_TITLE_MAX ? `${text.slice(0, PANEL_TITLE_MAX - 1)}…` : text;
+}
+function summarizePanelAgents(slots) {
+  return slots.map((slot) => ({
+    kind: slot.kind && slot.kind.length > 0 ? slot.kind : "agent",
+    ...panelTitle(slot.title) ? { title: panelTitle(slot.title) } : {},
+    state: slot.canonicalState,
+    sinceMs: slot.stateStartedAt ?? slot.receivedAt
+  })).sort((a, b) => AGENT_ROW_PRIORITY[b.state] - AGENT_ROW_PRIORITY[a.state] || a.sinceMs - b.sinceMs);
+}
+function summarizePanelActivityCard(activity) {
+  if (!activity || typeof activity.details !== "string") {
+    return null;
+  }
+  return {
+    details: activity.details,
+    state: typeof activity.state === "string" ? activity.state : null,
+    largeImageKey: localAssetName(activity.assets.large_image),
+    smallImageKey: localAssetName(activity.assets.small_image),
+    startMs: activity.timestamps ? activity.timestamps.start * 1000 : null
+  };
+}
 function buildPresencePanelSnapshot(input) {
-  const { version, status, settings, logs, now = new Date } = input;
+  const { version, status, settings, logs, timeline, agents, now = new Date } = input;
   return {
     version,
     generatedAt: now.toISOString(),
     status: {
       enabled: status.enabled,
       connected: status.connected,
+      client: status.client ? { id: status.client.id, label: status.client.label } : null,
+      clients: status.clients.map(({ id, label }) => ({ id, label })),
+      clientFallback: status.clientFallback,
       sink: status.sink,
       detailLevel: status.detailLevel,
       bridgeEnabled: status.bridgeEnabled,
@@ -1544,16 +1785,134 @@ function buildPresencePanelSnapshot(input) {
       bridgeEnabled: settings.bridgeEnabled,
       debugLogging: settings.debugLogging,
       showOpenButton: settings.showOpenButton,
-      showAgentCount: settings.showAgentCount
+      showAgentCount: settings.showAgentCount,
+      discordClient: settings.discordClient
     },
+    timeline: [...timeline],
+    agents: summarizePanelAgents(agents),
+    activityCard: summarizePanelActivityCard(status.lastActivity),
     logs: logs.map(redactPanelLogLine),
     logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT
   };
 }
 
+// src/presence/timeline.ts
+var TIMELINE_MINUTES = 30;
+var MINUTE_MS = 60000;
+var PRIORITY2 = {
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  completed: 1,
+  idle: 0
+};
+function timelineStateFor(agentState) {
+  return agentState === undefined ? "idle" : agentState === "done" ? "completed" : agentState;
+}
+var TIMELINE_STATES = new Set(["working", "waiting", "blocked", "completed", "idle"]);
+function orderStates(states) {
+  const unique = [...new Set(states)].sort((a, b) => PRIORITY2[b] - PRIORITY2[a]);
+  const active = unique.filter((state) => state !== "idle");
+  return active.length > 0 ? active : ["idle"];
+}
+function toStateList(value) {
+  const items = Array.isArray(value) ? value : [value];
+  const states = items.filter(isState);
+  return states.length > 0 ? orderStates(states) : null;
+}
+function createTimeline({ now = () => Date.now(), restore } = {}) {
+  const buckets = new Map;
+  let firstMinute = null;
+  if (restore && typeof restore === "object") {
+    const dump = restore;
+    if (typeof dump.first === "number" && Number.isFinite(dump.first)) {
+      firstMinute = dump.first;
+    }
+    if (Array.isArray(dump.buckets)) {
+      for (const entry of dump.buckets) {
+        const seen = Array.isArray(entry) && typeof entry[0] === "number" ? toStateList(entry[1]) : null;
+        if (!Array.isArray(entry) || !seen) {
+          continue;
+        }
+        buckets.set(entry[0], { seen, last: toStateList(entry[2]) ?? seen });
+      }
+    }
+  }
+  function prune(current) {
+    const cutoff = current - TIMELINE_MINUTES;
+    let keep = -Infinity;
+    for (const minute of buckets.keys()) {
+      if (minute <= cutoff && minute > keep) {
+        keep = minute;
+      }
+    }
+    for (const minute of buckets.keys()) {
+      if (minute < keep) {
+        buckets.delete(minute);
+      }
+    }
+  }
+  return {
+    record(states) {
+      const minute = Math.floor(now() / MINUTE_MS);
+      if (firstMinute === null) {
+        firstMinute = minute;
+      }
+      const latest = orderStates(states);
+      const existing = buckets.get(minute);
+      buckets.set(minute, {
+        seen: orderStates([...existing?.seen ?? [], ...latest]),
+        last: latest
+      });
+      prune(minute);
+    },
+    slots() {
+      const current = Math.floor(now() / MINUTE_MS);
+      const start = current - TIMELINE_MINUTES + 1;
+      let carried = null;
+      let seedMinute = -Infinity;
+      for (const [minute, bucket] of buckets) {
+        if (minute < start && minute > seedMinute) {
+          seedMinute = minute;
+          carried = bucket.last;
+        }
+      }
+      const out = [];
+      for (let minute = start;minute <= current; minute += 1) {
+        const own = buckets.get(minute);
+        if (firstMinute === null || minute < firstMinute) {
+          out.push(null);
+          continue;
+        }
+        if (own) {
+          out.push([...own.seen]);
+          carried = own.last;
+        } else {
+          out.push(carried ? [...carried] : null);
+        }
+      }
+      return out;
+    },
+    toJSON() {
+      return {
+        first: firstMinute,
+        buckets: [...buckets.entries()].map(([minute, bucket]) => [minute, [...bucket.seen], [...bucket.last]])
+      };
+    }
+  };
+}
+function isState(value) {
+  return typeof value === "string" && TIMELINE_STATES.has(value);
+}
+
+// src/version.ts
+var PLUGIN_VERSION = "1.0.0";
+
 // src/main.ts
 var HEARTBEAT_MS = 90000;
-var PANEL_WRITE_DEBOUNCE_MS = 2000;
+var DETECT_MIN_INTERVAL_MS = 60000;
+var PANEL_POST_DEBOUNCE_MS = 2000;
+var SETTINGS_CHANGE_DEBOUNCE_MS = 250;
 var TRANSMITTING_TOAST_MAX = 180;
 function formatStatusTransmitting(activity) {
   const json = JSON.stringify(activity) ?? "null";
@@ -1573,14 +1932,45 @@ var TOGGLE_COMMANDS = {
   "presence.toggle-open-button": "showOpenButton",
   "presence.toggle-agent-count": "showAgentCount"
 };
+var PANEL_COMMANDS = [
+  "presence.toggle",
+  "presence.reload",
+  "presence.clear",
+  "presence.status",
+  "presence.detail-level"
+];
+function toSettingsValue(value) {
+  return value === null ? "" : value;
+}
+function invalidParams(message) {
+  return Object.assign(new Error(message), { code: "invalid_params" });
+}
 var controller = null;
 var agentTable = null;
+var timeline = null;
+var timelineSaveTimer = null;
+var timelineHost = null;
+var TIMELINE_STORAGE_KEY = "timeline";
+function persistTimeline() {
+  if (timelineSaveTimer || !timelineHost?.has("storage.set")) {
+    return;
+  }
+  timelineSaveTimer = setTimeout(() => {
+    timelineSaveTimer = null;
+    if (timeline && timelineHost) {
+      timelineHost.call("storage.set", { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {});
+    }
+  }, 15000);
+  timelineSaveTimer.unref?.();
+}
 var heartbeat = null;
 var diagnostics = null;
 var logRing = null;
-var panelWriteTimer = null;
-var panelWriteNoted = false;
+var panelPostTimer = null;
+var panels = null;
 var deactivated = false;
+var settingsChangeTimer = null;
+var settingsSubscription = null;
 function publicConfigureView(settings) {
   return {
     applicationId: settings.applicationId,
@@ -1591,65 +1981,67 @@ function publicConfigureView(settings) {
     showAgentCount: settings.showAgentCount
   };
 }
+function currentPanelSnapshot() {
+  if (!controller || !logRing) {
+    return null;
+  }
+  return buildPresencePanelSnapshot({
+    version: PLUGIN_VERSION,
+    status: controller.status(),
+    settings: controller.settings(),
+    logs: logRing.lines(),
+    timeline: timeline?.slots() ?? [],
+    agents: agentTable?.slots() ?? []
+  });
+}
 function publishPanelSnapshot(mode) {
   const flush = () => {
-    panelWriteTimer = null;
-    if (!controller || !logRing) {
+    panelPostTimer = null;
+    const snapshot = currentPanelSnapshot();
+    if (!snapshot || !panels) {
       return;
     }
-    const snapshot = buildPresencePanelSnapshot({
-      version: PLUGIN_VERSION,
-      status: controller.status(),
-      settings: controller.settings(),
-      logs: logRing.lines()
-    });
-    const target = resolvePanelHtmlPath(process.env, import.meta.url);
-    if (!target) {
-      return;
-    }
-    const result = writePanelSnapshot(target, snapshot);
-    if (result.ok) {
-      diagnostics?.line("debug", "panel.snapshot_written", { lines: snapshot.logs.length });
-      return;
-    }
-    if (!panelWriteNoted) {
-      panelWriteNoted = true;
-      diagnostics?.line("debug", "panel.snapshot_skipped", { reason: result.reason });
+    try {
+      panels.post("presence.snapshot", snapshot);
+    } catch (error) {
+      diagnostics?.line("debug", "panel.post_failed", {
+        reason: error instanceof Error ? error.message : String(error)
+      });
     }
   };
   if (mode === "immediate") {
-    if (panelWriteTimer) {
-      clearTimeout(panelWriteTimer);
-      panelWriteTimer = null;
+    if (panelPostTimer) {
+      clearTimeout(panelPostTimer);
+      panelPostTimer = null;
     }
-    try {
-      flush();
-    } catch {}
+    flush();
     return;
   }
-  if (panelWriteTimer) {
+  if (panelPostTimer) {
     return;
   }
-  panelWriteTimer = setTimeout(() => {
-    try {
-      flush();
-    } catch {}
-  }, PANEL_WRITE_DEBOUNCE_MS);
-  panelWriteTimer.unref?.();
+  panelPostTimer = setTimeout(flush, PANEL_POST_DEBOUNCE_MS);
+  panelPostTimer.unref?.();
 }
-async function activate(orca) {
+async function activate(orca, deps = {}) {
+  const detectClients = deps.detect ?? detectDiscordClients;
+  const makeDiscordClient = deps.createClient ?? createDiscordClient;
   deactivated = false;
   const stored = await orca.host.call("settings.get").catch(() => ({ settings: {} }));
   const rawSettings = stored?.settings && typeof stored.settings === "object" ? stored.settings : {};
   const appId = inspectApplicationId(rawSettings.applicationId, SHIPPED_APPLICATION_ID);
-  let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env);
+  const storedSettings = normalizeSettings(stored?.settings);
+  const loadedToken = await migrateSettingsToken(orca.host, storedSettings.bridgeToken);
+  let tokenStore = loadedToken.store;
+  let tokenWarnings = loadedToken.warning ? [loadedToken.warning] : [];
+  let settings = applyBridgeEnvOverrides({ ...storedSettings, bridgeToken: loadedToken.token }, process.env);
   const logFile = resolveLogFilePath(process.env, {
     homedir: os2.homedir(),
     tmpdir: os2.tmpdir(),
     platform: process.platform
   });
   logRing = createLogRing();
-  panelWriteNoted = false;
+  panels = orca.panels ?? null;
   diagnostics = createDiagnosticSink({
     hostLog: (message) => orca.log(message),
     filePath: logFile,
@@ -1671,15 +2063,42 @@ async function activate(orca) {
       fallback: SHIPPED_APPLICATION_ID
     });
     orca.host.call("notifications.show", {
-      title: "Discord Rich Presence",
+      title: "Rich Presence for Discord",
       body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ""}. Using shipped id. ${appId.reason ?? ""}`
     });
   }
+  let detected = [];
+  let lastDetectAt = 0;
+  async function redetect(force = false) {
+    if (!force && Date.now() - lastDetectAt < DETECT_MIN_INTERVAL_MS) {
+      return;
+    }
+    lastDetectAt = Date.now();
+    const found = await detectClients();
+    if (deactivated) {
+      return;
+    }
+    detected = found;
+    const chosen = settings.discordClient === AUTO_CLIENT ? undefined : found.find((client) => client.id === settings.discordClient);
+    const connectedPath = activeDiscord?.connectedPath() ?? null;
+    if (chosen && connectedPath !== null && connectedPath !== chosen.path) {
+      await applySettings(settings, { rebind: true });
+    }
+  }
+  let activeDiscord = null;
   function createController(nextSettings) {
+    const discord = makeDiscordClient({
+      clientId: nextSettings.applicationId,
+      candidates: () => resolveClientCandidates(nextSettings.discordClient, detected, defaultDiscordIpcCandidates()).candidates,
+      log: (message, level = "error") => diagnostics?.line(level, "discord.client", { reason: message })
+    });
+    activeDiscord = discord;
     return createPresenceController({
-      client: createDiscordClient({
-        clientId: nextSettings.applicationId,
-        log: (message, level = "error") => diagnostics?.line(level, "discord.client", { reason: message })
+      client: discord,
+      describeClient: () => summarizeClients({
+        connectedPath: discord.connectedPath(),
+        choice: nextSettings.discordClient,
+        detected
       }),
       bridge: createBridgeTransport({
         log: (message) => diagnostics?.line("error", "bridge.transport", { reason: message })
@@ -1701,25 +2120,54 @@ async function activate(orca) {
       pushAgentRefresh();
     }
   });
+  timelineHost = orca.host;
+  const storedTimeline = orca.host.has("storage.get") ? await orca.host.call("storage.get", { key: TIMELINE_STORAGE_KEY }).catch(() => null) : null;
+  timeline = createTimeline({ restore: storedTimeline?.value });
   controller = createController(settings);
-  async function persist(nextSettings) {
+  async function applySettings(nextSettings, options = {}) {
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId;
+    const clientChanged = nextSettings.discordClient !== settings.discordClient;
     settings = nextSettings;
     diagnostics?.setDebugEnabled(nextSettings.debugLogging);
-    for (const [key, value] of Object.entries(nextSettings)) {
-      await orca.host.call("settings.set", { key, value }).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        orca.log(`failed to persist ${key}: ${message}`);
-      });
-    }
-    if (applicationIdChanged) {
-      diagnostics?.line("info", "discord.app_id_rebind", { applicationId: nextSettings.applicationId });
+    if (applicationIdChanged || clientChanged || options.rebind) {
+      diagnostics?.line("info", applicationIdChanged ? "discord.app_id_rebind" : "discord.client_rebind", applicationIdChanged ? { applicationId: nextSettings.applicationId } : { client: nextSettings.discordClient });
+      const userChanged = applicationIdChanged || clientChanged;
+      const held = !userChanged && (controller?.status().heldClear ?? false);
       await controller?.stop();
       controller = createController(nextSettings);
+      if (held) {
+        await controller.clear();
+      } else if (!deactivated) {
+        await refresh(undefined, { force: true });
+      }
     } else {
       await controller?.setSettings(nextSettings);
     }
     publishPanelSnapshot("immediate");
+  }
+  async function persist(nextSettings) {
+    const previous = settings;
+    if (nextSettings.bridgeToken !== previous.bridgeToken) {
+      try {
+        const store = await saveBridgeToken(orca.host, String(nextSettings.bridgeToken));
+        tokenStore = store;
+        tokenWarnings = store === "settings" ? [SECRETS_UNAVAILABLE_WARNING] : [];
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        orca.log(`failed to persist bridgeToken: ${message}`);
+        throw error instanceof Error ? error : new Error(message);
+      }
+    }
+    for (const [key, value] of Object.entries(nextSettings)) {
+      if (key === "bridgeToken" || previous[key] === value) {
+        continue;
+      }
+      await orca.host.call("settings.set", { key, value: toSettingsValue(value) }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        orca.log(`failed to persist ${key}: ${message}`);
+      });
+    }
+    await applySettings(nextSettings);
   }
   async function refresh(agentEvent, options = {}) {
     if (agentEvent) {
@@ -1733,9 +2181,12 @@ async function activate(orca) {
       agentState: undefined,
       stateStartedAtMs: undefined
     };
-    const context = await orca.host.call("workspace.readContext").catch(() => null);
+    const context = options.context !== undefined ? options.context : await orca.host.call("workspace.readContext").catch(() => null);
     if (!context) {
-      diagnostics?.line("debug", "refresh.minimal", { reason: "no workspace context" });
+      diagnostics?.line("debug", "refresh.minimal", {
+        reason: "no workspace context",
+        agents: summary.agentCount
+      });
     } else if (agentEvent) {
       diagnostics?.line("debug", "refresh", {
         source: "agent.status.changed",
@@ -1750,7 +2201,7 @@ async function activate(orca) {
         displayName: context.displayName,
         branch: context.branch,
         terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
-      } : {},
+      } : { displayName: undefined, branch: undefined, terminalCount: undefined },
       agentState: summary.agentState,
       stateStartedAtMs: summary.stateStartedAtMs,
       agentCount: summary.agentCount
@@ -1758,71 +2209,84 @@ async function activate(orca) {
     if (options.force) {
       await controller?.forceTransmit(resume);
     }
+    timeline?.record((agentTable?.slots() ?? []).map((slot) => timelineStateFor(slot.canonicalState)));
+    persistTimeline();
     publishPanelSnapshot("debounced");
   }
   pushAgentRefresh = () => {
     refresh();
   };
-  orca.commands.register("presence.toggle", async () => {
+  const paletteHandlers = new Map;
+  const registerPalette = (id, handler) => {
+    paletteHandlers.set(id, handler);
+    orca.commands.register(id, handler);
+  };
+  registerPalette("presence.toggle", async () => {
     await persist({ ...settings, enabled: !settings.enabled });
     await refresh();
     return { enabled: settings.enabled };
   });
-  orca.commands.register("presence.detail-level", async () => {
+  registerPalette("presence.detail-level", async () => {
     await persist({ ...settings, detailLevel: nextDetailLevel(settings.detailLevel) });
     await refresh();
     return { detailLevel: settings.detailLevel };
   });
   for (const [commandId, field] of Object.entries(TOGGLE_COMMANDS)) {
-    orca.commands.register(commandId, async () => {
+    registerPalette(commandId, async () => {
       await persist(toggleField(settings, field));
       await refresh();
       return { [field]: settings[field] };
     });
   }
-  orca.commands.register("presence.status", async () => {
+  registerPalette("presence.status", async () => {
     await refresh(undefined, { force: true, resume: true });
-    const status = controller?.status();
+    const base = controller?.status();
+    const status = base ? { ...base, bridgeTokenStore: tokenStore, ...tokenWarnings.length > 0 ? { warnings: tokenWarnings } : {} } : undefined;
     const file = status?.logFile ?? diagnostics?.filePath ?? "";
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel} debug=${settings.debugLogging}`;
+    const warned = tokenWarnings.length > 0 ? ` warnings=${tokenWarnings.join("; ")}` : "";
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} client=${status?.client?.id ?? "none"} sink=${status?.sink} bridge=${status?.bridgeEnabled} tokenStore=${tokenStore} detail=${status?.detailLevel} debug=${settings.debugLogging}${warned}`;
     diagnostics?.line("info", "status", {
       enabled: status?.enabled,
       connected: status?.connected,
+      client: status?.client?.id ?? "none",
       sink: status?.sink,
       bridge: status?.bridgeEnabled,
+      tokenStore,
+      warnings: tokenWarnings,
       detail: status?.detailLevel,
       debug: settings.debugLogging,
       file,
       transmitting: JSON.stringify(status?.lastActivity)
     });
     await orca.host.call("notifications.show", {
-      title: "Discord Rich Presence",
+      title: "Rich Presence for Discord",
       body: `${summary} ${transmitting}`
     });
     publishPanelSnapshot("immediate");
     return status;
   });
-  orca.commands.register("presence.reload", async () => {
+  registerPalette("presence.reload", async () => {
+    await redetect(true);
     await refresh();
     diagnostics?.line("info", "discord.reload_command");
     await controller?.reload();
     const status = controller?.status();
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
-    const summary = `reloaded connected=${status?.connected} sink=${status?.sink} ${transmitting}`;
+    const summary = `reloaded connected=${status?.connected} client=${status?.client?.id ?? "none"} sink=${status?.sink} ${transmitting}`;
     diagnostics?.line("info", "discord.reload_done", {
       connected: status?.connected,
       sink: status?.sink,
       transmitting: JSON.stringify(status?.lastActivity)
     });
     await orca.host.call("notifications.show", {
-      title: "Discord Rich Presence",
+      title: "Rich Presence for Discord",
       body: summary
     });
     publishPanelSnapshot("immediate");
     return status;
   });
-  orca.commands.register("presence.clear", async () => {
+  registerPalette("presence.clear", async () => {
     diagnostics?.line("info", "discord.clear_command");
     await controller?.clear();
     const status = controller?.status();
@@ -1833,7 +2297,7 @@ async function activate(orca) {
       sink: status?.sink
     });
     await orca.host.call("notifications.show", {
-      title: "Discord Rich Presence",
+      title: "Rich Presence for Discord",
       body: `${summary} Presence is cleared until the next agent event, Show Status, Reload RPC, or a settings change. enabled stays on.`
     });
     publishPanelSnapshot("immediate");
@@ -1844,50 +2308,138 @@ async function activate(orca) {
     if (!result.ok) {
       diagnostics?.line("error", "presence.configure_failed", { reason: result.error });
       await orca.host.call("notifications.show", {
-        title: "Discord Rich Presence",
+        title: "Rich Presence for Discord",
         body: result.error
       });
       return result;
     }
     if (result.changed.length === 0) {
       const view = publicConfigureView(settings);
-      const hint = "Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.";
+      const hint = "Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount, bridgeToken }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.";
       const body = `applicationId=${view.shippedApplicationId ? "shipped" : view.applicationId} openUrl=${view.openUrl || "(empty)"} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} label=${view.openButtonLabel}`;
       await orca.host.call("notifications.show", {
-        title: "Discord Rich Presence",
+        title: "Rich Presence for Discord",
         body: `${body} ${hint}`
       });
       return { ok: true, ...view, hint, changed: [] };
     }
-    await persist(result.settings);
+    try {
+      await persist(result.settings);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      diagnostics?.line("error", "presence.configure_failed", { reason: message });
+      await orca.host.call("notifications.show", {
+        title: "Rich Presence for Discord",
+        body: `Could not save: ${message}`
+      });
+      return { ok: false, error: message, message };
+    }
     await refresh(undefined, { resume: true });
     const view = publicConfigureView(settings);
     diagnostics?.line("info", "presence.configure", { changed: result.changed });
     await orca.host.call("notifications.show", {
-      title: "Discord Rich Presence",
+      title: "Rich Presence for Discord",
       body: `updated ${result.changed.join(", ")}`
     });
     return { ok: true, changed: result.changed, ...view };
   });
+  panels?.handle("presence.snapshot", () => currentPanelSnapshot());
+  const PANEL_REFRESH_MIN_MS = 2000;
+  let lastPanelRefreshAt = 0;
+  panels?.handle("presence.refresh", async () => {
+    const clock = Date.now();
+    if (clock - lastPanelRefreshAt < PANEL_REFRESH_MIN_MS) {
+      return currentPanelSnapshot();
+    }
+    lastPanelRefreshAt = clock;
+    await syncAgentsFromList();
+    await redetect(true);
+    await refresh(undefined, { force: true });
+    return currentPanelSnapshot();
+  });
+  panels?.handle("presence.run", async (input) => {
+    const command = input?.command;
+    if (typeof command !== "string" || !PANEL_COMMANDS.includes(command)) {
+      throw invalidParams(`presence.run command must be one of: ${PANEL_COMMANDS.join(", ")}`);
+    }
+    try {
+      await paletteHandlers.get(command)?.();
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  const KIND_LOOKUP_ATTEMPTS = 5;
+  const kindAttempts = new Map;
+  const kindKnown = new Set;
+  async function syncAgentsFromList() {
+    if (!orca.host.has("agents.list")) {
+      return;
+    }
+    const listed = await orca.host.call("agents.list").catch(() => null);
+    for (const seeded of parseAgentsList(listed, Date.now())) {
+      if (seeded.terminalId && seeded.kind) {
+        kindKnown.add(seeded.terminalId);
+      }
+      agentTable?.upsert(seeded);
+    }
+  }
   orca.events.on("agent.status.changed", async (payload) => {
     const parsed = parseAgentStatusPayload(payload, Date.now());
+    const terminalId = parsed?.terminalId;
+    if (terminalId && !kindKnown.has(terminalId)) {
+      const attempts = kindAttempts.get(terminalId) ?? 0;
+      if (attempts < KIND_LOOKUP_ATTEMPTS) {
+        kindAttempts.set(terminalId, attempts + 1);
+        await syncAgentsFromList();
+      }
+    }
     await refresh(parsed ?? undefined);
   });
-  orca.events.on("worktree.created", async () => {
-    await refresh();
-  });
-  orca.events.on("worktree.removed", async (payload) => {
-    const worktreeId = parseWorktreeRemovedId(payload);
-    if (worktreeId) {
-      agentTable?.removeWorktree(worktreeId);
+  orca.events.on("workspace.removed", async (payload) => {
+    const workspaceId = parseWorkspaceRemovedId(payload);
+    if (workspaceId) {
+      agentTable?.removeWorkspace(workspaceId);
     }
     await refresh();
   });
+  orca.events.on("workspace.changed", async (payload) => {
+    const raw = payload?.context;
+    const context = raw && typeof raw === "object" ? raw : null;
+    await syncAgentsFromList();
+    await refresh(undefined, { context });
+  });
+  await syncAgentsFromList();
+  if (orca.settings?.onDidChange) {
+    settingsSubscription = orca.settings.onDidChange(() => {
+      if (settingsChangeTimer) {
+        clearTimeout(settingsChangeTimer);
+      }
+      settingsChangeTimer = setTimeout(() => {
+        settingsChangeTimer = null;
+        (async () => {
+          const latest = await orca.host.call("settings.get").catch(() => null);
+          if (deactivated || !latest) {
+            return;
+          }
+          const reread = normalizeSettings(latest.settings);
+          const reloadedToken = await migrateSettingsToken(orca.host, reread.bridgeToken);
+          tokenStore = reloadedToken.store;
+          tokenWarnings = reloadedToken.warning ? [reloadedToken.warning] : [];
+          const next = applyBridgeEnvOverrides({ ...reread, bridgeToken: reloadedToken.token }, process.env);
+          if (JSON.stringify(next) !== JSON.stringify(settings)) {
+            await applySettings(next);
+          }
+        })();
+      }, SETTINGS_CHANGE_DEBOUNCE_MS);
+      settingsChangeTimer.unref?.();
+    });
+  }
   heartbeat = setInterval(() => {
-    refresh(undefined, { force: true });
+    redetect().then(() => refresh(undefined, { force: true }));
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
-  refresh().then(() => {
+  redetect(true).then(() => refresh()).then(() => {
     publishPanelSnapshot("immediate");
   });
 }
@@ -1900,10 +2452,24 @@ async function deactivate() {
     clearInterval(heartbeat);
     heartbeat = null;
   }
-  if (panelWriteTimer) {
-    clearTimeout(panelWriteTimer);
-    panelWriteTimer = null;
+  if (panelPostTimer) {
+    clearTimeout(panelPostTimer);
+    panelPostTimer = null;
   }
+  if (timelineSaveTimer) {
+    clearTimeout(timelineSaveTimer);
+    timelineSaveTimer = null;
+  }
+  if (timeline && timelineHost?.has("storage.set")) {
+    await timelineHost.call("storage.set", { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {});
+  }
+  panels = null;
+  if (settingsChangeTimer) {
+    clearTimeout(settingsChangeTimer);
+    settingsChangeTimer = null;
+  }
+  settingsSubscription?.dispose();
+  settingsSubscription = null;
   diagnostics?.line("info", "deactivate");
   agentTable?.clear();
   agentTable = null;
@@ -1915,5 +2481,6 @@ async function deactivate() {
 export {
   deactivate,
   activate as default,
-  formatStatusTransmitting
+  formatStatusTransmitting,
+  toSettingsValue
 };

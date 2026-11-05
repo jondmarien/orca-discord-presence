@@ -358,3 +358,12 @@ test('disabling the bridge after a remote publish clears the companion', async (
   expect(controller.status().sink).toBeNull()
 })
 
+
+test('status never carries the bridge token', () => {
+  const { controller } = harness({
+    bridgeEnabled: true,
+    bridgeUrl: 'http://127.0.0.1:3848',
+    bridgeToken: 'tok-secret-value'
+  })
+  expect(JSON.stringify(controller.status()).includes('tok-secret-value')).toBe(false)
+})

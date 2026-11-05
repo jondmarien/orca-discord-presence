@@ -98,6 +98,12 @@ export type PresenceSettings = {
    * multi-agent table.
    */
   showAgentCount: boolean
+  /**
+   * Which running Discord app gets the presence: `auto` (first socket that
+   * answers) or a detected client id such as `vesktop:0`. An id that is not
+   * running falls back to auto order (`clientFallback` in the status).
+   */
+  discordClient: string
 }
 
 /**
@@ -110,8 +116,9 @@ type BooleanSetting = {
 /**
  * Public Discord application id. Not a secret — it rides in every presence
  * payload. The Discord Developer Portal already has this application and the
- * five Rich Presence assets uploaded (`orca`, `state-working`,
- * `state-blocked`, `state-waiting`, `state-idle`).
+ * Rich Presence assets uploaded (`orca`, `state-working`,
+ * `state-blocked`, `state-waiting`, `state-idle`; `state-completed` is being
+ * added).
  */
 export const SHIPPED_APPLICATION_ID = '1545653843239374848'
 
@@ -155,8 +162,24 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   openUrl: '',
   showOpenButton: false,
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
-  showAgentCount: false
+  showAgentCount: false,
+  discordClient: 'auto'
 })
+
+/**
+ * Keys declared under `contributes.settings` in `orca-plugin.json`, so Orca's
+ * native Settings page can edit them.
+ *
+ * Why: `bridgeToken` is excluded on purpose. A bearer token must not sit in a
+ * plain settings form (Task 5 moves it to secrets). `discordClient` is also
+ * excluded: its choices are detected at runtime, which a static manifest
+ * cannot list, so the panel offers a dropdown and writes it with
+ * `settings.set`. A test pins the manifest to this list and to
+ * {@link DEFAULT_SETTINGS}.
+ */
+export const SETTING_KEYS_DECLARED = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(
+  (key) => key !== 'bridgeToken' && key !== 'discordClient'
+) as readonly (keyof PresenceSettings)[]
 
 const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(
   (key): key is BooleanSetting => typeof DEFAULT_SETTINGS[key] === 'boolean'
@@ -260,6 +283,11 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
   settings.openButtonLabel = normalizeOpenButtonLabel(
     source.openButtonLabel === undefined ? DEFAULT_SETTINGS.openButtonLabel : source.openButtonLabel
   )
+  // Why: an empty or non-string value must mean auto, never "no client".
+  settings.discordClient =
+    typeof source.discordClient === 'string' && source.discordClient.trim().length > 0
+      ? source.discordClient.trim().slice(0, 64)
+      : DEFAULT_SETTINGS.discordClient
   return settings
 }
 

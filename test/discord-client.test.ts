@@ -89,6 +89,23 @@ test('connects, handshakes, and sends SET_ACTIVITY with a pid and nonce', async 
   cleanupTarget(target)
 })
 
+test('connectedPath names the socket that answered and clears on close', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  const server = await startFakeDiscord(socketPath, { onCommand: () => {} })
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => ['/nonexistent/orca-presence-missing-socket', socketPath]
+  })
+  expect(client.connectedPath()).toBeNull()
+  await client.connect()
+  expect(client.connectedPath()).toBe(socketPath)
+  await client.close()
+  expect(client.connectedPath()).toBeNull()
+  server.close()
+  cleanupTarget(target)
+})
+
 test('connect rejects when no candidate socket accepts', async () => {
   const client = createDiscordClient({
     clientId: '123456789012345678',

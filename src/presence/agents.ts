@@ -1,8 +1,9 @@
 /**
  * In-memory multi-agent / multi-worktree presence table.
  *
- * `agent.status.changed` already carries `worktreeId`, `paneKey`, `state`,
- * and `receivedAt`. This module aggregates those slots, drops stale and
+ * Stock `agent.status.changed` carries `workspaceId`, `paneKey`, optional
+ * `terminalId`, `state`, and `receivedAt`. `agents.list` seeds the same table
+ * by terminal. This module aggregates those slots, drops stale and
  * recently-done rows, and produces one canonical state for
  * {@link buildActivity}.
  *
@@ -18,21 +19,42 @@ import { AGENT_RETENTION_MS, isActivityFresh } from './expiry'
  * One parsed `agent.status.changed` event.
  */
 export type AgentStatusEvent = {
-  worktreeId: string
+  workspaceId: string
   paneKey: string
+  terminalId?: string
   state: string
   receivedAt: number
+  /**
+   * When the agent entered `state`, if the host said so (`agents.list`).
+   *
+   * Why: `receivedAt` drives retention, so a seeded row uses the listing time
+   * there and keeps the true start here for the elapsed timer.
+   */
+  stateStartedAt?: number
+  /** Agent CLI name from `agents.list` (`claude`, `codex`, ...). */
+  kind?: string
+  /**
+   * Chat name from `agents.list` or `agent.status.changed`. Local panel only:
+   * never copy it into the Discord activity, bridge payload or logs.
+   */
+  title?: string
 }
 
 /**
  * Stored slot after canonicalize.
  */
 export type AgentSlot = {
-  worktreeId: string
+  workspaceId: string
   paneKey: string
+  terminalId?: string
   rawState: string
   canonicalState: CanonicalAgentState
   receivedAt: number
+  /** When the agent entered its current state; see {@link AgentStatusEvent.stateStartedAt}. */
+  stateStartedAt?: number
+  kind?: string
+  /** Chat name; see {@link AgentStatusEvent.title}. Panel snapshot only. */
+  title?: string
 }
 
 /**
@@ -60,7 +82,7 @@ export type AgentTableOptions = {
  */
 export type AgentTable = {
   upsert: (event: AgentStatusEvent) => void
-  removeWorktree: (worktreeId: string) => boolean
+  removeWorkspace: (workspaceId: string) => boolean
   prune: () => boolean
   summarize: () => AgentSummary
   slots: () => AgentSlot[]
@@ -68,23 +90,36 @@ export type AgentTable = {
 }
 
 const PRIORITY: Record<CanonicalAgentState, number> = {
-  blocked: 3,
-  waiting: 2,
-  working: 1,
-  done: 0
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  done: 1,
+  idle: 0
 }
 
 /**
- * Slot key: worktree + pane. Empty strings are a valid single anonymous slot.
+ * Slot key: `t:<terminalId>` when the terminal is known, else
+ * `p:<workspaceId>\u001f<paneKey>`.
+ *
+ * Why: `agents.list` only knows terminals while `agent.status.changed` also
+ * knows the pane. Keying by terminal makes a seeded row and its later event
+ * the same slot, so one agent is never counted twice. Empty strings in the
+ * pane fallback stay a valid single anonymous slot.
  */
-export function agentSlotKey(worktreeId: string, paneKey: string): string {
-  return `${worktreeId}\u001f${paneKey}`
+export function agentSlotKey(
+  event: Pick<AgentStatusEvent, 'workspaceId' | 'paneKey' | 'terminalId'>
+): string {
+  if (typeof event.terminalId === 'string' && event.terminalId.length > 0) {
+    return `t:${event.terminalId}`
+  }
+  return `p:${event.workspaceId}\u001f${event.paneKey}`
 }
 
 /**
  * Parse a host `agent.status.changed` payload.
  *
- * Missing `worktreeId` / `paneKey` become `""`. Missing `receivedAt` uses
+ * Missing or null `workspaceId` / `paneKey` become `""`. A non-empty string
+ * `terminalId` is kept. Missing `receivedAt` uses
  * `nowMs`. A payload without a string `state` is ignored.
  *
  * @param payload - Event body from the host.
@@ -103,36 +138,100 @@ export function parseAgentStatusPayload(payload: unknown, nowMs: number): AgentS
     typeof source.receivedAt === 'number' && Number.isFinite(source.receivedAt)
       ? source.receivedAt
       : nowMs
-  return {
-    worktreeId: typeof source.worktreeId === 'string' ? source.worktreeId : '',
+  const event: AgentStatusEvent = {
+    workspaceId: typeof source.workspaceId === 'string' ? source.workspaceId : '',
     paneKey: typeof source.paneKey === 'string' ? source.paneKey : '',
     state: source.state,
     receivedAt
   }
+  if (typeof source.terminalId === 'string' && source.terminalId.length > 0) {
+    event.terminalId = source.terminalId
+  }
+  if (typeof source.title === 'string' && source.title.trim().length > 0) {
+    event.title = source.title
+  }
+  return event
 }
 
 /**
- * Best-effort worktree id from `worktree.removed`.
+ * Workspace id from a stock `workspace.removed` payload.
  */
-export function parseWorktreeRemovedId(payload: unknown): string | null {
-  if (typeof payload === 'string' && payload.trim().length > 0) {
-    return payload.trim()
-  }
+export function parseWorkspaceRemovedId(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') {
     return null
   }
-  const source = payload as Record<string, unknown>
-  if (typeof source.worktreeId === 'string' && source.worktreeId.trim().length > 0) {
-    return source.worktreeId.trim()
+  const id = (payload as Record<string, unknown>).workspaceId
+  return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null
+}
+
+/**
+ * Map an `agents.list` result to events for seeding the table.
+ *
+ * Why: the list has no workspace or pane, so seeded rows use `""` for both and
+ * adopt the real `workspaceId` when a later event for the same terminal
+ * replaces them. Rows without a `terminalId` cannot be deduped and are dropped.
+ *
+ * @param result - Raw `agents.list` result, `{ agents: [...] }`.
+ * @param nowMs - Listing time, used as `receivedAt` for active rows (finished
+ *   rows use their `stateStartedAt`).
+ * @returns Events, or `[]` for any non-conforming input.
+ */
+export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEvent[] {
+  if (!result || typeof result !== 'object') {
+    return []
   }
-  if (typeof source.id === 'string' && source.id.trim().length > 0) {
-    return source.id.trim()
+  const rows = (result as Record<string, unknown>).agents
+  if (!Array.isArray(rows)) {
+    return []
   }
-  return null
+  const events: AgentStatusEvent[] = []
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') {
+      continue
+    }
+    const source = row as Record<string, unknown>
+    if (typeof source.terminalId !== 'string' || source.terminalId.length === 0) {
+      continue
+    }
+    if (typeof source.state !== 'string') {
+      continue
+    }
+    const startedAt =
+      typeof source.stateStartedAt === 'number' && Number.isFinite(source.stateStartedAt)
+        ? source.stateStartedAt
+        : undefined
+    const canonical = canonicalizeAgentState(source.state)
+    const finished = canonical === 'done' || canonical === 'idle'
+    const event: AgentStatusEvent = {
+      workspaceId: '',
+      paneKey: '',
+      terminalId: source.terminalId,
+      state: source.state,
+      // Why: the listing proves an active agent is alive now. Using its
+      // (possibly hours old) start as `receivedAt` would drop it from the
+      // stale window the moment the worker restarts. A finished row is the
+      // opposite: retention counts from when it finished, so a long-done row
+      // does not get a fresh window on every re-sync.
+      receivedAt: finished ? (startedAt ?? nowMs) : nowMs
+    }
+    if (startedAt !== undefined) {
+      event.stateStartedAt = startedAt
+    }
+    if (typeof source.agent === 'string' && source.agent.length > 0) {
+      event.kind = source.agent
+    }
+    if (typeof source.title === 'string' && source.title.trim().length > 0) {
+      event.title = source.title
+    }
+    events.push(event)
+  }
+  return events
 }
 
 function retentionWindow(state: CanonicalAgentState): number {
-  return state === 'done' ? AGENT_RETENTION_MS.done : AGENT_RETENTION_MS.stale
+  // Why: an idle agent is not running work, so it lingers only as long as `done`.
+  if (state === 'done') return AGENT_RETENTION_MS.done
+  return state === 'idle' ? AGENT_RETENTION_MS.idle : AGENT_RETENTION_MS.stale
 }
 
 /**
@@ -146,7 +245,7 @@ function summarizeSlots(slots: readonly AgentSlot[]): AgentSummary {
   if (slots.length === 0) {
     return { agentCount: 0, agentState: undefined, stateStartedAtMs: undefined }
   }
-  let winner: CanonicalAgentState = 'done'
+  let winner: CanonicalAgentState = 'idle'
   let winnerPriority = -1
   for (const slot of slots) {
     const priority = PRIORITY[slot.canonicalState]
@@ -157,8 +256,9 @@ function summarizeSlots(slots: readonly AgentSlot[]): AgentSummary {
   }
   let started = Number.POSITIVE_INFINITY
   for (const slot of slots) {
-    if (slot.canonicalState === winner && slot.receivedAt < started) {
-      started = slot.receivedAt
+    const since = slot.stateStartedAt ?? slot.receivedAt
+    if (slot.canonicalState === winner && since < started) {
+      started = since
     }
   }
   return {
@@ -228,20 +328,51 @@ export function createAgentTable({
   return {
     upsert(event) {
       const canonicalState = canonicalizeAgentState(event.state)
-      map.set(agentSlotKey(event.worktreeId, event.paneKey), {
-        worktreeId: event.worktreeId,
+      const key = agentSlotKey(event)
+      // Why: `agent.status.changed` has no agent name, so a later event must
+      // not erase the `kind` the seeded `agents.list` row supplied.
+      const kind = event.kind ?? map.get(key)?.kind
+      // Why: same for `title`; a status event without one keeps the last known.
+      const title = event.title ?? map.get(key)?.title
+      // Why: repeated same-state events must not restart the elapsed timer; a
+      // state change starts it at that event.
+      const previous = map.get(key)
+      // Why: `agents.list` rows have no workspace, so a re-sync must not wipe
+      // the id a status event supplied or `removeWorkspace` would miss it.
+      const workspaceId = event.workspaceId || previous?.workspaceId || ''
+      // Why: a newer start for the same terminal is a separate, later run.
+      const newerStart =
+        event.stateStartedAt !== undefined &&
+        previous?.stateStartedAt !== undefined &&
+        event.stateStartedAt > previous.stateStartedAt
+      const stateStartedAt =
+        previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined && !newerStart
+          ? previous.stateStartedAt
+          : (event.stateStartedAt ?? event.receivedAt)
+      // Why: a re-sync of an already finished slot must never extend its
+      // retention; it keeps the receivedAt of the first sighting. A later
+      // completion (newer start) gets its own schedule.
+      const finished = canonicalState === 'done' || canonicalState === 'idle'
+      const keepReceived = finished && previous?.canonicalState === canonicalState && !newerStart
+      const receivedAt = keepReceived ? previous.receivedAt : event.receivedAt
+      map.set(key, {
+        workspaceId,
         paneKey: event.paneKey,
+        ...(event.terminalId ? { terminalId: event.terminalId } : {}),
         rawState: event.state,
         canonicalState,
-        receivedAt: event.receivedAt
+        receivedAt,
+        stateStartedAt,
+        ...(kind ? { kind } : {}),
+        ...(title ? { title } : {})
       })
       prune()
       schedulePrune()
     },
-    removeWorktree(worktreeId) {
+    removeWorkspace(workspaceId) {
       let changed = false
       for (const [key, slot] of map) {
-        if (slot.worktreeId === worktreeId) {
+        if (slot.workspaceId === workspaceId) {
           map.delete(key)
           changed = true
         }
