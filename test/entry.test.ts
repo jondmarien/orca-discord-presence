@@ -479,13 +479,18 @@ async function activateWithSecrets(options: {
   const notifications: string[] = []
   const settingsSets: Array<{ key: string; value: unknown }> = []
   const secretSets: Array<{ key: string; value: unknown }> = []
-  const state = { stored: { ...options.settings }, secret: options.secret ?? null }
+  const state = {
+    stored: { ...options.settings },
+    secret: options.secret ?? null,
+    context: null as unknown
+  }
+  const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
   let feed: ((e: { key: string }) => void) | null = null
   const has = (method: string) => method.startsWith('secrets.')
   const orca: OrcaHost = {
     log: () => {},
     commands: { register: (id, handler) => handlers.set(id, handler) },
-    events: { on: () => {} },
+    events: { on: (event, handler) => void eventHandlers.set(event, handler) },
     host: {
       has,
       call: async (method, args) => {
@@ -496,6 +501,8 @@ async function activateWithSecrets(options: {
             settingsSets.push({ key: String(args?.key), value: args?.value })
             state.stored = { ...state.stored, [String(args?.key)]: args?.value }
             return null
+          case 'workspace.readContext':
+            return state.context
           case 'secrets.protection':
             return { status: options.protection }
           case 'secrets.get':
@@ -525,6 +532,7 @@ async function activateWithSecrets(options: {
   await activate(orca)
   return {
     handlers,
+    eventHandlers,
     notifications,
     settingsSets,
     secretSets,
@@ -868,4 +876,37 @@ test('an agent started after activation gets its kind from agents.list', async (
     process.env.ORCA_PRESENCE_LOG_FILE = previous
   }
   rmSync(dir, { recursive: true, force: true })
+})
+
+test('a null workspace context clears the previous workspace from the published activity', async () => {
+  const bodies: Array<{ details?: string }> = []
+  const server = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    async fetch(request) {
+      const body = (await request.json().catch(() => null)) as { activity?: { details?: string }; details?: string } | null
+      bodies.push(body?.activity ?? body ?? {})
+      return new Response('{}', { headers: { 'content-type': 'application/json' } })
+    }
+  })
+  try {
+    const run = await activateWithSecrets({
+      protection: 'os-keyring',
+      settings: { bridgeEnabled: true, bridgeUrl: `http://127.0.0.1:${server.port}`, detailLevel: 'workspace' },
+      secret: 'tok'
+    })
+    run.state.context = { displayName: 'secret-repo', branch: 'main', terminals: [{ id: 't1' }] }
+    await run.eventHandlers.get('workspace.changed')?.({ context: run.state.context })
+    await run.handlers.get('presence.status')?.()
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(bodies.at(-1)?.details).toBe('secret-repo')
+    run.state.context = null
+    await run.eventHandlers.get('workspace.changed')?.({ context: null })
+    await run.handlers.get('presence.status')?.()
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(bodies.at(-1)?.details).toBe('Orca')
+    await run.finish()
+  } finally {
+    await server.stop(true)
+  }
 })

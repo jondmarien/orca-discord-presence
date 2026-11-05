@@ -574,7 +574,9 @@ export default async function activate(orca: OrcaHost) {
               branch: context.branch,
               terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
             }
-          : {}),
+          : // Why: the controller merges snapshots, so omitted keys would keep the
+            // previous workspace on Discord after focus moves to nothing.
+            { displayName: undefined, branch: undefined, terminalCount: undefined }),
         agentState: summary.agentState,
         stateStartedAtMs: summary.stateStartedAtMs,
         agentCount: summary.agentCount

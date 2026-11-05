@@ -2160,7 +2160,7 @@ async function activate(orca) {
         displayName: context.displayName,
         branch: context.branch,
         terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
-      } : {},
+      } : { displayName: undefined, branch: undefined, terminalCount: undefined },
       agentState: summary.agentState,
       stateStartedAtMs: summary.stateStartedAtMs,
       agentCount: summary.agentCount
