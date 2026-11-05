@@ -217,6 +217,28 @@ export type OrcaHost = {
 let controller: PresenceController | null = null
 let agentTable: ReturnType<typeof createAgentTable> | null = null
 let timeline: ReturnType<typeof createTimeline> | null = null
+let timelineSaveTimer: ReturnType<typeof setTimeout> | null = null
+let timelineHost: OrcaHost['host'] | null = null
+
+/** Plugin storage key for the persisted 30-minute strip. */
+const TIMELINE_STORAGE_KEY = 'timeline'
+
+/**
+ * Save the timeline at most every 15 s. Why: refreshes arrive on every agent
+ * event; one coalesced write keeps storage churn low. Failures are ignored.
+ */
+function persistTimeline() {
+  if (timelineSaveTimer || !timelineHost?.has('storage.set')) {
+    return
+  }
+  timelineSaveTimer = setTimeout(() => {
+    timelineSaveTimer = null
+    if (timeline && timelineHost) {
+      void timelineHost.call('storage.set', { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {})
+    }
+  }, 15_000)
+  timelineSaveTimer.unref?.()
+}
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
 let logRing: LogRing | null = null
@@ -386,7 +408,12 @@ export default async function activate(orca: OrcaHost) {
     }
   })
 
-  timeline = createTimeline()
+  timelineHost = orca.host
+  // Why: restore the strip so worker restarts do not blank the last 30 minutes.
+  const storedTimeline = orca.host.has('storage.get')
+    ? ((await orca.host.call('storage.get', { key: TIMELINE_STORAGE_KEY }).catch(() => null)) as { value?: unknown } | null)
+    : null
+  timeline = createTimeline({ restore: storedTimeline?.value })
   controller = createController(settings)
 
   /**
@@ -503,6 +530,7 @@ export default async function activate(orca: OrcaHost) {
     }
     // Why: `done` is recorded as `completed`; no agents at all is `idle`.
     timeline?.record(timelineStateFor(summary.agentState))
+    persistTimeline()
     publishPanelSnapshot('debounced')
   }
 
@@ -782,6 +810,14 @@ export async function deactivate() {
   if (panelPostTimer) {
     clearTimeout(panelPostTimer)
     panelPostTimer = null
+  }
+  if (timelineSaveTimer) {
+    clearTimeout(timelineSaveTimer)
+    timelineSaveTimer = null
+  }
+  // Why: flush the strip on a clean stop so the next start restores it.
+  if (timeline && timelineHost?.has('storage.set')) {
+    await timelineHost.call('storage.set', { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {})
   }
   panels = null
   if (settingsChangeTimer) {

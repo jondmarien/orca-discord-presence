@@ -29,8 +29,14 @@ export const ACTIVITY_EXPIRY_MS = {
 export const AGENT_RETENTION_MS = {
   /** Last `receivedAt` age after which a non-done slot is dropped. */
   stale: 1_800_000,
-  /** How long a `done` slot remains before it is dropped. */
-  done: 60_000
+  /**
+   * How long a `done` (completed) slot stays listed. Why: the person should
+   * still see which agent finished after glancing away; 10 minutes, then it
+   * drops so presence falls back to idle.
+   */
+  done: 600_000,
+  /** How long a slot whose state is unknown / idle stays before it is dropped. */
+  idle: 60_000
 } as const
 
 /**

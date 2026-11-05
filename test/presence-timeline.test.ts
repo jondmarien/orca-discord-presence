@@ -74,3 +74,21 @@ test('oldest visible minute carries state from before the window after a prune',
   expect(slots[29]).toBe('waiting')
   expect(slots.includes(null)).toBe(false)
 })
+
+test('timeline restores from its dump and ignores junk', () => {
+  const { timeline, advance } = harness()
+  timeline.record('working')
+  advance(3 * MINUTE)
+  timeline.record('completed')
+  const restored = createTimeline({ now: () => 10_000 * MINUTE + 3 * MINUTE, restore: JSON.parse(JSON.stringify(timeline.toJSON())) })
+  expect(restored.slots()).toEqual(timeline.slots())
+  const junk = createTimeline({ restore: { first: 'x', buckets: [[1, 'nope'], 'bad', [2]] } })
+  expect(junk.slots().every((slot) => slot === null)).toBe(true)
+})
+
+test('completed outranks idle in one minute', () => {
+  const { timeline } = harness()
+  timeline.record('idle')
+  timeline.record('completed')
+  expect(timeline.slots()[29]).toBe('completed')
+})

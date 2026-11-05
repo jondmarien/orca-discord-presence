@@ -54,13 +54,22 @@ export function timelineStateFor(agentState: string | undefined): TimelineState 
 /** Construction options for {@link createTimeline}. */
 export type TimelineOptions = {
   now?: () => number
+  /** Restore a {@link TimelineDump}; junk entries are ignored. */
+  restore?: unknown
 }
 
 /** Mutable timeline used by the plugin worker. */
 export type Timeline = {
   record: (state: TimelineState) => void
   slots: () => TimelineSlot[]
+  /** Minute buckets for persistence: `[minute, state][]` plus the first minute seen. */
+  toJSON: () => TimelineDump
 }
+
+/** Serializable timeline state (stored in plugin storage across worker restarts). */
+export type TimelineDump = { first: number | null; buckets: [number, TimelineState][] }
+
+const TIMELINE_STATES: ReadonlySet<string> = new Set(['working', 'waiting', 'blocked', 'completed', 'idle'])
 
 /**
  * Create a timeline with an injectable clock.
@@ -68,9 +77,25 @@ export type Timeline = {
  * @param options - Clock override for tests.
  * @returns A {@link Timeline}.
  */
-export function createTimeline({ now = () => Date.now() }: TimelineOptions = {}): Timeline {
+export function createTimeline({ now = () => Date.now(), restore }: TimelineOptions = {}): Timeline {
   const buckets = new Map<number, TimelineState>()
   let firstMinute: number | null = null
+  // Why: the worker restarts (dev reloads, idle reaping, Orca restarts); without
+  // this the strip would go blank each time. Gaps while it was down read as idle
+  // carry-forward, never as fresh activity.
+  if (restore && typeof restore === 'object') {
+    const dump = restore as { first?: unknown; buckets?: unknown }
+    if (typeof dump.first === 'number' && Number.isFinite(dump.first)) {
+      firstMinute = dump.first
+    }
+    if (Array.isArray(dump.buckets)) {
+      for (const entry of dump.buckets) {
+        if (Array.isArray(entry) && typeof entry[0] === 'number' && typeof entry[1] === 'string' && TIMELINE_STATES.has(entry[1])) {
+          buckets.set(entry[0], entry[1] as TimelineState)
+        }
+      }
+    }
+  }
 
   // Why: keep the newest bucket older than the window so its state can carry
   // into the oldest visible minute; drop everything before it.
@@ -122,6 +147,9 @@ export function createTimeline({ now = () => Date.now() }: TimelineOptions = {})
         out.push(firstMinute !== null && minute >= firstMinute ? carried : null)
       }
       return out
+    },
+    toJSON() {
+      return { first: firstMinute, buckets: [...buckets.entries()] }
     }
   }
 }

@@ -209,7 +209,8 @@ export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEven
 
 function retentionWindow(state: CanonicalAgentState): number {
   // Why: an idle agent is not running work, so it lingers only as long as `done`.
-  return state === 'done' || state === 'idle' ? AGENT_RETENTION_MS.done : AGENT_RETENTION_MS.stale
+  if (state === 'done') return AGENT_RETENTION_MS.done
+  return state === 'idle' ? AGENT_RETENTION_MS.idle : AGENT_RETENTION_MS.stale
 }
 
 /**

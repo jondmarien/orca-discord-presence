@@ -463,7 +463,8 @@ function canonicalizeAgentState(raw) {
 // src/presence/expiry.ts
 var AGENT_RETENTION_MS = {
   stale: 1800000,
-  done: 60000
+  done: 600000,
+  idle: 60000
 };
 function isActivityFresh(lastSeenAtMs, nowMs, windowMs) {
   if (!Number.isFinite(lastSeenAtMs) || !Number.isFinite(nowMs) || !Number.isFinite(windowMs)) {
@@ -557,7 +558,9 @@ function parseAgentsList(result, nowMs) {
   return events;
 }
 function retentionWindow(state) {
-  return state === "done" || state === "idle" ? AGENT_RETENTION_MS.done : AGENT_RETENTION_MS.stale;
+  if (state === "done")
+    return AGENT_RETENTION_MS.done;
+  return state === "idle" ? AGENT_RETENTION_MS.idle : AGENT_RETENTION_MS.stale;
 }
 function isAgentSlotFresh(slot, nowMs) {
   return isActivityFresh(slot.receivedAt, nowMs, retentionWindow(slot.canonicalState));
@@ -1651,9 +1654,23 @@ var PRIORITY2 = {
 function timelineStateFor(agentState) {
   return agentState === undefined ? "idle" : agentState === "done" ? "completed" : agentState;
 }
-function createTimeline({ now = () => Date.now() } = {}) {
+var TIMELINE_STATES = new Set(["working", "waiting", "blocked", "completed", "idle"]);
+function createTimeline({ now = () => Date.now(), restore } = {}) {
   const buckets = new Map;
   let firstMinute = null;
+  if (restore && typeof restore === "object") {
+    const dump = restore;
+    if (typeof dump.first === "number" && Number.isFinite(dump.first)) {
+      firstMinute = dump.first;
+    }
+    if (Array.isArray(dump.buckets)) {
+      for (const entry of dump.buckets) {
+        if (Array.isArray(entry) && typeof entry[0] === "number" && typeof entry[1] === "string" && TIMELINE_STATES.has(entry[1])) {
+          buckets.set(entry[0], entry[1]);
+        }
+      }
+    }
+  }
   function prune(current) {
     const cutoff = current - TIMELINE_MINUTES;
     let keep = -Infinity;
@@ -1699,6 +1716,9 @@ function createTimeline({ now = () => Date.now() } = {}) {
         out.push(firstMinute !== null && minute >= firstMinute ? carried : null);
       }
       return out;
+    },
+    toJSON() {
+      return { first: firstMinute, buckets: [...buckets.entries()] };
     }
   };
 }
@@ -1745,6 +1765,21 @@ function invalidParams(message) {
 var controller = null;
 var agentTable = null;
 var timeline = null;
+var timelineSaveTimer = null;
+var timelineHost = null;
+var TIMELINE_STORAGE_KEY = "timeline";
+function persistTimeline() {
+  if (timelineSaveTimer || !timelineHost?.has("storage.set")) {
+    return;
+  }
+  timelineSaveTimer = setTimeout(() => {
+    timelineSaveTimer = null;
+    if (timeline && timelineHost) {
+      timelineHost.call("storage.set", { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {});
+    }
+  }, 15000);
+  timelineSaveTimer.unref?.();
+}
 var heartbeat = null;
 var diagnostics = null;
 var logRing = null;
@@ -1873,7 +1908,9 @@ async function activate(orca) {
       pushAgentRefresh();
     }
   });
-  timeline = createTimeline();
+  timelineHost = orca.host;
+  const storedTimeline = orca.host.has("storage.get") ? await orca.host.call("storage.get", { key: TIMELINE_STORAGE_KEY }).catch(() => null) : null;
+  timeline = createTimeline({ restore: storedTimeline?.value });
   controller = createController(settings);
   async function applySettings(nextSettings) {
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId;
@@ -1946,6 +1983,7 @@ async function activate(orca) {
       await controller?.forceTransmit(resume);
     }
     timeline?.record(timelineStateFor(summary.agentState));
+    persistTimeline();
     publishPanelSnapshot("debounced");
   }
   pushAgentRefresh = () => {
@@ -2165,6 +2203,13 @@ async function deactivate() {
   if (panelPostTimer) {
     clearTimeout(panelPostTimer);
     panelPostTimer = null;
+  }
+  if (timelineSaveTimer) {
+    clearTimeout(timelineSaveTimer);
+    timelineSaveTimer = null;
+  }
+  if (timeline && timelineHost?.has("storage.set")) {
+    await timelineHost.call("storage.set", { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {});
   }
   panels = null;
   if (settingsChangeTimer) {

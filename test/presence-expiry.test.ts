@@ -16,7 +16,8 @@ test('isActivityFresh is true only inside the window', () => {
 
 test('agent retention is 30 minutes for stale work and 60 seconds for done', () => {
   expect(AGENT_RETENTION_MS.stale).toBe(1_800_000)
-  expect(AGENT_RETENTION_MS.done).toBe(60_000)
+  expect(AGENT_RETENTION_MS.done).toBe(600_000)
+  expect(AGENT_RETENTION_MS.idle).toBe(60_000)
 })
 
 test('invalid clocks and non-positive windows are stale', () => {
