@@ -158,7 +158,7 @@ Each feature activates only when `orca.host.has(...)` is true. Until upstream me
 
 ## 7. Author decisions (2026-11-04)
 
-1. **X handle:** included in the PR Author section. The value is still to come from the author.
+1. **X handle:** `@nuclearsmilz`, in the PR Author section.
 2. **Issues:** all four were opened at once, so the maintainer sees the roadmap (#38340–#38343).
 3. **#19023:** close and supersede it **after** the first new PR is up.
 4. **Prompt kind scope:** the issue proposes `prompt?: 'question'` only. `blocked` already covers permission prompts. The derivation reuses `src/shared/agent-status/contracts/agent-pending-prompt.ts`.

@@ -22,7 +22,7 @@
   - Visual Proof: a screen capture, or `N/A` with a reason
   - Risk level and back-out
   - AI Disclosure: "Claude Code (Claude Opus 5.5 coordinator, Claude Sonnet 5.5 workers) + human review. Author: Jonathan Marien (jondmarien)"
-  - Author X handle: **`<TBD from author>`**
+  - Author X handle: **`@nuclearsmilz`**
 - PR title is the squash subject: `feat(plugins): <outcome in plain words>`.
 - Branch names: `feat/plugin-agent-prompt-kind`, `feat/plugin-ui-focus`, `feat/plugin-panels-paired-clients`, `feat/plugin-client-relay`.
 - Before **every** push: `pnpm check:changed` (never `--no-verify`). Before opening a PR, run `pnpm lint && pnpm typecheck && pnpm test && pnpm build` locally, or explain any part that CI must cover.
