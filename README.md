@@ -58,7 +58,7 @@ Commit `dist/main.js` when TypeScript sources change, so a Git install works wit
 
 ## Choosing a Discord client
 
-If more than one Discord app is running (for example Vesktop and the Discord desktop app), presence goes to the first one found by default. To pick one, open the panel (Full view) and choose it in the **Discord client** card, or set **Discord client** in Orca Settings. The card appears only when two or more clients are detected. **Auto** restores the default.
+If more than one Discord app is running (for example Vesktop and the Discord desktop app), presence goes to the first one found by default. To pick one, open the panel (Full view) and choose it from the **Discord client** dropdown. It lists every detected client, and the choice is not in Orca Settings because Settings cannot list clients found at runtime. **Auto (first found)** restores the default.
 
 The list refreshes when the plugin starts, on **Reload**, and at most once a minute after that. If your chosen client is not running, presence falls back to the first one found and the panel says so. The connected client also shows in **Show Status** as `client=<id>`. Socket paths never leave the plugin.
 

@@ -1049,7 +1049,7 @@ var DEFAULT_SETTINGS = Object.freeze({
   showAgentCount: false,
   discordClient: "auto"
 });
-var SETTING_KEYS_DECLARED = Object.keys(DEFAULT_SETTINGS).filter((key) => key !== "bridgeToken");
+var SETTING_KEYS_DECLARED = Object.keys(DEFAULT_SETTINGS).filter((key) => key !== "bridgeToken" && key !== "discordClient");
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
 function isDetailLevel(value) {
   return typeof value === "string" && DETAIL_LEVELS.includes(value);

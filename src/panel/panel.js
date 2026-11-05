@@ -367,40 +367,53 @@ function renderControls(snapshot) {
   })
 }
 
-// Why: the card only helps with a real choice, so it needs two detected apps.
-// Buttons are rebuilt only when the list changes; the chosen one is re-read
-// from the snapshot, so a rejected write reverts by itself.
+// Why: the card shows whenever a client is detected so the choice is always
+// visible. Options are rebuilt only when the list or the saved id changes; the
+// chosen one is re-read from the snapshot, so a rejected write reverts by itself.
 var clientsSignature = null
+var CLIENT_FAMILY_NAMES = {
+  vesktop: 'Vesktop',
+  'discord-flatpak': 'Discord (Flatpak)',
+  'discord-snap': 'Discord (Snap)',
+  discord: 'Discord'
+}
+function clientIdName(id) {
+  var family = String(id).split(':')[0]
+  return CLIENT_FAMILY_NAMES[family] || String(id)
+}
 function renderClients(snapshot) {
   var clients = Array.isArray(snapshot.status.clients) ? snapshot.status.clients : []
   var fields = snapshot.fields || {}
-  setClass($('client-card'), 'hidden', clients.length < 2)
-  var signature = clients
-    .map(function (c) {
-      return c.id + '|' + c.label
-    })
-    .join(';')
-  var seg = $('client-seg')
+  var chosen = fields.discordClient || 'auto'
+  setClass($('client-card'), 'hidden', clients.length < 1)
+  var detected = clients.some(function (c) {
+    return c.id === chosen
+  })
+  var missing = chosen !== 'auto' && !detected
+  var signature =
+    clients
+      .map(function (c) {
+        return c.id + '|' + c.label
+      })
+      .join(';') +
+    '#' +
+    (missing ? chosen : '')
+  var select = $('client-select')
   if (signature !== clientsSignature) {
     clientsSignature = signature
-    clearChildren(seg)
-    ;[{ id: 'auto', label: 'Auto' }].concat(clients).forEach(function (entry) {
-      var button = document.createElement('button')
-      button.setAttribute('type', 'button')
-      button.setAttribute('data-client', entry.id)
-      button.textContent = entry.label
-      button.addEventListener('click', function () {
-        writeSetting('discordClient', entry.id, Array.prototype.slice.call(seg.children))
-      })
-      seg.appendChild(button)
+    clearChildren(select)
+    var entries = [{ id: 'auto', label: 'Auto (first found)' }].concat(clients)
+    if (missing) entries.push({ id: chosen, label: clientIdName(chosen) + ' (not running)', disabled: true })
+    entries.forEach(function (entry) {
+      var option = document.createElement('option')
+      option.setAttribute('value', entry.id)
+      option.value = entry.id
+      option.textContent = entry.label
+      option.disabled = !!entry.disabled
+      select.appendChild(option)
     })
   }
-  var chosen = fields.discordClient || 'auto'
-  for (var i = 0; i < seg.children.length; i += 1) {
-    var on = seg.children[i].getAttribute('data-client') === chosen
-    setClass(seg.children[i], 'on', on)
-    setAttr(seg.children[i], 'aria-pressed', on ? 'true' : 'false')
-  }
+  if (!pending.discordClient) select.value = chosen
   var fallback = !!snapshot.status.clientFallback
   setClass($('client-note'), 'hidden', !fallback)
   setText(
@@ -447,6 +460,10 @@ function writeSetting(key, value, els) {
 }
 
 function wireControls() {
+  var clientSelect = $('client-select')
+  clientSelect.addEventListener('change', function () {
+    writeSetting('discordClient', clientSelect.value, [clientSelect])
+  })
   SWITCH_FIELDS.forEach(function (name) {
     var el = $('sw-' + name)
     el.addEventListener('change', function () {

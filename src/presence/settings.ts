@@ -171,11 +171,14 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
  * native Settings page can edit them.
  *
  * Why: `bridgeToken` is excluded on purpose. A bearer token must not sit in a
- * plain settings form (Task 5 moves it to secrets). A test pins the manifest
- * to this list and to {@link DEFAULT_SETTINGS}.
+ * plain settings form (Task 5 moves it to secrets). `discordClient` is also
+ * excluded: its choices are detected at runtime, which a static manifest
+ * cannot list, so the panel offers a dropdown and writes it with
+ * `settings.set`. A test pins the manifest to this list and to
+ * {@link DEFAULT_SETTINGS}.
  */
 export const SETTING_KEYS_DECLARED = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(
-  (key) => key !== 'bridgeToken'
+  (key) => key !== 'bridgeToken' && key !== 'discordClient'
 ) as readonly (keyof PresenceSettings)[]
 
 const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(

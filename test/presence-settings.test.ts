@@ -165,8 +165,12 @@ test('declared settings match DEFAULT_SETTINGS', () => {
   expect(entries.length).toBeLessThanOrEqual(64)
   expect(entries.map((entry) => entry.key).sort()).toEqual([...SETTING_KEYS_DECLARED].sort())
   expect(entries.some((entry) => entry.key === 'bridgeToken')).toBe(false)
+  // Why: the picker lists runtime-detected clients, which a static manifest
+  // cannot, so `discordClient` lives in the panel and is not declared.
+  expect(entries.some((entry) => entry.key === 'discordClient')).toBe(false)
   expect(SETTING_KEYS_DECLARED).not.toContain('bridgeToken')
-  expect(SETTING_KEYS_DECLARED).toHaveLength(Object.keys(DEFAULT_SETTINGS).length - 1)
+  expect(SETTING_KEYS_DECLARED).not.toContain('discordClient')
+  expect(SETTING_KEYS_DECLARED).toHaveLength(Object.keys(DEFAULT_SETTINGS).length - 2)
   for (const key of SETTING_KEYS_DECLARED) {
     const entry = entries.find((candidate) => candidate.key === key)
     expect(entry).toBeDefined()
@@ -178,8 +182,6 @@ test('declared settings match DEFAULT_SETTINGS', () => {
   expect(byKey('detailLevel')?.enum).toEqual(['off', 'generic', 'workspace', 'full'])
   expect(byKey('detailLevel')?.enumLabels).toEqual(['Off', 'Generic', 'Workspace', 'Full'])
   expect(byKey('applicationId')?.maxLength).toBe(20)
-  expect(byKey('discordClient')?.maxLength).toBe(64)
-  expect(byKey('discordClient')?.default).toBe('auto')
   expect(byKey('openButtonLabel')?.maxLength).toBe(32)
   expect(byKey('openUrl')?.maxLength).toBe(512)
   expect(byKey('bridgeUrl')?.maxLength).toBe(512)

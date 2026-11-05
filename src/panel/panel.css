@@ -164,6 +164,21 @@ body {
   opacity: 0.55;
 }
 
+.select {
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 /* Discord card keeps its own palette in both themes: it previews Discord. */
 .dcard {
   background: #232428;

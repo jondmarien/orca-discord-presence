@@ -24,6 +24,7 @@ class FakeElement {
   className = ''
   hidden = false
   checked = false
+  value = ''
   disabled = false
   src = ''
   scrollTop = 0
@@ -448,32 +449,45 @@ test('sending-to tile names the connected client', () => {
   expect(byId.get('tile-sink-sub')?.textContent).toBe('Discord IPC')
 })
 
-test('client card is hidden with one client and shown with two', () => {
+const optionsOf = (byId: Map<string, FakeElement>) =>
+  (byId.get('client-select') as FakeElement).children.map((o) => [o.getAttribute('value'), o.textContent, o.disabled])
+
+test('client card is hidden with no clients and shown with one or more as a select', () => {
   const { byId, hook } = mountPanel()
-  hook?.render(fullSnapshot([]))
+  const none = fullSnapshot([])
+  none.status.clients = []
+  hook?.render(none)
   expect(hidden(byId, 'client-card')).toBe(true)
+  const one = fullSnapshot([])
+  one.status.clients = [TWO_CLIENTS[0]]
+  hook?.render(one)
+  expect(hidden(byId, 'client-card')).toBe(false)
   const two = fullSnapshot([])
   two.status.clients = TWO_CLIENTS
   hook?.render(two)
-  expect(hidden(byId, 'client-card')).toBe(false)
-  // Auto plus one button per detected client.
-  expect(byId.get('client-seg')?.children.map((b) => b.textContent)).toEqual(['Auto', 'Vesktop', 'Discord'])
-  hook?.render(fullSnapshot([]))
+  expect(optionsOf(byId)).toEqual([
+    ['auto', 'Auto (first found)', false],
+    ['vesktop:0', 'Vesktop', false],
+    ['discord:0', 'Discord', false]
+  ])
+  expect(byId.get('client-select')?.value).toBe('auto')
+  hook?.render(none)
   expect(hidden(byId, 'client-card')).toBe(true)
 })
 
-test('client card shows only the matching choice as on, and the fallback note', () => {
+test('client select shows the saved choice, a not-running option, and the fallback note', () => {
   const { byId, hook } = mountPanel()
   const two = fullSnapshot([])
   two.status.clients = TWO_CLIENTS
   two.fields.discordClient = 'discord:0'
   hook?.render(two)
-  const buttons = byId.get('client-seg')?.children ?? []
-  expect(buttons.map((b) => b.className.includes('on'))).toEqual([false, false, true])
+  expect(byId.get('client-select')?.value).toBe('discord:0')
   expect(hidden(byId, 'client-note')).toBe(true)
   two.fields.discordClient = 'discord-snap:0'
   two.status.clientFallback = true
   hook?.render(two)
+  expect(optionsOf(byId).at(-1)).toEqual(['discord-snap:0', 'Discord (Snap) (not running)', true])
+  expect(byId.get('client-select')?.value).toBe('discord-snap:0')
   expect(hidden(byId, 'client-note')).toBe(false)
   expect(byId.get('client-note')?.textContent).toBe('Chosen client not running \u2014 using Vesktop.')
 })
@@ -496,22 +510,24 @@ test('client picker writes discordClient and reverts on rejection', async () => 
   const two = fullSnapshot([])
   two.status.clients = TWO_CLIENTS
   hook?.render(two)
-  const buttons = (byId.get('client-seg') as FakeElement).children
-  buttons[1].dispatch('click')
-  expect(buttons[1].getAttribute('aria-busy')).toBe('true')
+  const select = byId.get('client-select') as FakeElement
+  select.value = 'vesktop:0'
+  select.dispatch('change')
+  expect(select.getAttribute('aria-busy')).toBe('true')
   await settle()
   expect(calls).toContainEqual(['settings.set', { key: 'discordClient', value: 'vesktop:0' }])
-  buttons[0].dispatch('click')
+  select.value = 'auto'
+  select.dispatch('change')
   await settle()
   expect(calls).toContainEqual(['settings.set', { key: 'discordClient', value: 'auto' }])
   fail = true
-  buttons[2].dispatch('click')
+  select.value = 'discord:0'
+  select.dispatch('change')
   await settle()
   expect(byId.get('flash')?.textContent).toContain('not allowed')
-  // Snapshot still says auto, so Auto stays on and the clicked one does not.
-  expect(buttons[0].className.includes('on')).toBe(true)
-  expect(buttons[2].className.includes('on')).toBe(false)
-  expect(buttons[2].disabled).toBe(false)
+  // Snapshot still says auto, so the select reverts to it.
+  expect(select.value).toBe('auto')
+  expect(select.disabled).toBe(false)
 })
 
 test('strip cell stacks one segment per state; one state stays solid', () => {
