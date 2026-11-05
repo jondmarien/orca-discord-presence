@@ -159,7 +159,17 @@ Provider-neutral design, so Orca core never touches Discord:
 
 **This needs an upstream issue and design discussion before code.** It is the riskiest API: cross-machine, consent, and plugin-to-plugin trust. The exact capability and method names are left to the builder and the upstream discussion.
 
-### 6.3 Dropped
+### 6.3 Agent prompt kind (added 2026-11-04, after v1.0.0)
+
+Problem: plugins get only `working | blocked | waiting | done`. Orca knows internally when an agent is asking the person a question: it keeps the `AskUserQuestion` input as `interactivePrompt` on the agent-status entry. `projectPluginAgentStatusChangedPayload` (`src/main/plugins/plugin-agent-status-event.ts`) drops that detail, so a question looks the same as any other wait or permission prompt.
+
+Proposal, additive inside `pluginApi` 1:
+- An optional `prompt?: 'question' | 'permission'` field on the `agent.status.changed` payload and on each `agents.list` row. It is present only while that prompt is pending, and its meaning is coarse: it never carries the question text, the options or the tool input.
+- Gated by the existing `agent:read` capability. No new consent is needed, because it reveals less than `title` already does.
+- The plugin feature-detects the field. When it is `question`, the plugin shows the **question** state (Discord `state-question-v2`, its own panel colour). Without it, questions keep showing as waiting or blocked.
+- Fork first, then upstream as its own small issue and PR, after v1.0.0 ships.
+
+### 6.4 Dropped
 
 - Panel `settings.*` / `storage.*`: upstream has them.
 - Agent labels in `readContext`: `agents.list` covers them.
@@ -169,6 +179,7 @@ Provider-neutral design, so Orca core never touches Discord:
 1. Comment on #19023 explaining that upstream now covers most of it, link the new issues, and close it. The text is shown to the author before posting.
 2. Issue + PR **Focus API** (§6.1). Reuse #19020 if its wording fits; otherwise open a new issue.
 3. Issue first, PR after maintainer signal: **Client relay** (§6.2).
+4. Issue + PR **Agent prompt kind** (§6.3), after v1.0.0. It is small and additive, so it may land before the relay.
 4. Each PR follows the upstream template: ELI5, linked issue, tests that fail without the change, visual proof (screen capture of Discord + Orca), risk level, AI disclosure.
 
 ## 8. Sequencing
