@@ -54,9 +54,18 @@ export function createTimeline({ now = () => Date.now() }: TimelineOptions = {})
   const buckets = new Map<number, TimelineState>()
   let firstMinute: number | null = null
 
+  // Why: keep the newest bucket older than the window so its state can carry
+  // into the oldest visible minute; drop everything before it.
   function prune(current: number) {
+    const cutoff = current - TIMELINE_MINUTES
+    let keep = -Infinity
     for (const minute of buckets.keys()) {
-      if (minute <= current - TIMELINE_MINUTES) {
+      if (minute <= cutoff && minute > keep) {
+        keep = minute
+      }
+    }
+    for (const minute of buckets.keys()) {
+      if (minute < keep) {
         buckets.delete(minute)
       }
     }

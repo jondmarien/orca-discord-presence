@@ -1627,8 +1627,15 @@ function createTimeline({ now = () => Date.now() } = {}) {
   const buckets = new Map;
   let firstMinute = null;
   function prune(current) {
+    const cutoff = current - TIMELINE_MINUTES;
+    let keep = -Infinity;
     for (const minute of buckets.keys()) {
-      if (minute <= current - TIMELINE_MINUTES) {
+      if (minute <= cutoff && minute > keep) {
+        keep = minute;
+      }
+    }
+    for (const minute of buckets.keys()) {
+      if (minute < keep) {
         buckets.delete(minute);
       }
     }

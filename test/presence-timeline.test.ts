@@ -35,3 +35,14 @@ test('empty minutes carry forward last state', () => {
   expect(timeline.slots().slice(-6)).toEqual(new Array(6).fill('working'))
   expect(timeline.slots()[23]).toBe(null)
 })
+
+test('oldest visible minute carries state from before the window after a prune', () => {
+  const { timeline, advance } = harness()
+  timeline.record('working')
+  advance(40 * MINUTE)
+  timeline.record('waiting')
+  const slots = timeline.slots()
+  expect(slots[0]).toBe('working')
+  expect(slots[29]).toBe('waiting')
+  expect(slots.includes(null)).toBe(false)
+})
