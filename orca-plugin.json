@@ -4,20 +4,20 @@
   "execution": "trusted-worker",
   "id": "discord-presence",
   "name": "Rich Presence for Discord",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "icon": "assets/icon.png",
   "cover": {
-    "path": "assets/cover.png",
+    "path": "assets/cover.webp",
     "alt": "Rich Presence for Discord: title, four agent state icons, Discord profile card showing Working in Orca"
   },
   "screenshots": [
     {
-      "path": "assets/screenshots/full.png",
+      "path": "assets/screenshots/full.webp",
       "alt": "Rich Presence panel Full view: Discord profile preview, last 30 minutes of agent states, agent list with chat names, and Show on Discord switches",
       "caption": "Full view"
     },
     {
-      "path": "assets/screenshots/minimal.png",
+      "path": "assets/screenshots/minimal.webp",
       "alt": "Rich Presence panel Minimal view: state-coloured hero showing Working with 2 agents and a timer, plus the 30-minute strip",
       "caption": "Minimal view"
     }

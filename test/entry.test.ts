@@ -103,7 +103,7 @@ test('manifest icon and cover point at real files with alt text', () => {
   }
   expect(manifest.icon).toBe('assets/icon.png')
   expect(existsSync(join(root, manifest.icon as string))).toBe(true)
-  expect(manifest.cover?.path).toBe('assets/cover.png')
+  expect(manifest.cover?.path).toBe('assets/cover.webp')
   expect(existsSync(join(root, manifest.cover?.path as string))).toBe(true)
   expect((manifest.cover?.alt ?? '').length).toBeGreaterThan(0)
 })
