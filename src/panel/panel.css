@@ -1,0 +1,358 @@
+:root {
+  color-scheme: dark light;
+  --c-working: #12b8f0;
+  --c-waiting: #f5b800;
+  --c-blocked: #e81010;
+  --c-idle: #9aa3ad;
+  --c-none: #262626;
+  --c-live: #23a55a;
+  --bg: var(--orca-background, #111214);
+  --card: var(--orca-card, #18191b);
+  --border: var(--orca-border, #2a2a2a);
+  --muted-fg: var(--orca-muted-foreground, #9a9a9a);
+  --fg: var(--orca-foreground, #ececec);
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+body {
+  padding: 8px;
+  font: 13px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+.frame {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hidden {
+  display: none !important;
+}
+.note,
+.muted {
+  color: var(--muted-fg);
+}
+.small {
+  font-size: 11px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.row.top {
+  align-items: flex-start;
+  gap: 12px;
+}
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.col.g6,
+.g6 {
+  gap: 6px;
+}
+.col.g7 {
+  gap: 7px;
+}
+.between {
+  justify-content: space-between;
+}
+.mb6 {
+  margin-bottom: 6px;
+}
+.push {
+  margin-left: auto;
+}
+.flash {
+  min-height: 0;
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted-fg);
+  white-space: pre-wrap;
+}
+.flash:empty {
+  display: none;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.h {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted-fg);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 auto;
+  background: var(--muted-fg);
+}
+#status-bar.is-connected .dot {
+  background: var(--c-live);
+}
+#status-bar.is-bridge .dot {
+  background: var(--c-working);
+}
+#status-bar.is-down .dot {
+  background: var(--c-blocked);
+}
+.dot[data-state='working'] {
+  background: var(--c-working);
+}
+.dot[data-state='waiting'] {
+  background: var(--c-waiting);
+}
+.dot[data-state='blocked'] {
+  background: var(--c-blocked);
+}
+.dot[data-state='idle'] {
+  background: var(--c-idle);
+}
+
+/* Segmented controls */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  background: var(--card);
+}
+.seg span {
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--muted-fg);
+}
+.seg.sm span {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.seg span.on {
+  background: var(--c-none);
+  color: var(--fg);
+}
+
+/* Discord card keeps its own palette in both themes: it previews Discord. */
+.dcard {
+  background: #232428;
+  border: 1px solid #2f3136;
+  border-radius: 10px;
+  padding: 12px;
+}
+.dcard .kicker {
+  font-size: 11px;
+  font-weight: 700;
+  color: #b5bac1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+.dcard img {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  flex: 0 0 auto;
+}
+.dtext {
+  min-width: 0;
+}
+.dcard .t1 {
+  font-weight: 700;
+  color: #f2f3f5;
+}
+.dcard .t2,
+.dcard .t3 {
+  color: #dbdee1;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.dcard .t4 {
+  color: var(--c-live);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Last 30 min strip */
+.strip {
+  display: flex;
+  gap: 2px;
+  height: 20px;
+}
+.strip i {
+  flex: 1;
+  border-radius: 2px;
+  background: var(--c-none);
+}
+.strip i[data-state='working'] {
+  background: var(--c-working);
+}
+.strip i[data-state='waiting'] {
+  background: var(--c-waiting);
+}
+.strip i[data-state='blocked'] {
+  background: var(--c-blocked);
+}
+.strip i[data-state='idle'] {
+  background: var(--c-idle);
+}
+.leg {
+  display: flex;
+  gap: 10px;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--muted-fg);
+}
+.leg span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Tiles */
+.tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.tile .v {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tile .l {
+  font-size: 11px;
+  color: var(--muted-fg);
+}
+.mix {
+  display: flex;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--c-none);
+}
+.mix i[data-state='working'] {
+  background: var(--c-working);
+}
+.mix i[data-state='waiting'] {
+  background: var(--c-waiting);
+}
+.mix i[data-state='blocked'] {
+  background: var(--c-blocked);
+}
+.mix i[data-state='idle'] {
+  background: var(--c-idle);
+}
+
+/* Agent rows and chips */
+.agent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.chip {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.chip[data-state='working'] {
+  background: rgba(18, 184, 240, 0.15);
+  color: #3fc8f5;
+}
+.chip[data-state='waiting'] {
+  background: rgba(245, 184, 0, 0.15);
+  color: #f5c23a;
+}
+.chip[data-state='blocked'] {
+  background: rgba(232, 16, 16, 0.15);
+  color: #ff5a5a;
+}
+.chip[data-state='idle'] {
+  background: rgba(154, 163, 173, 0.15);
+  color: #b5bcc4;
+}
+
+/* Switches (display-only until Task 3 wires them) */
+.sw {
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: #3a3a3a;
+  position: relative;
+  flex: none;
+}
+.sw::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ececec;
+}
+.sw.on {
+  background: var(--c-working);
+}
+.sw.on::after {
+  left: 14px;
+}
+
+.btn {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+details.logs summary {
+  cursor: pointer;
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+.log-toolbar {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0;
+}
+pre.log {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--orca-muted, #161616);
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

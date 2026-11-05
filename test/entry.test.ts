@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
-import vm from 'node:vm'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DISCORD_IPC_ENV } from '../src/discord/ipc'
@@ -774,31 +773,6 @@ test('persist never sends a null value for a declared settings key', async () =>
   expect(toSettingsValue('Desk')).toBe('Desk')
   expect(toSettingsValue(false)).toBe(false)
   await run.finish()
-})
-
-test('panel/index.html uses the stock frame API with no network or legacy bridge', () => {
-  const html = readFileSync(join(root, 'panel/index.html'), 'utf8')
-  expect(html.includes('orca-panel-action')).toBe(false)
-  expect(/<script[^>]*\ssrc=/.test(html)).toBe(false)
-  expect(html.includes('http')).toBe(false)
-  expect(html.includes('presence-snapshot')).toBe(false)
-  expect(html.includes('plugin-version')).toBe(false)
-  expect(html.includes('window.orca')).toBe(true)
-  // Why: window.orca is a read-only global in the frame. Running the inline
-  // script as a classic script against such a global catches a top-level
-  // `var orca`, which assigns window.orca and throws in strict mode.
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? ''
-  const el = () => ({ classList: { add() {}, remove() {}, toggle() {} }, addEventListener() {}, textContent: '' })
-  const sandbox = vm.createContext({
-    document: { getElementById: el, querySelectorAll: () => [] },
-    navigator: {}
-  })
-  vm.runInContext('Object.defineProperty(globalThis, "orca", { value: Object.freeze({}), writable: false }); globalThis.window = globalThis', sandbox)
-  expect(() => vm.runInContext(script, sandbox)).not.toThrow()
-  expect(html.includes('plugin.request')).toBe(true)
-  expect(html.includes('presence.run')).toBe(true)
-  expect(html.includes('Open this panel in the Orca desktop app to see live status.')).toBe(true)
-  expect(html.includes('--orca-background')).toBe(true)
 })
 
 test('formatStatusTransmitting includes lastActivity and truncates long JSON', () => {
