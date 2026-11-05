@@ -164,9 +164,9 @@ function fullSnapshot(timeline: Array<string | null>) {
     },
     timeline,
     agents: [
-      { kind: 'claude', state: 'working', sinceMs: 12 * 60_000 },
-      { kind: 'codex', state: 'working', sinceMs: 3 * 60_000 },
-      { kind: 'claude', state: 'waiting', sinceMs: 40_000 }
+      { kind: 'claude', state: 'working', sinceMs: Date.now() - 12 * 60_000 },
+      { kind: 'codex', state: 'working', sinceMs: Date.now() - 3 * 60_000 },
+      { kind: 'claude', state: 'waiting', sinceMs: Date.now() - 40_000 }
     ],
     activityCard: {
       details: 'Working in Orca',
@@ -346,4 +346,18 @@ test('detail control writes detailLevel and reverts on failure', async () => {
   expect(byId.get('flash')?.textContent).toContain('invalid value')
   expect(buttons[1].className.includes('on')).toBe(true)
   expect(buttons[3].className.includes('on')).toBe(false)
+})
+
+test('agent chip shows time in state, not epoch', () => {
+  const { byId, hook } = mountPanel()
+  const snap = fullSnapshot([])
+  snap.agents = [{ kind: 'claude', state: 'working', sinceMs: Date.now() - 125_000 }]
+  hook?.render(snap)
+  const text = byId.get('agents-list')?.children[0]?.children[1]?.textContent ?? ''
+  expect(text).toContain('2m')
+  expect(text).not.toContain('h')
+  // A timestamp slightly in the future (clock skew) clamps to 0s.
+  snap.agents = [{ kind: 'claude', state: 'idle', sinceMs: Date.now() + 60_000 }]
+  hook?.render(snap)
+  expect(byId.get('agents-list')?.children[0]?.children[1]?.textContent).toBe('idle · 0s')
 })

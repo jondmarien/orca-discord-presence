@@ -672,6 +672,7 @@ function formatSince(ms) {
 // Timer: only the timer node is touched each second (no full re-render).
 var timerStartMs = null
 function tickTimer() {
+  tickAgents()
   if (timerStartMs == null) return
   setText('dcard-timer', formatElapsed(Date.now() - timerStartMs) + ' elapsed')
   updateMeta()
@@ -702,12 +703,26 @@ function clearChildren(el) {
   while (el.firstChild) el.removeChild(el.firstChild)
 }
 
+// Why: snapshot `sinceMs` is the epoch time the agent entered its state, so
+// the chip shows the age; rows keep their chip nodes for the 1 s tick.
+function chipText(agent) {
+  return (agent.state === 'done' ? 'idle' : agent.state) + ' \u00b7 ' + formatSince(Math.max(0, Date.now() - agent.sinceMs))
+}
+
+var agentChips = []
+function tickAgents() {
+  agentChips.forEach(function (entry) {
+    var next = chipText(entry.agent)
+    if (entry.chip.textContent !== next) entry.chip.textContent = next
+  })
+}
+
 var agentsSignature = null
 function renderAgents(agents) {
   var list = Array.isArray(agents) ? agents : []
   var signature = list
     .map(function (a) {
-      return a.kind + '|' + a.state + '|' + formatSince(a.sinceMs)
+      return a.kind + '|' + a.state + '|' + a.sinceMs
     })
     .join(';')
   setClass($('agents-empty'), 'hidden', list.length > 0)
@@ -715,6 +730,7 @@ function renderAgents(agents) {
   agentsSignature = signature
   var box = $('agents-list')
   clearChildren(box)
+  agentChips = []
   list.forEach(function (agent) {
     var row = document.createElement('div')
     row.className = 'agent-row'
@@ -724,7 +740,8 @@ function renderAgents(agents) {
     chip.className = 'chip'
     var state = agent.state === 'done' ? 'idle' : normalizeState(agent.state)
     chip.setAttribute('data-state', state)
-    chip.textContent = (agent.state === 'done' ? 'idle' : agent.state) + ' · ' + formatSince(agent.sinceMs)
+    chip.textContent = chipText(agent)
+    agentChips.push({ agent: agent, chip: chip })
     row.appendChild(kind)
     row.appendChild(chip)
     box.appendChild(row)
