@@ -92,3 +92,13 @@ test('completed outranks idle in one minute', () => {
   timeline.record('completed')
   expect(timeline.slots()[29]).toBe('completed')
 })
+
+test('a minute that ends completed carries completed, not its strongest state', () => {
+  const { timeline, advance } = harness()
+  timeline.record('working')
+  timeline.record('completed')
+  advance(3 * MINUTE)
+  const slots = timeline.slots()
+  expect(slots[26]).toBe('working')
+  expect(slots.slice(27)).toEqual(['completed', 'completed', 'completed'])
+})

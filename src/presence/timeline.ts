@@ -62,12 +62,12 @@ export type TimelineOptions = {
 export type Timeline = {
   record: (state: TimelineState) => void
   slots: () => TimelineSlot[]
-  /** Minute buckets for persistence: `[minute, state][]` plus the first minute seen. */
+  /** Minute buckets for persistence: `[minute, strongest, latest][]` plus the first minute seen. */
   toJSON: () => TimelineDump
 }
 
 /** Serializable timeline state (stored in plugin storage across worker restarts). */
-export type TimelineDump = { first: number | null; buckets: [number, TimelineState][] }
+export type TimelineDump = { first: number | null; buckets: [number, TimelineState, TimelineState][] }
 
 const TIMELINE_STATES: ReadonlySet<string> = new Set(['working', 'waiting', 'blocked', 'completed', 'idle'])
 
@@ -78,11 +78,14 @@ const TIMELINE_STATES: ReadonlySet<string> = new Set(['working', 'waiting', 'blo
  * @returns A {@link Timeline}.
  */
 export function createTimeline({ now = () => Date.now(), restore }: TimelineOptions = {}): Timeline {
-  const buckets = new Map<number, TimelineState>()
+  // Why: each minute keeps the strongest state seen (what the cell shows) and
+  // the latest one (what carries into later minutes with no events). Carrying
+  // the strongest would keep a minute that ended in `completed` painted
+  // `working` until the next event.
+  const buckets = new Map<number, { top: TimelineState; last: TimelineState }>()
   let firstMinute: number | null = null
   // Why: the worker restarts (dev reloads, idle reaping, Orca restarts); without
-  // this the strip would go blank each time. Gaps while it was down read as idle
-  // carry-forward, never as fresh activity.
+  // this the strip would go blank each time.
   if (restore && typeof restore === 'object') {
     const dump = restore as { first?: unknown; buckets?: unknown }
     if (typeof dump.first === 'number' && Number.isFinite(dump.first)) {
@@ -90,9 +93,10 @@ export function createTimeline({ now = () => Date.now(), restore }: TimelineOpti
     }
     if (Array.isArray(dump.buckets)) {
       for (const entry of dump.buckets) {
-        if (Array.isArray(entry) && typeof entry[0] === 'number' && typeof entry[1] === 'string' && TIMELINE_STATES.has(entry[1])) {
-          buckets.set(entry[0], entry[1] as TimelineState)
+        if (!Array.isArray(entry) || typeof entry[0] !== 'number' || !isState(entry[1])) {
+          continue
         }
+        buckets.set(entry[0], { top: entry[1], last: isState(entry[2]) ? entry[2] : entry[1] })
       }
     }
   }
@@ -121,35 +125,48 @@ export function createTimeline({ now = () => Date.now(), restore }: TimelineOpti
         firstMinute = minute
       }
       const existing = buckets.get(minute)
-      if (existing === undefined || PRIORITY[state] > PRIORITY[existing]) {
-        buckets.set(minute, state)
-      }
+      buckets.set(minute, {
+        top: existing && PRIORITY[existing.top] >= PRIORITY[state] ? existing.top : state,
+        last: state
+      })
       prune(minute)
     },
     slots() {
       const current = Math.floor(now() / MINUTE_MS)
-      const out: TimelineSlot[] = []
+      const start = current - TIMELINE_MINUTES + 1
       let carried: TimelineState | null = null
-      // Why: seed the carry from the newest bucket older than the window so a
-      // state that began before the window still fills its start.
       let seedMinute = -Infinity
-      for (const [minute, state] of buckets) {
-        if (minute <= current - TIMELINE_MINUTES && minute > seedMinute) {
+      for (const [minute, bucket] of buckets) {
+        if (minute < start && minute > seedMinute) {
           seedMinute = minute
-          carried = state
+          carried = bucket.last
         }
       }
-      for (let minute = current - TIMELINE_MINUTES + 1; minute <= current; minute += 1) {
+      const out: TimelineSlot[] = []
+      for (let minute = start; minute <= current; minute += 1) {
         const own = buckets.get(minute)
-        if (own !== undefined) {
-          carried = own
+        if (firstMinute === null || minute < firstMinute) {
+          out.push(null)
+          continue
         }
-        out.push(firstMinute !== null && minute >= firstMinute ? carried : null)
+        if (own) {
+          out.push(own.top)
+          carried = own.last
+        } else {
+          out.push(carried)
+        }
       }
       return out
     },
     toJSON() {
-      return { first: firstMinute, buckets: [...buckets.entries()] }
+      return {
+        first: firstMinute,
+        buckets: [...buckets.entries()].map(([minute, bucket]) => [minute, bucket.top, bucket.last])
+      }
     }
   }
+}
+
+function isState(value: unknown): value is TimelineState {
+  return typeof value === 'string' && TIMELINE_STATES.has(value)
 }

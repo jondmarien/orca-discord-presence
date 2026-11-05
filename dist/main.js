@@ -1665,9 +1665,10 @@ function createTimeline({ now = () => Date.now(), restore } = {}) {
     }
     if (Array.isArray(dump.buckets)) {
       for (const entry of dump.buckets) {
-        if (Array.isArray(entry) && typeof entry[0] === "number" && typeof entry[1] === "string" && TIMELINE_STATES.has(entry[1])) {
-          buckets.set(entry[0], entry[1]);
+        if (!Array.isArray(entry) || typeof entry[0] !== "number" || !isState(entry[1])) {
+          continue;
         }
+        buckets.set(entry[0], { top: entry[1], last: isState(entry[2]) ? entry[2] : entry[1] });
       }
     }
   }
@@ -1692,35 +1693,49 @@ function createTimeline({ now = () => Date.now(), restore } = {}) {
         firstMinute = minute;
       }
       const existing = buckets.get(minute);
-      if (existing === undefined || PRIORITY2[state] > PRIORITY2[existing]) {
-        buckets.set(minute, state);
-      }
+      buckets.set(minute, {
+        top: existing && PRIORITY2[existing.top] >= PRIORITY2[state] ? existing.top : state,
+        last: state
+      });
       prune(minute);
     },
     slots() {
       const current = Math.floor(now() / MINUTE_MS);
-      const out = [];
+      const start = current - TIMELINE_MINUTES + 1;
       let carried = null;
       let seedMinute = -Infinity;
-      for (const [minute, state] of buckets) {
-        if (minute <= current - TIMELINE_MINUTES && minute > seedMinute) {
+      for (const [minute, bucket] of buckets) {
+        if (minute < start && minute > seedMinute) {
           seedMinute = minute;
-          carried = state;
+          carried = bucket.last;
         }
       }
-      for (let minute = current - TIMELINE_MINUTES + 1;minute <= current; minute += 1) {
+      const out = [];
+      for (let minute = start;minute <= current; minute += 1) {
         const own = buckets.get(minute);
-        if (own !== undefined) {
-          carried = own;
+        if (firstMinute === null || minute < firstMinute) {
+          out.push(null);
+          continue;
         }
-        out.push(firstMinute !== null && minute >= firstMinute ? carried : null);
+        if (own) {
+          out.push(own.top);
+          carried = own.last;
+        } else {
+          out.push(carried);
+        }
       }
       return out;
     },
     toJSON() {
-      return { first: firstMinute, buckets: [...buckets.entries()] };
+      return {
+        first: firstMinute,
+        buckets: [...buckets.entries()].map(([minute, bucket]) => [minute, bucket.top, bucket.last])
+      };
     }
   };
+}
+function isState(value) {
+  return typeof value === "string" && TIMELINE_STATES.has(value);
 }
 
 // src/version.ts
