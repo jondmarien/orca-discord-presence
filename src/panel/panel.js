@@ -13,8 +13,7 @@ var STATE_FILES = {
   working: 'state-working',
   waiting: 'state-waiting',
   blocked: 'state-blocked',
-  // TODO(author): switch to state-completed.png once assets/state-completed.png exists
-  completed: 'state-idle',
+  completed: 'orca-completed',
   idle: 'state-idle'
 }
 function stateImage(state) {

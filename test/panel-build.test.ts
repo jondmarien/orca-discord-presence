@@ -306,7 +306,7 @@ test('minimal glow follows the current state', async () => {
   expect(byId.get('min-hero')?.getAttribute('data-state')).toBe('idle')
 })
 
-test('minimal hero for completed is green-state and falls back to the idle image', async () => {
+test('minimal hero for completed is green-state and uses the completed icon', async () => {
   const { byId, hook } = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
   const snap = fullSnapshot([])
   snap.activityCard.smallImageKey = 'state-completed'
@@ -314,8 +314,8 @@ test('minimal hero for completed is green-state and falls back to the idle image
   expect(byId.get('min-hero')?.getAttribute('data-state')).toBe('completed')
   expect(byId.get('min-state')?.textContent).toBe('Completed')
   // TODO(author): flip to state-completed.png once assets/state-completed.png exists.
-  expect(byId.get('min-img')?.getAttribute('src')).toBe('../assets/state-idle.png')
-  expect(byId.get('dcard-img')?.getAttribute('src')).toBe('../assets/state-idle.png')
+  expect(byId.get('min-img')?.getAttribute('src')).toBe('../assets/orca-completed.png')
+  expect(byId.get('dcard-img')?.getAttribute('src')).toBe('../assets/orca-completed.png')
 })
 
 test('completed is in the strip legend between waiting and idle', () => {
