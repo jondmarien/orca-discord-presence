@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DISCORD_IPC_ENV } from '../src/discord/ipc'
-import { formatStatusTransmitting, type OrcaHost } from '../src/main'
+import { formatStatusTransmitting, toSettingsValue, type OrcaHost } from '../src/main'
 import { LOG_DIR_NAME, LOG_PLUGIN_ID } from '../src/presence/log'
-import { extractPanelSnapshot } from '../src/presence/panel-html'
+import { snapshotLeaksSecrets, type PresencePanelSnapshot } from '../src/presence/panel-snapshot'
 import { PLUGIN_VERSION } from '../src/version'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -92,12 +92,8 @@ test('activate and deactivate exports are functions', async () => {
 test('activate registers commands and events; deactivate is safe to call', async () => {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-entry-'))
   const logFile = join(dir, 'plugin.log')
-  const panelFile = join(dir, 'index.html')
-  copyFileSync(join(root, 'panel/index.html'), panelFile)
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  const previousPanel = process.env.ORCA_PRESENCE_PANEL_HTML
   process.env.ORCA_PRESENCE_LOG_FILE = logFile
-  process.env.ORCA_PRESENCE_PANEL_HTML = panelFile
   const { default: activate, deactivate } = await import('../src/main')
   const commands: string[] = []
   const events: string[] = []
@@ -163,26 +159,12 @@ test('activate registers commands and events; deactivate is safe to call', async
   await handlers.get('presence.reload')?.()
   expect(hostLines.some((line) => line.includes('discord.reload'))).toBe(true)
   expect(notifications.some((body) => body.includes('reloaded'))).toBe(true)
-  const embedded = extractPanelSnapshot(readFileSync(panelFile, 'utf8')) as {
-    version: string
-    status: { detailLevel: string }
-    logs: string[]
-  }
-  expect(embedded.version).toBe(PLUGIN_VERSION)
-  expect(embedded.status.detailLevel).toBe('generic')
-  expect(embedded.logs.some((line) => line.includes('activate'))).toBe(true)
-  expect(JSON.stringify(embedded).includes('bridgeToken')).toBe(false)
   await deactivate()
   await deactivate()
   if (previous === undefined) {
     delete process.env.ORCA_PRESENCE_LOG_FILE
   } else {
     process.env.ORCA_PRESENCE_LOG_FILE = previous
-  }
-  if (previousPanel === undefined) {
-    delete process.env.ORCA_PRESENCE_PANEL_HTML
-  } else {
-    process.env.ORCA_PRESENCE_PANEL_HTML = previousPanel
   }
   rmSync(dir, { recursive: true, force: true })
 })
@@ -191,9 +173,7 @@ test('an invalid persisted Application ID is logged and toasted', async () => {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-appid-'))
   const logFile = join(dir, 'plugin.log')
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
   process.env.ORCA_PRESENCE_LOG_FILE = logFile
-  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
   const { default: activate, deactivate } = await import('../src/main')
   const hostLines: string[] = []
   const notifications: string[] = []
@@ -230,20 +210,13 @@ test('an invalid persisted Application ID is logged and toasted', async () => {
   } else {
     process.env.ORCA_PRESENCE_LOG_FILE = previous
   }
-  if (previousSkip === undefined) {
-    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
-  } else {
-    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
-  }
   rmSync(dir, { recursive: true, force: true })
 })
 
 test('configure fails fast on a junk Application ID and accepts two paneKeys', async () => {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-configure-'))
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
   process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
-  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
   const { default: activate, deactivate } = await import('../src/main')
   const handlers = new Map<string, (args?: Record<string, unknown>) => Promise<unknown>>()
   const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
@@ -327,20 +300,13 @@ test('configure fails fast on a junk Application ID and accepts two paneKeys', a
   } else {
     process.env.ORCA_PRESENCE_LOG_FILE = previous
   }
-  if (previousSkip === undefined) {
-    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
-  } else {
-    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
-  }
   rmSync(dir, { recursive: true, force: true })
 })
 
 test('workspace.changed null context publishes minimal snapshot', async () => {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-wschanged-'))
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
   process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
-  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
   const { default: activate, deactivate } = await import('../src/main')
   const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
   const handlers = new Map<string, () => Promise<unknown>>()
@@ -376,20 +342,13 @@ test('workspace.changed null context publishes minimal snapshot', async () => {
   } else {
     process.env.ORCA_PRESENCE_LOG_FILE = previous
   }
-  if (previousSkip === undefined) {
-    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
-  } else {
-    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
-  }
   rmSync(dir, { recursive: true, force: true })
 })
 
 test('activate succeeds when host.has returns false for everything', async () => {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-nohas-'))
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
   process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
-  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
   const { default: activate, deactivate } = await import('../src/main')
   const calls: string[] = []
   const orca: OrcaHost = {
@@ -412,20 +371,13 @@ test('activate succeeds when host.has returns false for everything', async () =>
   } else {
     process.env.ORCA_PRESENCE_LOG_FILE = previous
   }
-  if (previousSkip === undefined) {
-    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
-  } else {
-    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
-  }
   rmSync(dir, { recursive: true, force: true })
 })
 
 test('settings.onDidChange re-reads, applies once, and rebinds on a new Application ID', async () => {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-ondidchange-'))
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
   process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
-  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
   const { default: activate, deactivate } = await import('../src/main')
   const hostLines: string[] = []
   const sets: string[] = []
@@ -494,11 +446,6 @@ test('settings.onDidChange re-reads, applies once, and rebinds on a new Applicat
   } else {
     process.env.ORCA_PRESENCE_LOG_FILE = previous
   }
-  if (previousSkip === undefined) {
-    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
-  } else {
-    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
-  }
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -513,9 +460,7 @@ async function activateWithSecrets(options: {
 }) {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-token-'))
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
   process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
-  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
   const { default: activate, deactivate } = await import('../src/main')
   const handlers = new Map<string, (args?: Record<string, unknown>) => Promise<unknown>>()
   const notifications: string[] = []
@@ -578,11 +523,6 @@ async function activateWithSecrets(options: {
         delete process.env.ORCA_PRESENCE_LOG_FILE
       } else {
         process.env.ORCA_PRESENCE_LOG_FILE = previous
-      }
-      if (previousSkip === undefined) {
-        delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
-      } else {
-        process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
       }
       rmSync(dir, { recursive: true, force: true })
     }
@@ -681,6 +621,162 @@ test('a settings re-read does not wipe a secrets-held token', async () => {
   }
 })
 
+/**
+ * Activate against a fake host that offers `panels`. Captures the registered
+ * panel handlers, `panels.post` calls, and `settings.set` writes.
+ */
+async function activateWithPanels(settings: Record<string, unknown> = {}) {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-panel-'))
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const { default: activate, deactivate } = await import('../src/main')
+  const panelHandlers = new Map<string, (input: unknown) => unknown>()
+  const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
+  const posts: Array<{ name: string; payload: unknown }> = []
+  const sets: Array<{ key: string; value: unknown }> = []
+  const state = { stored: { ...settings } }
+  const orca: OrcaHost = {
+    log: () => {},
+    commands: { register: () => {} },
+    events: { on: (event, handler) => void eventHandlers.set(event, handler) },
+    host: {
+      has: () => false,
+      call: async (method, args) => {
+        if (method === 'settings.get') {
+          return { settings: state.stored }
+        }
+        if (method === 'settings.set') {
+          sets.push({ key: String(args?.key), value: args?.value })
+          state.stored = { ...state.stored, [String(args?.key)]: args?.value }
+        }
+        return null
+      }
+    },
+    panels: {
+      handle: (name, fn) => {
+        panelHandlers.set(name, fn)
+        return { dispose: () => void panelHandlers.delete(name) }
+      },
+      post: (name, payload) => void posts.push({ name, payload })
+    }
+  }
+  await activate(orca)
+  const snapshot = async () => (await panelHandlers.get('presence.snapshot')?.(undefined)) as PresencePanelSnapshot
+  const run = async (command: unknown) =>
+    (await panelHandlers.get('presence.run')?.({ command })) as { ok: boolean; message?: string }
+  return {
+    panelHandlers,
+    eventHandlers,
+    posts,
+    sets,
+    snapshot,
+    run,
+    async finish() {
+      await deactivate()
+      if (previous === undefined) {
+        delete process.env.ORCA_PRESENCE_LOG_FILE
+      } else {
+        process.env.ORCA_PRESENCE_LOG_FILE = previous
+      }
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+}
+
+test('presence.snapshot handler returns the plugin version and never the bridge token', async () => {
+  const run = await activateWithPanels({ bridgeEnabled: true, bridgeToken: 'panel-secret-token' })
+  const snapshot = await run.snapshot()
+  expect(snapshot.version).toBe(PLUGIN_VERSION)
+  expect(snapshotLeaksSecrets(snapshot, ['panel-secret-token'])).toBe(false)
+  expect(JSON.stringify(snapshot).includes('bridgeToken')).toBe(false)
+  await run.finish()
+})
+
+test('presence.run presence.toggle flips enabled and reports ok', async () => {
+  const run = await activateWithPanels()
+  expect((await run.snapshot()).fields.enabled).toBe(true)
+  const result = await run.run('presence.toggle')
+  expect(result.ok).toBe(true)
+  expect((await run.snapshot()).fields.enabled).toBe(false)
+  expect(run.sets).toEqual([{ key: 'enabled', value: false }])
+  await run.finish()
+})
+
+test('presence.run accepts every panel command id', async () => {
+  const run = await activateWithPanels()
+  for (const command of [
+    'presence.toggle',
+    'presence.reload',
+    'presence.clear',
+    'presence.status',
+    'presence.detail-level'
+  ]) {
+    expect((await run.run(command)).ok).toBe(true)
+  }
+  await run.finish()
+})
+
+test('presence.run rejects other commands with code invalid_params', async () => {
+  const run = await activateWithPanels()
+  for (const command of ['presence.configure', 'presence.toggle-branch', '', 42, undefined]) {
+    await expect(run.run(command)).rejects.toMatchObject({ code: 'invalid_params' })
+  }
+  await expect(
+    Promise.resolve().then(() => run.panelHandlers.get('presence.run')?.(null))
+  ).rejects.toMatchObject({ code: 'invalid_params' })
+  await run.finish()
+})
+
+test('an agent event posts presence.snapshot to the panel within the debounce window', async () => {
+  const run = await activateWithPanels()
+  run.posts.length = 0
+  await run.eventHandlers.get('agent.status.changed')?.({
+    workspaceId: 'wt',
+    paneKey: 'a',
+    terminalId: 't1',
+    state: 'working',
+    receivedAt: Date.now()
+  })
+  await new Promise((resolve) => setTimeout(resolve, 2_300))
+  const post = run.posts.find((entry) => entry.name === 'presence.snapshot')
+  expect(post).toBeDefined()
+  expect((post?.payload as PresencePanelSnapshot).version).toBe(PLUGIN_VERSION)
+  await run.finish()
+})
+
+test('persist never sends a null value for a declared settings key', async () => {
+  const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')) as {
+    contributes: { settings: Array<{ key: string }> }
+  }
+  const declared = new Set(manifest.contributes.settings.map((setting) => setting.key))
+  const run = await activateWithPanels({ machineLabel: 'Desk' })
+  await run.run('presence.toggle')
+  await run.run('presence.detail-level')
+  for (const entry of run.sets) {
+    expect(declared.has(entry.key)).toBe(true)
+    expect(entry.value).not.toBeNull()
+    expect(entry.value).not.toBeUndefined()
+  }
+  expect(toSettingsValue(null)).toBe('')
+  expect(toSettingsValue('Desk')).toBe('Desk')
+  expect(toSettingsValue(false)).toBe(false)
+  await run.finish()
+})
+
+test('panel/index.html uses the stock frame API with no network or legacy bridge', () => {
+  const html = readFileSync(join(root, 'panel/index.html'), 'utf8')
+  expect(html.includes('orca-panel-action')).toBe(false)
+  expect(/<script[^>]*\ssrc=/.test(html)).toBe(false)
+  expect(html.includes('http')).toBe(false)
+  expect(html.includes('presence-snapshot')).toBe(false)
+  expect(html.includes('plugin-version')).toBe(false)
+  expect(html.includes('window.orca')).toBe(true)
+  expect(html.includes('plugin.request')).toBe(true)
+  expect(html.includes('presence.run')).toBe(true)
+  expect(html.includes('Open this panel in the Orca desktop app to see live status.')).toBe(true)
+  expect(html.includes('--orca-background')).toBe(true)
+})
+
 test('formatStatusTransmitting includes lastActivity and truncates long JSON', () => {
   expect(formatStatusTransmitting(null)).toBe('transmitting=null')
   expect(formatStatusTransmitting({ details: 'Working in Orca' })).toBe(
@@ -701,7 +797,9 @@ test('shipped dist entry is Node-compatible ESM with the same exports', async ()
   expect(shipped.includes('presence.clear')).toBe(true)
   expect(shipped.includes('presence.configure')).toBe(true)
   expect(shipped.includes('discord.app_id_invalid')).toBe(true)
-  expect(shipped.includes('presence-snapshot') || shipped.includes('panel.snapshot')).toBe(true)
+  expect(shipped.includes('panel-html')).toBe(false)
+  expect(shipped.includes('presence.snapshot')).toBe(true)
+  expect(shipped.includes('presence.run')).toBe(true)
   const entry = new URL('../dist/main.js', import.meta.url).href
   const mod = (await import(entry)) as { default: unknown; deactivate: unknown }
   expect(typeof mod.default).toBe('function')

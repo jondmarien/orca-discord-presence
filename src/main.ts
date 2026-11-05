@@ -32,7 +32,6 @@ import { applyConfigure } from './presence/configure'
 import { createPresenceController, type PresenceController } from './presence/controller'
 import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
-import { resolvePanelHtmlPath, writePanelSnapshot } from './presence/panel-html'
 import { buildPresencePanelSnapshot } from './presence/panel-snapshot'
 import {
   normalizeSettings,
@@ -53,9 +52,9 @@ import { PLUGIN_VERSION } from './version'
 const HEARTBEAT_MS = 90_000
 
 /**
- * Coalesce panel HTML rewrites during a chatty agent event stream.
+ * Coalesce `panels.post` pushes during a chatty agent event stream.
  */
-const PANEL_WRITE_DEBOUNCE_MS = 2_000
+const PANEL_POST_DEBOUNCE_MS = 2_000
 
 /**
  * Quiet period before re-reading settings after `onDidChange`. Why: a multi-key
@@ -100,6 +99,42 @@ const TOGGLE_COMMANDS = {
  * Command id keys of {@link TOGGLE_COMMANDS}.
  */
 type ToggleCommandId = keyof typeof TOGGLE_COMMANDS
+
+/**
+ * Command ids the panel may run through `presence.run`. Anything else (the
+ * field toggles, `presence.configure`) stays palette-only.
+ */
+const PANEL_COMMANDS = [
+  'presence.toggle',
+  'presence.reload',
+  'presence.clear',
+  'presence.status',
+  'presence.detail-level'
+] as const
+
+/**
+ * Command id accepted by the `presence.run` panel handler.
+ */
+export type PanelCommandId = (typeof PANEL_COMMANDS)[number]
+
+/**
+ * Map a settings value to what `settings.set` accepts for a declared key.
+ *
+ * Why: `machineLabel` is declared `string` (default `""`) but held as `null`
+ * in memory when unset; the host validates writes against the declaration and
+ * would reject `null`.
+ */
+export function toSettingsValue(value: unknown): unknown {
+  return value === null ? '' : value
+}
+
+/**
+ * Error with a host-style `code`, thrown from panel handlers so the frame's
+ * `plugin.request` rejects with `invalid_params` instead of a bare message.
+ */
+function invalidParams(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: 'invalid_params' })
+}
 
 /**
  * Payload of the host `agent.status.changed` event used by this plugin.
@@ -183,8 +218,8 @@ let agentTable: ReturnType<typeof createAgentTable> | null = null
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
 let logRing: LogRing | null = null
-let panelWriteTimer: ReturnType<typeof setTimeout> | null = null
-let panelWriteNoted = false
+let panelPostTimer: ReturnType<typeof setTimeout> | null = null
+let panels: OrcaHost['panels'] | null = null
 let deactivated = false
 let settingsChangeTimer: ReturnType<typeof setTimeout> | null = null
 let settingsSubscription: { dispose(): void } | null = null
@@ -204,59 +239,57 @@ function publicConfigureView(settings: PresenceSettings) {
 }
 
 /**
- * Embed a redacted snapshot into `panel/index.html` when the install is
- * writable. Marketplace copies are often immutable — failures are silent
- * after the first debug line.
+ * Redacted panel snapshot for the current controller state, or `null` before
+ * `activate` finishes wiring (or after `deactivate`).
+ */
+function currentPanelSnapshot() {
+  if (!controller || !logRing) {
+    return null
+  }
+  return buildPresencePanelSnapshot({
+    version: PLUGIN_VERSION,
+    status: controller.status(),
+    settings: controller.settings(),
+    logs: logRing.lines()
+  })
+}
+
+/**
+ * Push a redacted snapshot to the open panel with `panels.post`.
+ *
+ * Why: replaces the old self-rewriting `panel/index.html`. `debounced` coalesces
+ * a chatty agent stream into one post per quiet window; `immediate` flushes now
+ * (settings changes, palette commands). A missing `panels` (older host, browser
+ * client) is a no-op and a post failure never takes down presence.
  */
 function publishPanelSnapshot(mode: 'immediate' | 'debounced') {
   const flush = () => {
-    panelWriteTimer = null
-    if (!controller || !logRing) {
+    panelPostTimer = null
+    const snapshot = currentPanelSnapshot()
+    if (!snapshot || !panels) {
       return
     }
-    const snapshot = buildPresencePanelSnapshot({
-      version: PLUGIN_VERSION,
-      status: controller.status(),
-      settings: controller.settings(),
-      logs: logRing.lines()
-    })
-    const target = resolvePanelHtmlPath(process.env, import.meta.url)
-    if (!target) {
-      return
-    }
-    const result = writePanelSnapshot(target, snapshot)
-    if (result.ok) {
-      diagnostics?.line('debug', 'panel.snapshot_written', { lines: snapshot.logs.length })
-      return
-    }
-    if (!panelWriteNoted) {
-      panelWriteNoted = true
-      diagnostics?.line('debug', 'panel.snapshot_skipped', { reason: result.reason })
+    try {
+      panels.post('presence.snapshot', snapshot)
+    } catch (error) {
+      diagnostics?.line('debug', 'panel.post_failed', {
+        reason: error instanceof Error ? error.message : String(error)
+      })
     }
   }
   if (mode === 'immediate') {
-    if (panelWriteTimer) {
-      clearTimeout(panelWriteTimer)
-      panelWriteTimer = null
+    if (panelPostTimer) {
+      clearTimeout(panelPostTimer)
+      panelPostTimer = null
     }
-    try {
-      flush()
-    } catch {
-      // Panel rewrite must never take down presence.
-    }
+    flush()
     return
   }
-  if (panelWriteTimer) {
+  if (panelPostTimer) {
     return
   }
-  panelWriteTimer = setTimeout(() => {
-    try {
-      flush()
-    } catch {
-      // Same as immediate: ignore rewrite errors.
-    }
-  }, PANEL_WRITE_DEBOUNCE_MS)
-  panelWriteTimer.unref?.()
+  panelPostTimer = setTimeout(flush, PANEL_POST_DEBOUNCE_MS)
+  panelPostTimer.unref?.()
 }
 
 /**
@@ -294,7 +327,7 @@ export default async function activate(orca: OrcaHost) {
     platform: process.platform
   })
   logRing = createLogRing()
-  panelWriteNoted = false
+  panels = orca.panels ?? null
   diagnostics = createDiagnosticSink({
     hostLog: (message) => orca.log(message),
     filePath: logFile,
@@ -394,7 +427,7 @@ export default async function activate(orca: OrcaHost) {
               tokenStore = store
               tokenWarnings = store === 'settings' ? [SECRETS_UNAVAILABLE_WARNING] : []
             })
-          : orca.host.call('settings.set', { key, value })
+          : orca.host.call('settings.set', { key, value: toSettingsValue(value) })
       await write.catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error)
         orca.log(`failed to persist ${key}: ${message}`)
@@ -470,13 +503,19 @@ export default async function activate(orca: OrcaHost) {
     void refresh()
   }
 
-  orca.commands.register('presence.toggle', async () => {
+  const paletteHandlers = new Map<string, () => Promise<unknown>>()
+  const registerPalette = (id: string, handler: () => Promise<unknown>) => {
+    paletteHandlers.set(id, handler)
+    orca.commands.register(id, handler)
+  }
+
+  registerPalette('presence.toggle', async () => {
     await persist({ ...settings, enabled: !settings.enabled })
     await refresh()
     return { enabled: settings.enabled }
   })
 
-  orca.commands.register('presence.detail-level', async () => {
+  registerPalette('presence.detail-level', async () => {
     await persist({ ...settings, detailLevel: nextDetailLevel(settings.detailLevel) })
     await refresh()
     return { detailLevel: settings.detailLevel }
@@ -486,14 +525,14 @@ export default async function activate(orca: OrcaHost) {
     ToggleCommandId,
     (typeof TOGGLE_COMMANDS)[ToggleCommandId]
   ][]) {
-    orca.commands.register(commandId, async () => {
+    registerPalette(commandId, async () => {
       await persist(toggleField(settings, field))
       await refresh()
       return { [field]: settings[field] }
     })
   }
 
-  orca.commands.register('presence.status', async () => {
+  registerPalette('presence.status', async () => {
     await refresh(undefined, { force: true, resume: true })
     const base = controller?.status()
     const status = base
@@ -523,7 +562,7 @@ export default async function activate(orca: OrcaHost) {
     return status
   })
 
-  orca.commands.register('presence.reload', async () => {
+  registerPalette('presence.reload', async () => {
     await refresh()
     diagnostics?.line('info', 'discord.reload_command')
     await controller?.reload()
@@ -543,7 +582,7 @@ export default async function activate(orca: OrcaHost) {
     return status
   })
 
-  orca.commands.register('presence.clear', async () => {
+  registerPalette('presence.clear', async () => {
     diagnostics?.line('info', 'discord.clear_command')
     await controller?.clear()
     const status = controller?.status()
@@ -591,6 +630,23 @@ export default async function activate(orca: OrcaHost) {
       body: `updated ${result.changed.join(', ')}`
     })
     return { ok: true, changed: result.changed, ...view }
+  })
+
+  // Why: the panel talks to the worker through `plugin.request`. Guarded:
+  // older hosts and browser clients have no `orca.panels`, and the panel shows
+  // its static "needs Orca desktop" note there.
+  panels?.handle('presence.snapshot', () => currentPanelSnapshot())
+  panels?.handle('presence.run', async (input) => {
+    const command = (input as { command?: unknown } | null | undefined)?.command
+    if (typeof command !== 'string' || !(PANEL_COMMANDS as readonly string[]).includes(command)) {
+      throw invalidParams(`presence.run command must be one of: ${PANEL_COMMANDS.join(', ')}`)
+    }
+    try {
+      await paletteHandlers.get(command)?.()
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+    }
   })
 
   orca.events.on('agent.status.changed', async (payload) => {
@@ -684,10 +740,11 @@ export async function deactivate() {
     clearInterval(heartbeat)
     heartbeat = null
   }
-  if (panelWriteTimer) {
-    clearTimeout(panelWriteTimer)
-    panelWriteTimer = null
+  if (panelPostTimer) {
+    clearTimeout(panelPostTimer)
+    panelPostTimer = null
   }
+  panels = null
   if (settingsChangeTimer) {
     clearTimeout(settingsChangeTimer)
     settingsChangeTimer = null

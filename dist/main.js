@@ -1532,84 +1532,6 @@ function createLogRing(capacity = PANEL_LOG_RING_SIZE) {
   };
 }
 
-// src/presence/panel-html.ts
-import { readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
-// src/version.ts
-var PLUGIN_VERSION = "1.0.0";
-
-// src/presence/panel-html.ts
-var PANEL_HTML_ENV = "ORCA_PRESENCE_PANEL_HTML";
-var PANEL_WRITE_SKIP_ENV = "ORCA_PRESENCE_SKIP_PANEL_WRITE";
-var PANEL_SNAPSHOT_SCRIPT_ID = "presence-snapshot";
-var PANEL_VERSION_SCRIPT_ID = "plugin-version";
-var SNAPSHOT_SCRIPT_RE = /<script id="presence-snapshot" type="application\/json">[\s\S]*?<\/script>/;
-var VERSION_SCRIPT_RE = /<script id="plugin-version" type="application\/json">[\s\S]*?<\/script>/;
-var VERSION_BADGE_RE = /(<[^>]*\bid="version-badge"[^>]*>)[\s\S]*?(<\/span>)/;
-var ABOUT_VERSION_RE = /(<[^>]*\bid="about-version"[^>]*>)[\s\S]*?(<\/dd>)/;
-function resolvePanelHtmlPath(env, metaUrl) {
-  const skip = env[PANEL_WRITE_SKIP_ENV];
-  if (skip === "1" || skip === "true") {
-    return null;
-  }
-  const override = env[PANEL_HTML_ENV];
-  if (typeof override === "string" && override.trim()) {
-    return override.trim();
-  }
-  try {
-    return fileURLToPath(new URL("../panel/index.html", metaUrl));
-  } catch {
-    return null;
-  }
-}
-function serializePanelSnapshot(snapshot) {
-  return JSON.stringify(snapshot).replace(/</g, "\\u003c");
-}
-function stampPanelVersion(html, version) {
-  const script = `<script id="${PANEL_VERSION_SCRIPT_ID}" type="application/json">${JSON.stringify(version)}</script>`;
-  let next = html;
-  if (VERSION_SCRIPT_RE.test(next)) {
-    next = next.replace(VERSION_SCRIPT_RE, script);
-  } else if (SNAPSHOT_SCRIPT_RE.test(next)) {
-    next = next.replace(SNAPSHOT_SCRIPT_RE, (match) => `${match}
-    ${script}`);
-  }
-  next = next.replace(VERSION_BADGE_RE, `$1v${version}$2`);
-  next = next.replace(ABOUT_VERSION_RE, `$1${version}$2`);
-  return next;
-}
-function embedPanelSnapshot(html, snapshot) {
-  if (!SNAPSHOT_SCRIPT_RE.test(html)) {
-    throw new Error("panel snapshot marker missing");
-  }
-  const json = serializePanelSnapshot(snapshot);
-  const replaced = html.replace(SNAPSHOT_SCRIPT_RE, `<script id="${PANEL_SNAPSHOT_SCRIPT_ID}" type="application/json">${json}</script>`);
-  return stampPanelVersion(replaced, snapshot?.version ?? PLUGIN_VERSION);
-}
-function writePanelSnapshot(filePath, snapshot) {
-  try {
-    const current = readFileSync(filePath, "utf8");
-    const next = embedPanelSnapshot(current, snapshot);
-    if (next !== current) {
-      writeFileSync(filePath, next, "utf8");
-    }
-    return { ok: true };
-  } catch (error) {
-    const err = error;
-    if (err?.code === "ENOENT") {
-      return { ok: false, reason: "missing" };
-    }
-    if (err?.code === "EACCES" || err?.code === "EROFS" || err?.code === "EPERM") {
-      return { ok: false, reason: "unwritable" };
-    }
-    if (error instanceof Error && error.message.includes("snapshot marker")) {
-      return { ok: false, reason: "no-marker" };
-    }
-    return { ok: false, reason: error instanceof Error ? error.message : "error" };
-  }
-}
-
 // src/presence/panel-snapshot.ts
 var CONVENTIONAL_LOG_HINT = `~/.local/state/${LOG_DIR_NAME}/${LOG_FILE_NAME}`;
 var SECRET_ASSIGNMENT_RE = /\b(token|bridgetoken|authorization|password|secret)=(?!\*\*\*)(\S+)/gi;
@@ -1657,9 +1579,12 @@ function buildPresencePanelSnapshot(input) {
   };
 }
 
+// src/version.ts
+var PLUGIN_VERSION = "1.0.0";
+
 // src/main.ts
 var HEARTBEAT_MS = 90000;
-var PANEL_WRITE_DEBOUNCE_MS = 2000;
+var PANEL_POST_DEBOUNCE_MS = 2000;
 var SETTINGS_CHANGE_DEBOUNCE_MS = 250;
 var TRANSMITTING_TOAST_MAX = 180;
 function formatStatusTransmitting(activity) {
@@ -1680,13 +1605,26 @@ var TOGGLE_COMMANDS = {
   "presence.toggle-open-button": "showOpenButton",
   "presence.toggle-agent-count": "showAgentCount"
 };
+var PANEL_COMMANDS = [
+  "presence.toggle",
+  "presence.reload",
+  "presence.clear",
+  "presence.status",
+  "presence.detail-level"
+];
+function toSettingsValue(value) {
+  return value === null ? "" : value;
+}
+function invalidParams(message) {
+  return Object.assign(new Error(message), { code: "invalid_params" });
+}
 var controller = null;
 var agentTable = null;
 var heartbeat = null;
 var diagnostics = null;
 var logRing = null;
-var panelWriteTimer = null;
-var panelWriteNoted = false;
+var panelPostTimer = null;
+var panels = null;
 var deactivated = false;
 var settingsChangeTimer = null;
 var settingsSubscription = null;
@@ -1700,51 +1638,45 @@ function publicConfigureView(settings) {
     showAgentCount: settings.showAgentCount
   };
 }
+function currentPanelSnapshot() {
+  if (!controller || !logRing) {
+    return null;
+  }
+  return buildPresencePanelSnapshot({
+    version: PLUGIN_VERSION,
+    status: controller.status(),
+    settings: controller.settings(),
+    logs: logRing.lines()
+  });
+}
 function publishPanelSnapshot(mode) {
   const flush = () => {
-    panelWriteTimer = null;
-    if (!controller || !logRing) {
+    panelPostTimer = null;
+    const snapshot = currentPanelSnapshot();
+    if (!snapshot || !panels) {
       return;
     }
-    const snapshot = buildPresencePanelSnapshot({
-      version: PLUGIN_VERSION,
-      status: controller.status(),
-      settings: controller.settings(),
-      logs: logRing.lines()
-    });
-    const target = resolvePanelHtmlPath(process.env, import.meta.url);
-    if (!target) {
-      return;
-    }
-    const result = writePanelSnapshot(target, snapshot);
-    if (result.ok) {
-      diagnostics?.line("debug", "panel.snapshot_written", { lines: snapshot.logs.length });
-      return;
-    }
-    if (!panelWriteNoted) {
-      panelWriteNoted = true;
-      diagnostics?.line("debug", "panel.snapshot_skipped", { reason: result.reason });
+    try {
+      panels.post("presence.snapshot", snapshot);
+    } catch (error) {
+      diagnostics?.line("debug", "panel.post_failed", {
+        reason: error instanceof Error ? error.message : String(error)
+      });
     }
   };
   if (mode === "immediate") {
-    if (panelWriteTimer) {
-      clearTimeout(panelWriteTimer);
-      panelWriteTimer = null;
+    if (panelPostTimer) {
+      clearTimeout(panelPostTimer);
+      panelPostTimer = null;
     }
-    try {
-      flush();
-    } catch {}
+    flush();
     return;
   }
-  if (panelWriteTimer) {
+  if (panelPostTimer) {
     return;
   }
-  panelWriteTimer = setTimeout(() => {
-    try {
-      flush();
-    } catch {}
-  }, PANEL_WRITE_DEBOUNCE_MS);
-  panelWriteTimer.unref?.();
+  panelPostTimer = setTimeout(flush, PANEL_POST_DEBOUNCE_MS);
+  panelPostTimer.unref?.();
 }
 async function activate(orca) {
   deactivated = false;
@@ -1762,7 +1694,7 @@ async function activate(orca) {
     platform: process.platform
   });
   logRing = createLogRing();
-  panelWriteNoted = false;
+  panels = orca.panels ?? null;
   diagnostics = createDiagnosticSink({
     hostLog: (message) => orca.log(message),
     filePath: logFile,
@@ -1837,7 +1769,7 @@ async function activate(orca) {
       const write = key === "bridgeToken" ? saveBridgeToken(orca.host, String(value)).then((store) => {
         tokenStore = store;
         tokenWarnings = store === "settings" ? [SECRETS_UNAVAILABLE_WARNING] : [];
-      }) : orca.host.call("settings.set", { key, value });
+      }) : orca.host.call("settings.set", { key, value: toSettingsValue(value) });
       await write.catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         orca.log(`failed to persist ${key}: ${message}`);
@@ -1890,24 +1822,29 @@ async function activate(orca) {
   pushAgentRefresh = () => {
     refresh();
   };
-  orca.commands.register("presence.toggle", async () => {
+  const paletteHandlers = new Map;
+  const registerPalette = (id, handler) => {
+    paletteHandlers.set(id, handler);
+    orca.commands.register(id, handler);
+  };
+  registerPalette("presence.toggle", async () => {
     await persist({ ...settings, enabled: !settings.enabled });
     await refresh();
     return { enabled: settings.enabled };
   });
-  orca.commands.register("presence.detail-level", async () => {
+  registerPalette("presence.detail-level", async () => {
     await persist({ ...settings, detailLevel: nextDetailLevel(settings.detailLevel) });
     await refresh();
     return { detailLevel: settings.detailLevel };
   });
   for (const [commandId, field] of Object.entries(TOGGLE_COMMANDS)) {
-    orca.commands.register(commandId, async () => {
+    registerPalette(commandId, async () => {
       await persist(toggleField(settings, field));
       await refresh();
       return { [field]: settings[field] };
     });
   }
-  orca.commands.register("presence.status", async () => {
+  registerPalette("presence.status", async () => {
     await refresh(undefined, { force: true, resume: true });
     const base = controller?.status();
     const status = base ? { ...base, bridgeTokenStore: tokenStore, ...tokenWarnings.length > 0 ? { warnings: tokenWarnings } : {} } : undefined;
@@ -1934,7 +1871,7 @@ async function activate(orca) {
     publishPanelSnapshot("immediate");
     return status;
   });
-  orca.commands.register("presence.reload", async () => {
+  registerPalette("presence.reload", async () => {
     await refresh();
     diagnostics?.line("info", "discord.reload_command");
     await controller?.reload();
@@ -1953,7 +1890,7 @@ async function activate(orca) {
     publishPanelSnapshot("immediate");
     return status;
   });
-  orca.commands.register("presence.clear", async () => {
+  registerPalette("presence.clear", async () => {
     diagnostics?.line("info", "discord.clear_command");
     await controller?.clear();
     const status = controller?.status();
@@ -1999,6 +1936,19 @@ async function activate(orca) {
       body: `updated ${result.changed.join(", ")}`
     });
     return { ok: true, changed: result.changed, ...view };
+  });
+  panels?.handle("presence.snapshot", () => currentPanelSnapshot());
+  panels?.handle("presence.run", async (input) => {
+    const command = input?.command;
+    if (typeof command !== "string" || !PANEL_COMMANDS.includes(command)) {
+      throw invalidParams(`presence.run command must be one of: ${PANEL_COMMANDS.join(", ")}`);
+    }
+    try {
+      await paletteHandlers.get(command)?.();
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
   });
   orca.events.on("agent.status.changed", async (payload) => {
     const parsed = parseAgentStatusPayload(payload, Date.now());
@@ -2064,10 +2014,11 @@ async function deactivate() {
     clearInterval(heartbeat);
     heartbeat = null;
   }
-  if (panelWriteTimer) {
-    clearTimeout(panelWriteTimer);
-    panelWriteTimer = null;
+  if (panelPostTimer) {
+    clearTimeout(panelPostTimer);
+    panelPostTimer = null;
   }
+  panels = null;
   if (settingsChangeTimer) {
     clearTimeout(settingsChangeTimer);
     settingsChangeTimer = null;
@@ -2085,5 +2036,6 @@ async function deactivate() {
 export {
   deactivate,
   activate as default,
-  formatStatusTransmitting
+  formatStatusTransmitting,
+  toSettingsValue
 };

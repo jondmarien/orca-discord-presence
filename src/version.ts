@@ -1,9 +1,7 @@
 /**
  * Single source of truth for the plugin semver shown in `orca.log`, the
- * diagnostics panel snapshot / `#plugin-version` shell, and activate
- * diagnostics. Keep in lockstep with `package.json` and `orca-plugin.json`.
- * `stampPanelVersion` writes this into `panel/index.html` — do not hand-edit
- * the badge or About fallbacks.
+ * `presence.snapshot` the panel renders, and activate diagnostics. Keep in
+ * lockstep with `package.json` and `orca-plugin.json`.
  *
  * @module version
  * @author Jonathan Marien
