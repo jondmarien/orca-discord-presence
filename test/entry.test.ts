@@ -837,14 +837,16 @@ test('an agent started after activation gets its kind from agents.list', async (
     }
   }
   await activate(orca)
-  listed = [{ terminalId: 't-late', title: null, agent: 'claude', state: 'working', stateStartedAt: Date.now() }]
   const event = { workspaceId: 'w1', paneKey: 'tab:leaf', terminalId: 't-late', state: 'working', receivedAt: Date.now() }
+  // Why: the first event can beat agents.list; the next event must retry.
+  await eventHandlers.get('agent.status.changed')?.(event)
+  listed = [{ terminalId: 't-late', title: null, agent: 'claude', state: 'working', stateStartedAt: Date.now() }]
   await eventHandlers.get('agent.status.changed')?.(event)
   await eventHandlers.get('agent.status.changed')?.(event)
   const snapshot = (await panelHandlers.get('presence.snapshot')?.(undefined)) as { agents: Array<{ kind: string }> }
   expect(snapshot.agents.map((row) => row.kind)).toEqual(['claude'])
-  // Why: one lookup per new terminal, not one per event.
-  expect(listCalls).toBe(2)
+  // Why: activate + one miss + one hit; once the kind is known, no more lookups.
+  expect(listCalls).toBe(3)
   await deactivate()
   if (previous === undefined) {
     delete process.env.ORCA_PRESENCE_LOG_FILE

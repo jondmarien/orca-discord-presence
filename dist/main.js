@@ -2079,24 +2079,30 @@ async function activate(orca) {
       return { ok: false, message: error instanceof Error ? error.message : String(error) };
     }
   });
-  const kindLookedUp = new Set;
+  const KIND_LOOKUP_ATTEMPTS = 5;
+  const kindAttempts = new Map;
+  const kindKnown = new Set;
   async function syncAgentsFromList() {
     if (!orca.host.has("agents.list")) {
       return;
     }
     const listed = await orca.host.call("agents.list").catch(() => null);
     for (const seeded of parseAgentsList(listed, Date.now())) {
-      if (seeded.terminalId) {
-        kindLookedUp.add(seeded.terminalId);
+      if (seeded.terminalId && seeded.kind) {
+        kindKnown.add(seeded.terminalId);
       }
       agentTable?.upsert(seeded);
     }
   }
   orca.events.on("agent.status.changed", async (payload) => {
     const parsed = parseAgentStatusPayload(payload, Date.now());
-    if (parsed?.terminalId && !kindLookedUp.has(parsed.terminalId)) {
-      kindLookedUp.add(parsed.terminalId);
-      await syncAgentsFromList();
+    const terminalId = parsed?.terminalId;
+    if (terminalId && !kindKnown.has(terminalId)) {
+      const attempts = kindAttempts.get(terminalId) ?? 0;
+      if (attempts < KIND_LOOKUP_ATTEMPTS) {
+        kindAttempts.set(terminalId, attempts + 1);
+        await syncAgentsFromList();
+      }
     }
     await refresh(parsed ?? undefined);
   });
@@ -2110,6 +2116,7 @@ async function activate(orca) {
   orca.events.on("workspace.changed", async (payload) => {
     const raw = payload?.context;
     const context = raw && typeof raw === "object" ? raw : null;
+    await syncAgentsFromList();
     await refresh(undefined, { context });
   });
   await syncAgentsFromList();

@@ -660,19 +660,23 @@ export default async function activate(orca: OrcaHost) {
    * Upsert every agent `agents.list` reports, which is the only source of an
    * agent's kind (`claude`, `codex`, …).
    *
-   * Why: `agent.status.changed` carries no kind, so an agent started after
-   * activation would show as `agent` forever. Each terminal is looked up once.
-   * Guarded: older Orca and browser clients lack `agents.list`.
+   * Why: `agent.status.changed` carries no kind, and `agents.list` covers only
+   * the focused workspace and can answer before a brand-new agent is listed.
+   * So a terminal whose kind is still unknown is looked up again on its next
+   * events (at most {@link KIND_LOOKUP_ATTEMPTS} times), and every focus change
+   * re-syncs. Guarded: older Orca and browser clients lack `agents.list`.
    */
-  const kindLookedUp = new Set<string>()
+  const KIND_LOOKUP_ATTEMPTS = 5
+  const kindAttempts = new Map<string, number>()
+  const kindKnown = new Set<string>()
   async function syncAgentsFromList() {
     if (!orca.host.has('agents.list')) {
       return
     }
     const listed = await orca.host.call('agents.list').catch(() => null)
     for (const seeded of parseAgentsList(listed, Date.now())) {
-      if (seeded.terminalId) {
-        kindLookedUp.add(seeded.terminalId)
+      if (seeded.terminalId && seeded.kind) {
+        kindKnown.add(seeded.terminalId)
       }
       agentTable?.upsert(seeded)
     }
@@ -680,9 +684,13 @@ export default async function activate(orca: OrcaHost) {
 
   orca.events.on('agent.status.changed', async (payload) => {
     const parsed = parseAgentStatusPayload(payload, Date.now())
-    if (parsed?.terminalId && !kindLookedUp.has(parsed.terminalId)) {
-      kindLookedUp.add(parsed.terminalId)
-      await syncAgentsFromList()
+    const terminalId = parsed?.terminalId
+    if (terminalId && !kindKnown.has(terminalId)) {
+      const attempts = kindAttempts.get(terminalId) ?? 0
+      if (attempts < KIND_LOOKUP_ATTEMPTS) {
+        kindAttempts.set(terminalId, attempts + 1)
+        await syncAgentsFromList()
+      }
     }
     await refresh(parsed ?? undefined)
   })
@@ -696,6 +704,9 @@ export default async function activate(orca: OrcaHost) {
   orca.events.on('workspace.changed', async (payload) => {
     const raw = (payload as { context?: unknown } | null | undefined)?.context
     const context = raw && typeof raw === 'object' ? (raw as WorkspaceContext) : null
+    // Why: agents.list answers for the focused workspace only, so a focus change
+    // is when kinds and titles of that workspace's agents become readable.
+    await syncAgentsFromList()
     await refresh(undefined, { context })
   })
 
