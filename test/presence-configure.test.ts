@@ -77,3 +77,25 @@ test('wrong types fail fast', () => {
   expect(applyConfigure(DEFAULT_SETTINGS, { showOpenButton: 'yes' }).ok).toBe(false)
   expect(applyConfigure(DEFAULT_SETTINGS, 'nope').ok).toBe(false)
 })
+
+test('bridgeToken is trimmed, applied and reported as changed', () => {
+  const result = applyConfigure(DEFAULT_SETTINGS, { bridgeToken: '  tok  ' })
+  expect(result.ok).toBe(true)
+  if (result.ok) {
+    expect(result.settings.bridgeToken).toBe('tok')
+    expect(result.changed).toEqual(['bridgeToken'])
+  }
+})
+
+test('an empty bridgeToken clears it; an unchanged one is not a change', () => {
+  const current = { ...DEFAULT_SETTINGS, bridgeToken: 'tok' }
+  const cleared = applyConfigure(current, { bridgeToken: '' })
+  expect(cleared.ok && cleared.settings.bridgeToken).toBe('')
+  const same = applyConfigure(current, { bridgeToken: 'tok' })
+  expect(same.ok && same.changed).toEqual([])
+})
+
+test('a non-string bridgeToken fails fast', () => {
+  const result = applyConfigure(DEFAULT_SETTINGS, { bridgeToken: 42 })
+  expect(result.ok).toBe(false)
+})

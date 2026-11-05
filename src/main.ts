@@ -22,6 +22,12 @@ import {
   parseWorkspaceRemovedId
 } from './presence/agents'
 import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
+import {
+  migrateSettingsToken,
+  saveBridgeToken,
+  SECRETS_UNAVAILABLE_WARNING,
+  type TokenStore
+} from './presence/bridge-token'
 import { applyConfigure } from './presence/configure'
 import { createPresenceController, type PresenceController } from './presence/controller'
 import { createLogRing, type LogRing } from './presence/log-ring'
@@ -156,7 +162,8 @@ export type OrcaHost = {
     has: (method: string) => boolean
     /**
      * Invoke a host method. This plugin uses `settings.get`, `settings.set`,
-     * `workspace.readContext`, `agents.list`, and `notifications.show`.
+     * `workspace.readContext`, `agents.list`, `notifications.show`, and the
+     * `secrets.*` methods (bridge token).
      */
     call: (method: string, args?: Record<string, unknown>) => Promise<unknown>
   }
@@ -270,7 +277,16 @@ export default async function activate(orca: OrcaHost) {
       ? (stored.settings as Record<string, unknown>)
       : {}
   const appId = inspectApplicationId(rawSettings.applicationId, SHIPPED_APPLICATION_ID)
-  let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env)
+  const storedSettings = normalizeSettings(stored?.settings)
+  // Why: the bridge token lives in secrets when the host has an OS keyring, so
+  // `settings.get` alone would miss it. Merge it in before the env overlay.
+  const loadedToken = await migrateSettingsToken(orca.host, storedSettings.bridgeToken)
+  let tokenStore: TokenStore = loadedToken.store
+  let tokenWarnings: string[] = loadedToken.warning ? [loadedToken.warning] : []
+  let settings = applyBridgeEnvOverrides(
+    { ...storedSettings, bridgeToken: loadedToken.token },
+    process.env
+  )
 
   const logFile = resolveLogFilePath(process.env, {
     homedir: os.homedir(),
@@ -361,9 +377,10 @@ export default async function activate(orca: OrcaHost) {
    * Write changed settings fields through `settings.set`, then apply them.
    *
    * Why: unchanged keys are skipped so a toggle is one write, not sixteen, and
-   * `bridgeToken` is only written when it actually changed (Task 5 moves it to
-   * secrets). Writes echo back through `onDidChange`; the re-read then equals
-   * `settings`, so the echo applies nothing new.
+   * `bridgeToken` is only written when it actually changed, and then through
+   * `saveBridgeToken` (secrets when available), never straight to `settings.set`.
+   * Writes echo back through `onDidChange`; the re-read then equals `settings`,
+   * so the echo applies nothing new.
    */
   async function persist(nextSettings: PresenceSettings) {
     const previous = settings
@@ -371,7 +388,14 @@ export default async function activate(orca: OrcaHost) {
       if (previous[key as keyof PresenceSettings] === value) {
         continue
       }
-      await orca.host.call('settings.set', { key, value }).catch((error: unknown) => {
+      const write =
+        key === 'bridgeToken'
+          ? saveBridgeToken(orca.host, String(value)).then((store) => {
+              tokenStore = store
+              tokenWarnings = store === 'settings' ? [SECRETS_UNAVAILABLE_WARNING] : []
+            })
+          : orca.host.call('settings.set', { key, value })
+      await write.catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error)
         orca.log(`failed to persist ${key}: ${message}`)
       })
@@ -471,15 +495,21 @@ export default async function activate(orca: OrcaHost) {
 
   orca.commands.register('presence.status', async () => {
     await refresh(undefined, { force: true, resume: true })
-    const status = controller?.status()
+    const base = controller?.status()
+    const status = base
+      ? { ...base, bridgeTokenStore: tokenStore, ...(tokenWarnings.length > 0 ? { warnings: tokenWarnings } : {}) }
+      : undefined
     const file = status?.logFile ?? diagnostics?.filePath ?? ''
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null)
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel} debug=${settings.debugLogging}`
+    const warned = tokenWarnings.length > 0 ? ` warnings=${tokenWarnings.join('; ')}` : ''
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} tokenStore=${tokenStore} detail=${status?.detailLevel} debug=${settings.debugLogging}${warned}`
     diagnostics?.line('info', 'status', {
       enabled: status?.enabled,
       connected: status?.connected,
       sink: status?.sink,
       bridge: status?.bridgeEnabled,
+      tokenStore,
+      warnings: tokenWarnings,
       detail: status?.detailLevel,
       debug: settings.debugLogging,
       file,
@@ -544,7 +574,7 @@ export default async function activate(orca: OrcaHost) {
     if (result.changed.length === 0) {
       const view = publicConfigureView(settings)
       const hint =
-        'Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.'
+        'Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount, bridgeToken }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.'
       const body = `applicationId=${view.shippedApplicationId ? 'shipped' : view.applicationId} openUrl=${view.openUrl || '(empty)'} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} label=${view.openButtonLabel}`
       await orca.host.call('notifications.show', {
         title: 'Rich Presence for Discord',
@@ -608,7 +638,16 @@ export default async function activate(orca: OrcaHost) {
           if (deactivated || !latest) {
             return
           }
-          const next = applyBridgeEnvOverrides(normalizeSettings(latest.settings), process.env)
+          // Why: a settings re-read carries no secrets-held token; merge it
+          // back so an unrelated edit never wipes it before the env overlay.
+          const reread = normalizeSettings(latest.settings)
+          const reloadedToken = await migrateSettingsToken(orca.host, reread.bridgeToken)
+          tokenStore = reloadedToken.store
+          tokenWarnings = reloadedToken.warning ? [reloadedToken.warning] : []
+          const next = applyBridgeEnvOverrides(
+            { ...reread, bridgeToken: reloadedToken.token },
+            process.env
+          )
           if (JSON.stringify(next) !== JSON.stringify(settings)) {
             await applySettings(next)
           }

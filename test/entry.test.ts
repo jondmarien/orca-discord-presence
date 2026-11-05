@@ -502,6 +502,185 @@ test('settings.onDidChange re-reads, applies once, and rebinds on a new Applicat
   rmSync(dir, { recursive: true, force: true })
 })
 
+/**
+ * Activate against a fake host with a configurable keyring. Returns handles to
+ * the calls the worker made so token routing can be asserted.
+ */
+async function activateWithSecrets(options: {
+  protection: 'os-keyring' | 'unavailable'
+  settings: Record<string, unknown>
+  secret?: string | null
+}) {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-token-'))
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
+  const { default: activate, deactivate } = await import('../src/main')
+  const handlers = new Map<string, (args?: Record<string, unknown>) => Promise<unknown>>()
+  const notifications: string[] = []
+  const settingsSets: Array<{ key: string; value: unknown }> = []
+  const secretSets: Array<{ key: string; value: unknown }> = []
+  const state = { stored: { ...options.settings }, secret: options.secret ?? null }
+  let feed: ((e: { key: string }) => void) | null = null
+  const has = (method: string) => method.startsWith('secrets.')
+  const orca: OrcaHost = {
+    log: () => {},
+    commands: { register: (id, handler) => handlers.set(id, handler) },
+    events: { on: () => {} },
+    host: {
+      has,
+      call: async (method, args) => {
+        switch (method) {
+          case 'settings.get':
+            return { settings: state.stored }
+          case 'settings.set':
+            settingsSets.push({ key: String(args?.key), value: args?.value })
+            state.stored = { ...state.stored, [String(args?.key)]: args?.value }
+            return null
+          case 'secrets.protection':
+            return { status: options.protection }
+          case 'secrets.get':
+            return { value: state.secret }
+          case 'secrets.set':
+            if (options.protection === 'unavailable') {
+              throw new Error('secrets unavailable')
+            }
+            secretSets.push({ key: String(args?.key), value: args?.value })
+            state.secret = String(args?.value)
+            return null
+          case 'notifications.show':
+            notifications.push(String(args?.body ?? ''))
+            return null
+          default:
+            return null
+        }
+      }
+    },
+    settings: {
+      onDidChange: (handler) => {
+        feed = handler
+        return { dispose: () => {} }
+      }
+    }
+  }
+  await activate(orca)
+  return {
+    handlers,
+    notifications,
+    settingsSets,
+    secretSets,
+    state,
+    feed: () => feed?.({ key: 'bridgeUrl' }),
+    async finish() {
+      await deactivate()
+      if (previous === undefined) {
+        delete process.env.ORCA_PRESENCE_LOG_FILE
+      } else {
+        process.env.ORCA_PRESENCE_LOG_FILE = previous
+      }
+      if (previousSkip === undefined) {
+        delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+      } else {
+        process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
+      }
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+}
+
+test('Show Status reports tokenStore=secrets and never prints the token', async () => {
+  const run = await activateWithSecrets({
+    protection: 'os-keyring',
+    settings: {},
+    secret: 'kept-secret-token'
+  })
+  const status = (await run.handlers.get('presence.status')?.()) as {
+    bridgeTokenStore?: string
+    warnings?: string[]
+  }
+  expect(status.bridgeTokenStore).toBe('secrets')
+  expect(status.warnings ?? []).toEqual([])
+  const body = run.notifications.at(-1) ?? ''
+  expect(body.includes('tokenStore=secrets')).toBe(true)
+  expect(JSON.stringify(status).includes('kept-secret-token')).toBe(false)
+  expect(body.includes('kept-secret-token')).toBe(false)
+  await run.finish()
+})
+
+test('Show Status warns and reports tokenStore=settings when secrets are unavailable', async () => {
+  const run = await activateWithSecrets({
+    protection: 'unavailable',
+    settings: { bridgeToken: 'plain-token' }
+  })
+  const status = (await run.handlers.get('presence.status')?.()) as {
+    bridgeTokenStore?: string
+    warnings?: string[]
+  }
+  expect(status.bridgeTokenStore).toBe('settings')
+  expect(status.warnings).toEqual(['secrets unavailable; bridge token stored in plugin settings'])
+  const body = run.notifications.at(-1) ?? ''
+  expect(body.includes('tokenStore=settings')).toBe(true)
+  expect(body.includes('secrets unavailable')).toBe(true)
+  expect(body.includes('plain-token')).toBe(false)
+  // Nothing moved: the settings fallback keeps the token where it is.
+  expect(run.settingsSets).toEqual([])
+  await run.finish()
+})
+
+test('a settings-held token is moved into secrets once on activate', async () => {
+  const run = await activateWithSecrets({
+    protection: 'os-keyring',
+    settings: { bridgeToken: 'legacy-token' }
+  })
+  expect(run.secretSets).toEqual([{ key: 'bridgeToken', value: 'legacy-token' }])
+  expect(run.settingsSets).toEqual([{ key: 'bridgeToken', value: '' }])
+  await run.finish()
+})
+
+test('configure writes bridgeToken to secrets and never through settings.set', async () => {
+  const run = await activateWithSecrets({ protection: 'os-keyring', settings: {} })
+  const result = (await run.handlers.get('presence.configure')?.({ bridgeToken: 'fresh-token' })) as {
+    ok: boolean
+    changed?: string[]
+  }
+  expect(result.ok).toBe(true)
+  expect(result.changed).toEqual(['bridgeToken'])
+  expect(run.secretSets).toEqual([{ key: 'bridgeToken', value: 'fresh-token' }])
+  expect(run.settingsSets.some((entry) => entry.key === 'bridgeToken')).toBe(false)
+  expect(run.notifications.join('\n').includes('fresh-token')).toBe(false)
+  await run.finish()
+})
+
+test('a settings re-read does not wipe a secrets-held token', async () => {
+  const seen: string[] = []
+  const server = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    fetch(request) {
+      seen.push(request.headers.get('authorization') ?? '')
+      return new Response('{}', { headers: { 'content-type': 'application/json' } })
+    }
+  })
+  try {
+    const run = await activateWithSecrets({
+      protection: 'os-keyring',
+      settings: { bridgeEnabled: true, bridgeUrl: `http://127.0.0.1:${server.port}` },
+      secret: 'held-token'
+    })
+    run.feed()
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    seen.length = 0
+    await run.handlers.get('presence.status')?.()
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.every((header) => header === 'Bearer held-token')).toBe(true)
+    await run.finish()
+  } finally {
+    await server.stop(true)
+  }
+})
+
 test('formatStatusTransmitting includes lastActivity and truncates long JSON', () => {
   expect(formatStatusTransmitting(null)).toBe('transmitting=null')
   expect(formatStatusTransmitting({ details: 'Working in Orca' })).toBe(

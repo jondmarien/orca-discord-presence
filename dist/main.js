@@ -809,6 +809,65 @@ function createBridgeTransport({
   };
 }
 
+// src/presence/bridge-token.ts
+var TOKEN_KEY = "bridgeToken";
+var SECRETS_UNAVAILABLE_WARNING = "secrets unavailable; bridge token stored in plugin settings";
+async function keyringAvailable(host) {
+  if (!host.has("secrets.protection")) {
+    return false;
+  }
+  try {
+    const result = await host.call("secrets.protection");
+    return result?.status === "os-keyring";
+  } catch {
+    return false;
+  }
+}
+async function loadBridgeToken(host, settingsToken) {
+  const fallback = {
+    token: settingsToken,
+    store: "settings",
+    warning: SECRETS_UNAVAILABLE_WARNING
+  };
+  if (!host.has("secrets.get") || !await keyringAvailable(host)) {
+    return fallback;
+  }
+  try {
+    const result = await host.call("secrets.get", { key: TOKEN_KEY });
+    return { token: typeof result?.value === "string" ? result.value : "", store: "secrets" };
+  } catch {
+    return fallback;
+  }
+}
+async function saveBridgeToken(host, token) {
+  const method = token ? "secrets.set" : "secrets.delete";
+  if (host.has(method) && await keyringAvailable(host)) {
+    try {
+      await host.call(method, token ? { key: TOKEN_KEY, value: token } : { key: TOKEN_KEY });
+      return "secrets";
+    } catch {}
+  }
+  await host.call("settings.set", { key: TOKEN_KEY, value: token });
+  return "settings";
+}
+async function migrateSettingsToken(host, settingsToken) {
+  const loaded = await loadBridgeToken(host, settingsToken);
+  if (loaded.store !== "secrets" || !settingsToken) {
+    return loaded;
+  }
+  let token = loaded.token;
+  try {
+    if (!token) {
+      await host.call("secrets.set", { key: TOKEN_KEY, value: settingsToken });
+      token = settingsToken;
+    }
+    await host.call("settings.set", { key: TOKEN_KEY, value: "" });
+  } catch {
+    return { token: token || settingsToken, store: "secrets" };
+  }
+  return { token, store: "secrets" };
+}
+
 // src/presence/settings.ts
 var DETAIL_LEVELS = ["off", "generic", "workspace", "full"];
 var SHIPPED_APPLICATION_ID = "1545653843239374848";
@@ -982,6 +1041,16 @@ function applyConfigure(current, args) {
     if (source.showAgentCount !== current.showAgentCount) {
       next.showAgentCount = source.showAgentCount;
       changed.push("showAgentCount");
+    }
+  }
+  if ("bridgeToken" in source) {
+    if (typeof source.bridgeToken !== "string") {
+      return { ok: false, error: "bridgeToken must be a string (empty clears it)" };
+    }
+    const bridgeToken = normalizeBridgeToken(source.bridgeToken);
+    if (bridgeToken !== current.bridgeToken) {
+      next.bridgeToken = bridgeToken;
+      changed.push("bridgeToken");
     }
   }
   return { ok: true, settings: next, changed };
@@ -1682,7 +1751,11 @@ async function activate(orca) {
   const stored = await orca.host.call("settings.get").catch(() => ({ settings: {} }));
   const rawSettings = stored?.settings && typeof stored.settings === "object" ? stored.settings : {};
   const appId = inspectApplicationId(rawSettings.applicationId, SHIPPED_APPLICATION_ID);
-  let settings = applyBridgeEnvOverrides(normalizeSettings(stored?.settings), process.env);
+  const storedSettings = normalizeSettings(stored?.settings);
+  const loadedToken = await migrateSettingsToken(orca.host, storedSettings.bridgeToken);
+  let tokenStore = loadedToken.store;
+  let tokenWarnings = loadedToken.warning ? [loadedToken.warning] : [];
+  let settings = applyBridgeEnvOverrides({ ...storedSettings, bridgeToken: loadedToken.token }, process.env);
   const logFile = resolveLogFilePath(process.env, {
     homedir: os2.homedir(),
     tmpdir: os2.tmpdir(),
@@ -1761,7 +1834,11 @@ async function activate(orca) {
       if (previous[key] === value) {
         continue;
       }
-      await orca.host.call("settings.set", { key, value }).catch((error) => {
+      const write = key === "bridgeToken" ? saveBridgeToken(orca.host, String(value)).then((store) => {
+        tokenStore = store;
+        tokenWarnings = store === "settings" ? [SECRETS_UNAVAILABLE_WARNING] : [];
+      }) : orca.host.call("settings.set", { key, value });
+      await write.catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         orca.log(`failed to persist ${key}: ${message}`);
       });
@@ -1832,15 +1909,19 @@ async function activate(orca) {
   }
   orca.commands.register("presence.status", async () => {
     await refresh(undefined, { force: true, resume: true });
-    const status = controller?.status();
+    const base = controller?.status();
+    const status = base ? { ...base, bridgeTokenStore: tokenStore, ...tokenWarnings.length > 0 ? { warnings: tokenWarnings } : {} } : undefined;
     const file = status?.logFile ?? diagnostics?.filePath ?? "";
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} detail=${status?.detailLevel} debug=${settings.debugLogging}`;
+    const warned = tokenWarnings.length > 0 ? ` warnings=${tokenWarnings.join("; ")}` : "";
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} tokenStore=${tokenStore} detail=${status?.detailLevel} debug=${settings.debugLogging}${warned}`;
     diagnostics?.line("info", "status", {
       enabled: status?.enabled,
       connected: status?.connected,
       sink: status?.sink,
       bridge: status?.bridgeEnabled,
+      tokenStore,
+      warnings: tokenWarnings,
       detail: status?.detailLevel,
       debug: settings.debugLogging,
       file,
@@ -1901,7 +1982,7 @@ async function activate(orca) {
     }
     if (result.changed.length === 0) {
       const view = publicConfigureView(settings);
-      const hint = "Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.";
+      const hint = "Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount, bridgeToken }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.";
       const body = `applicationId=${view.shippedApplicationId ? "shipped" : view.applicationId} openUrl=${view.openUrl || "(empty)"} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} label=${view.openButtonLabel}`;
       await orca.host.call("notifications.show", {
         title: "Rich Presence for Discord",
@@ -1953,7 +2034,11 @@ async function activate(orca) {
           if (deactivated || !latest) {
             return;
           }
-          const next = applyBridgeEnvOverrides(normalizeSettings(latest.settings), process.env);
+          const reread = normalizeSettings(latest.settings);
+          const reloadedToken = await migrateSettingsToken(orca.host, reread.bridgeToken);
+          tokenStore = reloadedToken.store;
+          tokenWarnings = reloadedToken.warning ? [reloadedToken.warning] : [];
+          const next = applyBridgeEnvOverrides({ ...reread, bridgeToken: reloadedToken.token }, process.env);
           if (JSON.stringify(next) !== JSON.stringify(settings)) {
             await applySettings(next);
           }

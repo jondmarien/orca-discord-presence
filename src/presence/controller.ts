@@ -15,6 +15,7 @@
 
 import { buildActivity, type DiscordActivity, type PresenceSnapshot } from './activity'
 import { resolveBridgeTarget, type PresenceBridge } from './bridge'
+import type { TokenStore } from './bridge-token'
 import { formatLogLine, type DiagnosticSink } from './log'
 import type { PresenceSettings } from './settings'
 
@@ -98,6 +99,13 @@ export type PresenceStatus = {
    * (agent event, Show Status, Reload RPC, or a settings write).
    */
   heldClear: boolean
+  /**
+   * Where the bridge token lives. Filled in by the worker, which owns token
+   * storage; the controller itself never sees where it came from. Never the token.
+   */
+  bridgeTokenStore?: TokenStore
+  /** Non-fatal conditions to surface in **Show Status** (also filled in by the worker). */
+  warnings?: string[]
 }
 
 /**
