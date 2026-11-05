@@ -2129,9 +2129,12 @@ async function activate(orca, deps = {}) {
     diagnostics?.setDebugEnabled(nextSettings.debugLogging);
     if (applicationIdChanged || clientChanged || options.rebind) {
       diagnostics?.line("info", applicationIdChanged ? "discord.app_id_rebind" : "discord.client_rebind", applicationIdChanged ? { applicationId: nextSettings.applicationId } : { client: nextSettings.discordClient });
+      const held = controller?.status().heldClear ?? false;
       await controller?.stop();
       controller = createController(nextSettings);
-      if (!deactivated) {
+      if (held) {
+        await controller.clear();
+      } else if (!deactivated) {
         await refresh(undefined, { force: true });
       }
     } else {

@@ -497,11 +497,17 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
           ? { applicationId: nextSettings.applicationId }
           : { client: nextSettings.discordClient }
       )
+      // Why: Rich Presence: Clear holds republishing until the next agent or
+      // workspace event. The replacement controller must inherit that hold,
+      // or the next heartbeat would publish against the person's choice.
+      const held = controller?.status().heldClear ?? false
       await controller?.stop()
       controller = createController(nextSettings)
-      // Why: a fresh controller has published nothing, so the presence would
-      // go blank until the next event or heartbeat.
-      if (!deactivated) {
+      if (held) {
+        await controller.clear()
+      } else if (!deactivated) {
+        // Why: a fresh controller has published nothing, so the presence would
+        // go blank until the next event or heartbeat.
         await refresh(undefined, { force: true })
       }
     } else {
