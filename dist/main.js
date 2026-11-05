@@ -423,6 +423,7 @@ function createDiscordClient({
 }
 
 // src/discord/detect.ts
+import fs from "node:fs";
 import net2 from "node:net";
 var AUTO_CLIENT = "auto";
 var PROBE_TIMEOUT_MS = 300;
@@ -448,11 +449,20 @@ function familyOf(path) {
   }
   return "discord";
 }
+function isTempLocation(path) {
+  const primary = [process.env.XDG_RUNTIME_DIR, "/run/user"];
+  if (primary.some((dir) => dir && path.startsWith(`${dir.replace(/\/+$/, "")}/`))) {
+    return false;
+  }
+  const temps = ["/tmp", process.env.TMPDIR, process.env.TMP, process.env.TEMP];
+  return temps.some((dir) => dir && path.startsWith(`${dir.replace(/\/+$/, "")}/`));
+}
 function classifyClientPath(path) {
   const family = familyOf(path);
   const index = Number(/discord-ipc-(\d+)$/.exec(path)?.[1] ?? 0);
+  const tag = family !== "pipe" && isTempLocation(path) ? "tmp:" : "";
   return {
-    id: `${family}:${index}`,
+    id: `${family}:${tag}${index}`,
     label: family === "pipe" ? `Discord client #${index + 1}` : FAMILY_LABEL[family]
   };
 }
@@ -473,7 +483,7 @@ function probeSocket(path, timeoutMs) {
 }
 async function detectDiscordClients(opts = {}) {
   try {
-    const { connect = probeSocket, timeoutMs = PROBE_TIMEOUT_MS } = opts;
+    const { connect = probeSocket, timeoutMs = PROBE_TIMEOUT_MS, realpath = fs.realpathSync } = opts;
     const candidates = [...new Set(opts.candidates ?? defaultDiscordIpcCandidates())];
     const present = new Array(candidates.length).fill(false);
     let next = 0;
@@ -485,14 +495,20 @@ async function detectDiscordClients(opts = {}) {
     };
     await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, candidates.length) }, worker));
     const seen = new Set;
+    const seenReal = new Set;
     const found = [];
     candidates.forEach((path, slot) => {
       if (!present[slot]) {
         return;
       }
+      let real = path;
+      try {
+        real = realpath(path);
+      } catch {}
       const { id, label } = classifyClientPath(path);
-      if (!seen.has(id)) {
+      if (!seen.has(id) && !seenReal.has(real)) {
         seen.add(id);
+        seenReal.add(real);
         found.push({ id, label, path });
       }
     });
@@ -500,12 +516,14 @@ async function detectDiscordClients(opts = {}) {
     for (const client of found) {
       perFamily.set(client.label, (perFamily.get(client.label) ?? 0) + 1);
     }
+    const ordinal = new Map;
     return found.map((client) => {
       if (client.id.startsWith("pipe:") || (perFamily.get(client.label) ?? 0) < 2) {
         return client;
       }
-      const index = Number(client.id.split(":")[1]);
-      return { ...client, label: `${client.label} (${index + 1})` };
+      const position = (ordinal.get(client.label) ?? 0) + 1;
+      ordinal.set(client.label, position);
+      return { ...client, label: `${client.label} (${position})` };
     });
   } catch {
     return [];

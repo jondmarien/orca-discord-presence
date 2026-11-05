@@ -164,3 +164,27 @@ test('summary: not connected is null, stale undetected choice sets fallback', ()
     label: 'Discord (Snap)'
   })
 })
+
+test('same socket index under /run/user and /tmp stays two distinct entries', async () => {
+  const tmp = '/tmp/discord-ipc-0'
+  expect(classifyClientPath(PLAIN0).id).toBe('discord:0')
+  expect(classifyClientPath(tmp).id).toBe('discord:tmp:0')
+  const found = await detectDiscordClients({
+    candidates: [PLAIN0, tmp],
+    connect: alive([PLAIN0, tmp]),
+    realpath: (path) => path
+  })
+  expect(found.map((c) => c.id)).toEqual(['discord:0', 'discord:tmp:0'])
+  expect(found.map((c) => c.label)).toEqual(['Discord (1)', 'Discord (2)'])
+})
+
+test('two paths with the same real path collapse into one entry', async () => {
+  const tmp = '/tmp/discord-ipc-0'
+  const found = await detectDiscordClients({
+    candidates: [PLAIN0, tmp],
+    connect: alive([PLAIN0, tmp]),
+    realpath: () => '/run/user/1000/discord-ipc-0'
+  })
+  expect(found.map((c) => c.id)).toEqual(['discord:0'])
+  expect(found[0]?.label).toBe('Discord')
+})

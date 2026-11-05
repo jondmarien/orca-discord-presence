@@ -11,6 +11,7 @@
  * @date 2026-11-04
  */
 
+import fs from 'node:fs'
 import net from 'node:net'
 import { defaultDiscordIpcCandidates } from './ipc'
 
@@ -18,7 +19,10 @@ import { defaultDiscordIpcCandidates } from './ipc'
  * A Discord client whose IPC socket answered. `path` stays inside the worker.
  */
 export type DetectedClient = {
-  /** Stable across restarts: `<family>:<socket index>`, e.g. `vesktop:0`. */
+  /**
+   * Stable across restarts: `<family>:<socket index>`, e.g. `vesktop:0`. A
+   * socket under a temp dir adds `tmp`: `discord:tmp:0`.
+   */
   id: string
   /** Human-readable name shown in the panel. */
   label: string
@@ -68,6 +72,23 @@ function familyOf(path: string): Family {
 }
 
 /**
+ * True when the socket sits in a temp dir rather than the primary runtime dir
+ * (`XDG_RUNTIME_DIR` or `/run/user/<uid>`).
+ *
+ * Why: `/run/user/1000/discord-ipc-0` and `/tmp/discord-ipc-0` are different
+ * installs. Only non-primary locations get a tag, so ids saved before the tag
+ * existed stay valid.
+ */
+function isTempLocation(path: string): boolean {
+  const primary = [process.env.XDG_RUNTIME_DIR, '/run/user']
+  if (primary.some((dir) => dir && path.startsWith(`${dir.replace(/\/+$/, '')}/`))) {
+    return false
+  }
+  const temps = ['/tmp', process.env.TMPDIR, process.env.TMP, process.env.TEMP]
+  return temps.some((dir) => dir && path.startsWith(`${dir.replace(/\/+$/, '')}/`))
+}
+
+/**
  * Name the client behind one socket path from its location alone.
  *
  * @param path - Socket or named-pipe path (`.../discord-ipc-N`).
@@ -76,8 +97,9 @@ function familyOf(path: string): Family {
 export function classifyClientPath(path: string): ClientSummary {
   const family = familyOf(path)
   const index = Number(/discord-ipc-(\d+)$/.exec(path)?.[1] ?? 0)
+  const tag = family !== 'pipe' && isTempLocation(path) ? 'tmp:' : ''
   return {
-    id: `${family}:${index}`,
+    id: `${family}:${tag}${index}`,
     label: family === 'pipe' ? `Discord client #${index + 1}` : FAMILY_LABEL[family]
   }
 }
@@ -112,12 +134,15 @@ export type DetectOptions = {
   connect?: (path: string, timeoutMs: number) => Promise<boolean>
   /** Per-socket timeout in ms (default 300). */
   timeoutMs?: number
+  /** Resolves symlinks and bind mounts; defaults to `fs.realpathSync`. */
+  realpath?: (path: string) => string
 }
 
 /**
  * Find the Discord clients that currently have a listening IPC socket.
  *
- * Duplicate paths (and duplicate ids, first wins) are dropped. Probing runs
+ * Duplicate paths, paths resolving to the same real path, and duplicate ids
+ * (first wins) are dropped. Probing runs
  * in parallel, at most 10 at a time. Two live clients of one family get their
  * socket number in the label (`Discord (1)`, `Discord (2)`).
  *
@@ -129,7 +154,7 @@ export type DetectOptions = {
  */
 export async function detectDiscordClients(opts: DetectOptions = {}): Promise<DetectedClient[]> {
   try {
-    const { connect = probeSocket, timeoutMs = PROBE_TIMEOUT_MS } = opts
+    const { connect = probeSocket, timeoutMs = PROBE_TIMEOUT_MS, realpath = fs.realpathSync } = opts
     const candidates = [...new Set(opts.candidates ?? defaultDiscordIpcCandidates())]
     const present: boolean[] = new Array(candidates.length).fill(false)
     let next = 0
@@ -142,14 +167,22 @@ export async function detectDiscordClients(opts: DetectOptions = {}): Promise<De
     await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, candidates.length) }, worker))
 
     const seen = new Set<string>()
+    const seenReal = new Set<string>()
     const found: DetectedClient[] = []
     candidates.forEach((path, slot) => {
       if (!present[slot]) {
         return
       }
+      let real = path
+      try {
+        real = realpath(path)
+      } catch {
+        // Keep the raw path as the alias key.
+      }
       const { id, label } = classifyClientPath(path)
-      if (!seen.has(id)) {
+      if (!seen.has(id) && !seenReal.has(real)) {
         seen.add(id)
+        seenReal.add(real)
         found.push({ id, label, path })
       }
     })
@@ -157,12 +190,16 @@ export async function detectDiscordClients(opts: DetectOptions = {}): Promise<De
     for (const client of found) {
       perFamily.set(client.label, (perFamily.get(client.label) ?? 0) + 1)
     }
+    const ordinal = new Map<string, number>()
     return found.map((client) => {
       if (client.id.startsWith('pipe:') || (perFamily.get(client.label) ?? 0) < 2) {
         return client
       }
-      const index = Number(client.id.split(':')[1])
-      return { ...client, label: `${client.label} (${index + 1})` }
+      // Why: the socket index alone can repeat across locations (`discord:0`
+      // and `discord:tmp:0`), so number the entries in the order found.
+      const position = (ordinal.get(client.label) ?? 0) + 1
+      ordinal.set(client.label, position)
+      return { ...client, label: `${client.label} (${position})` }
     })
   } catch {
     return []
