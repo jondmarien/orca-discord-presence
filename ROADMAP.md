@@ -48,11 +48,18 @@ Until these land, presence is workspace and agent status only.
 
 ---
 
+## Next release: 1.1.0
+
+Once [stablyai/orca#38406](https://github.com/stablyai/orca/pull/38406) merges and ships in an Orca release, build 1.1.0: the question state plus the held Minimal-view screenshot on `jondmarien/minimal-shot`.
+
+---
+
 ## Checklist
 
 - [x] Companion bridge, default off, OS-agnostic ([#6](https://github.com/jondmarien/orca-discord-presence/pull/6))
 - [x] Clear, opt-in button, configure, multi-agent summary ([#15](https://github.com/jondmarien/orca-discord-presence/issues/15))
 - [x] Manifest v2, stock `workspace.*` events and `agents.list`, native settings, bridge token in secrets, panel on `plugin.request` / `panels.post`
-- [ ] Listing on onorca.dev
-- [ ] Focus (needs Orca host API, in progress on fork) — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7)
+- [x] Listing on onorca.dev
+- [ ] Question state (needs [stablyai/orca#38406](https://github.com/stablyai/orca/pull/38406)), ships in 1.1.0
+- [ ] Focus (needs Orca host API, upstream in [stablyai/orca#38415](https://github.com/stablyai/orca/pull/38415)) — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7)
 - [ ] Client relay (needs Orca host API, in progress on fork)
