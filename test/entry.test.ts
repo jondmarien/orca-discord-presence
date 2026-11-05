@@ -28,6 +28,19 @@ afterAll(() => {
   rmSync(ipcDir, { recursive: true, force: true })
 })
 
+test('manifest listing screenshots exist and have alt text', () => {
+  const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')) as {
+    cover: { path: string; alt: string }
+    screenshots?: Array<{ path: string; alt: string; caption?: string }>
+  }
+  expect(manifest.cover.alt.startsWith('Rich Presence for Discord:')).toBe(true)
+  expect(manifest.screenshots?.length).toBe(2)
+  for (const shot of manifest.screenshots ?? []) {
+    expect(existsSync(join(root, shot.path))).toBe(true)
+    expect(shot.alt.trim().length).toBeGreaterThan(0)
+  }
+})
+
 test('manifest identity is jondmarien.discord-presence on manifest v2', () => {
   const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')) as {
     manifestVersion: number

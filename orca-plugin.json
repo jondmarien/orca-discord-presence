@@ -8,8 +8,20 @@
   "icon": "assets/icon.png",
   "cover": {
     "path": "assets/cover.png",
-    "alt": "Rich Presence Discord: title, four agent state icons, Discord profile card showing Working in Orca"
+    "alt": "Rich Presence for Discord: title, four agent state icons, Discord profile card showing Working in Orca"
   },
+  "screenshots": [
+    {
+      "path": "assets/screenshots/full.png",
+      "alt": "Rich Presence panel Full view: Discord profile preview, last 30 minutes of agent states, agent list with chat names, and Show on Discord switches",
+      "caption": "Full view"
+    },
+    {
+      "path": "assets/screenshots/minimal.png",
+      "alt": "Rich Presence panel Minimal view: state-coloured hero showing Working with 2 agents and a timer, plus the 30-minute strip",
+      "caption": "Minimal view"
+    }
+  ],
   "description": "Shows your Orca workspace, branch and agent state on your Discord profile. Every field is opt-in. Not affiliated with Discord.",
   "author": {
     "name": "Jonathan Marien",
