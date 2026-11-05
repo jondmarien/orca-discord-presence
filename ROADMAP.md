@@ -29,12 +29,18 @@ The companion is the supported remote path on stock Orca. It needs no Orca chang
 
 ---
 
-## Needs Orca host API (in progress on fork)
+## Needs Orca host API (upstream)
 
-These are not possible on stock Orca today. Work is in progress on the `jondmarien/orca` fork and is meant for upstream PRs to `stablyai/orca`. Nothing here ships in v1.0.0, and the plugin guards every newer host method with `orca.host.has(name)`.
+These are not possible on stock Orca today. Each one has an issue on `stablyai/orca`, and PRs follow once maintainers weigh in. The plugin guards every newer host method with `orca.host.has(name)`.
 
-- **Focus** ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)): which window, tab, or terminal is focused. Needs a host focus API and event.
-- **Client relay**: a host-mediated way to send presence to the Orca client machine, so a remote worker does not need a companion process or an operator-set URL and token.
+| Feature | Upstream issue | Upstream PR | Status |
+|---|---|---|---|
+| **Agent prompt kind**: tell a question apart from other waits (question state) | [#38340](https://github.com/stablyai/orca/issues/38340) | [#38406](https://github.com/stablyai/orca/pull/38406) | PR open, awaiting review |
+| **UI focus** (`ui:focus`): which kind of tab is focused ([#7](https://github.com/jondmarien/orca-discord-presence/issues/7)) | [#38341](https://github.com/stablyai/orca/issues/38341) | [#38415](https://github.com/stablyai/orca/pull/38415) | PR open, awaiting review |
+| **Paired panels**: show the host's plugin panels in paired desktop clients | [#38342](https://github.com/stablyai/orca/issues/38342) | — | Waiting on maintainer comment |
+| **Client relay**: send presence from a host worker to the same plugin on a paired client, without a companion or operator-set URL and token | [#38343](https://github.com/stablyai/orca/issues/38343) | — | Waiting on maintainer comment |
+
+The earlier combined PR [#19023](https://github.com/stablyai/orca/pull/19023) is closed; the focused issues and PRs above replace it.
 
 Until these land, presence is workspace and agent status only.
 
@@ -61,5 +67,6 @@ Once [stablyai/orca#38406](https://github.com/stablyai/orca/pull/38406) merges a
 - [x] Manifest v2, stock `workspace.*` events and `agents.list`, native settings, bridge token in secrets, panel on `plugin.request` / `panels.post`
 - [x] Listing on onorca.dev
 - [ ] Question state (needs [stablyai/orca#38406](https://github.com/stablyai/orca/pull/38406)), ships in 1.1.0
-- [ ] Focus (needs Orca host API, upstream in [stablyai/orca#38415](https://github.com/stablyai/orca/pull/38415)) — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7)
-- [ ] Client relay (needs Orca host API, in progress on fork)
+- [ ] Focus (needs [stablyai/orca#38415](https://github.com/stablyai/orca/pull/38415)) — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7)
+- [ ] Paired panels (needs [stablyai/orca#38342](https://github.com/stablyai/orca/issues/38342))
+- [ ] Client relay (needs [stablyai/orca#38343](https://github.com/stablyai/orca/issues/38343))
