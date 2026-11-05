@@ -657,8 +657,11 @@ function parseAgentsList(result, nowMs) {
       paneKey: "",
       terminalId: source.terminalId,
       state: source.state,
-      receivedAt: typeof source.stateStartedAt === "number" && Number.isFinite(source.stateStartedAt) ? source.stateStartedAt : nowMs
+      receivedAt: nowMs
     };
+    if (typeof source.stateStartedAt === "number" && Number.isFinite(source.stateStartedAt)) {
+      event.stateStartedAt = source.stateStartedAt;
+    }
     if (typeof source.agent === "string" && source.agent.length > 0) {
       event.kind = source.agent;
     }
@@ -692,8 +695,9 @@ function summarizeSlots(slots) {
   }
   let started = Number.POSITIVE_INFINITY;
   for (const slot of slots) {
-    if (slot.canonicalState === winner && slot.receivedAt < started) {
-      started = slot.receivedAt;
+    const since = slot.stateStartedAt ?? slot.receivedAt;
+    if (slot.canonicalState === winner && since < started) {
+      started = since;
     }
   }
   return {
@@ -755,6 +759,8 @@ function createAgentTable({
       const key = agentSlotKey(event);
       const kind = event.kind ?? map.get(key)?.kind;
       const title = event.title ?? map.get(key)?.title;
+      const previous = map.get(key);
+      const stateStartedAt = previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined ? previous.stateStartedAt : event.stateStartedAt ?? event.receivedAt;
       map.set(key, {
         workspaceId: event.workspaceId,
         paneKey: event.paneKey,
@@ -762,6 +768,7 @@ function createAgentTable({
         rawState: event.state,
         canonicalState,
         receivedAt: event.receivedAt,
+        stateStartedAt,
         ...kind ? { kind } : {},
         ...title ? { title } : {}
       });
@@ -1711,7 +1718,7 @@ function summarizePanelAgents(slots) {
     kind: slot.kind && slot.kind.length > 0 ? slot.kind : "agent",
     ...panelTitle(slot.title) ? { title: panelTitle(slot.title) } : {},
     state: slot.canonicalState,
-    sinceMs: slot.receivedAt
+    sinceMs: slot.stateStartedAt ?? slot.receivedAt
   })).sort((a, b) => AGENT_ROW_PRIORITY[b.state] - AGENT_ROW_PRIORITY[a.state] || a.sinceMs - b.sinceMs);
 }
 function summarizePanelActivityCard(activity) {

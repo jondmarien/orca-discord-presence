@@ -24,6 +24,13 @@ export type AgentStatusEvent = {
   terminalId?: string
   state: string
   receivedAt: number
+  /**
+   * When the agent entered `state`, if the host said so (`agents.list`).
+   *
+   * Why: `receivedAt` drives retention, so a seeded row uses the listing time
+   * there and keeps the true start here for the elapsed timer.
+   */
+  stateStartedAt?: number
   /** Agent CLI name from `agents.list` (`claude`, `codex`, ...). */
   kind?: string
   /**
@@ -43,6 +50,8 @@ export type AgentSlot = {
   rawState: string
   canonicalState: CanonicalAgentState
   receivedAt: number
+  /** When the agent entered its current state; see {@link AgentStatusEvent.stateStartedAt}. */
+  stateStartedAt?: number
   kind?: string
   /** Chat name; see {@link AgentStatusEvent.title}. Panel snapshot only. */
   title?: string
@@ -163,7 +172,7 @@ export function parseWorkspaceRemovedId(payload: unknown): string | null {
  * replaces them. Rows without a `terminalId` cannot be deduped and are dropped.
  *
  * @param result - Raw `agents.list` result, `{ agents: [...] }`.
- * @param nowMs - Fallback when a row has no numeric `stateStartedAt`.
+ * @param nowMs - Listing time, used as `receivedAt` for every row.
  * @returns Events, or `[]` for any non-conforming input.
  */
 export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEvent[] {
@@ -191,10 +200,13 @@ export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEven
       paneKey: '',
       terminalId: source.terminalId,
       state: source.state,
-      receivedAt:
-        typeof source.stateStartedAt === 'number' && Number.isFinite(source.stateStartedAt)
-          ? source.stateStartedAt
-          : nowMs
+      // Why: the listing proves the agent is alive now. Using its (possibly
+      // hours old) start as `receivedAt` would drop it from the stale window
+      // the moment the worker restarts.
+      receivedAt: nowMs
+    }
+    if (typeof source.stateStartedAt === 'number' && Number.isFinite(source.stateStartedAt)) {
+      event.stateStartedAt = source.stateStartedAt
     }
     if (typeof source.agent === 'string' && source.agent.length > 0) {
       event.kind = source.agent
@@ -235,8 +247,9 @@ function summarizeSlots(slots: readonly AgentSlot[]): AgentSummary {
   }
   let started = Number.POSITIVE_INFINITY
   for (const slot of slots) {
-    if (slot.canonicalState === winner && slot.receivedAt < started) {
-      started = slot.receivedAt
+    const since = slot.stateStartedAt ?? slot.receivedAt
+    if (slot.canonicalState === winner && since < started) {
+      started = since
     }
   }
   return {
@@ -312,6 +325,13 @@ export function createAgentTable({
       const kind = event.kind ?? map.get(key)?.kind
       // Why: same for `title`; a status event without one keeps the last known.
       const title = event.title ?? map.get(key)?.title
+      // Why: repeated same-state events must not restart the elapsed timer; a
+      // state change starts it at that event.
+      const previous = map.get(key)
+      const stateStartedAt =
+        previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined
+          ? previous.stateStartedAt
+          : (event.stateStartedAt ?? event.receivedAt)
       map.set(key, {
         workspaceId: event.workspaceId,
         paneKey: event.paneKey,
@@ -319,6 +339,7 @@ export function createAgentTable({
         rawState: event.state,
         canonicalState,
         receivedAt: event.receivedAt,
+        stateStartedAt,
         ...(kind ? { kind } : {}),
         ...(title ? { title } : {})
       })

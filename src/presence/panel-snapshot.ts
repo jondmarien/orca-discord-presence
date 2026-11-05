@@ -180,7 +180,7 @@ export function summarizePanelAgents(slots: readonly AgentSlot[]): PresencePanel
       kind: slot.kind && slot.kind.length > 0 ? slot.kind : 'agent',
       ...(panelTitle(slot.title) ? { title: panelTitle(slot.title) } : {}),
       state: slot.canonicalState,
-      sinceMs: slot.receivedAt
+      sinceMs: slot.stateStartedAt ?? slot.receivedAt
     }))
     .sort(
       (a, b) => AGENT_ROW_PRIORITY[b.state] - AGENT_ROW_PRIORITY[a.state] || a.sinceMs - b.sinceMs

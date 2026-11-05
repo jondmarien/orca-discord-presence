@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { summarizePanelAgents } from '../src/presence/panel-snapshot'
 import { AGENT_RETENTION_MS } from '../src/presence/expiry'
 import {
   agentSlotKey,
@@ -209,7 +210,7 @@ test('parseAgentsList maps rows and drops null terminalId', () => {
       10
     )
   ).toEqual([
-    { workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: 7, kind: 'claude' },
+    { workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: 10, stateStartedAt: 7, kind: 'claude' },
     { workspaceId: '', paneKey: '', terminalId: 't2', state: 'done', receivedAt: 10, kind: 'codex', title: 'x' }
   ])
 })
@@ -268,4 +269,29 @@ test('agent kind survives a later event without kind', () => {
   table.upsert({ workspaceId: 'w', paneKey: 'p', terminalId: 't1', state: 'waiting', receivedAt: 1_000_000 })
   expect(table.slots()[0]?.kind).toBe('claude')
   expect(table.slots()[0]?.canonicalState).toBe('waiting')
+})
+
+test('a listed agent working past the stale window survives prune and keeps its true start', () => {
+  const { table, nowRef } = tableHarness()
+  const startedAt = nowRef() - 45 * 60_000
+  for (const event of parseAgentsList(
+    { agents: [{ terminalId: 't1', agent: 'claude', state: 'working', stateStartedAt: startedAt }] },
+    nowRef()
+  )) {
+    table.upsert(event)
+  }
+  expect(table.prune()).toBe(false)
+  expect(table.slots()).toHaveLength(1)
+  expect(summarizePanelAgents(table.slots())[0]?.sinceMs).toBe(startedAt)
+  expect(table.summarize().stateStartedAtMs).toBe(startedAt)
+})
+
+test('same-state event keeps stateStartedAt; a state change resets it', () => {
+  const { table, nowRef } = tableHarness()
+  const t0 = nowRef()
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'working', receivedAt: t0, stateStartedAt: t0 - 5000 })
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'working', receivedAt: t0 + 10 })
+  expect(table.slots()[0]?.stateStartedAt).toBe(t0 - 5000)
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'blocked', receivedAt: t0 + 20 })
+  expect(table.slots()[0]?.stateStartedAt).toBe(t0 + 20)
 })
