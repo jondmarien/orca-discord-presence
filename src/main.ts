@@ -15,7 +15,7 @@
 import os from 'node:os'
 import { inspectApplicationId } from './discord/app-id'
 import { createDiscordClient } from './discord/client'
-import { createAgentTable, parseAgentStatusPayload, parseWorktreeRemovedId } from './presence/agents'
+import { createAgentTable, parseAgentStatusPayload, parseWorkspaceRemovedId } from './presence/agents'
 import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
 import { applyConfigure } from './presence/configure'
 import { createPresenceController, type PresenceController } from './presence/controller'
@@ -515,9 +515,9 @@ export default async function activate(orca: OrcaHost) {
     await refresh()
   })
   orca.events.on('worktree.removed', async (payload) => {
-    const worktreeId = parseWorktreeRemovedId(payload)
+    const worktreeId = parseWorkspaceRemovedId(payload)
     if (worktreeId) {
-      agentTable?.removeWorktree(worktreeId)
+      agentTable?.removeWorkspace(worktreeId)
     }
     await refresh()
   })

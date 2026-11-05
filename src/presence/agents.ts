@@ -1,8 +1,9 @@
 /**
  * In-memory multi-agent / multi-worktree presence table.
  *
- * `agent.status.changed` already carries `worktreeId`, `paneKey`, `state`,
- * and `receivedAt`. This module aggregates those slots, drops stale and
+ * Stock `agent.status.changed` carries `workspaceId`, `paneKey`, optional
+ * `terminalId`, `state`, and `receivedAt`. `agents.list` seeds the same table
+ * by terminal. This module aggregates those slots, drops stale and
  * recently-done rows, and produces one canonical state for
  * {@link buildActivity}.
  *
@@ -18,8 +19,9 @@ import { AGENT_RETENTION_MS, isActivityFresh } from './expiry'
  * One parsed `agent.status.changed` event.
  */
 export type AgentStatusEvent = {
-  worktreeId: string
+  workspaceId: string
   paneKey: string
+  terminalId?: string
   state: string
   receivedAt: number
 }
@@ -28,8 +30,9 @@ export type AgentStatusEvent = {
  * Stored slot after canonicalize.
  */
 export type AgentSlot = {
-  worktreeId: string
+  workspaceId: string
   paneKey: string
+  terminalId?: string
   rawState: string
   canonicalState: CanonicalAgentState
   receivedAt: number
@@ -60,7 +63,7 @@ export type AgentTableOptions = {
  */
 export type AgentTable = {
   upsert: (event: AgentStatusEvent) => void
-  removeWorktree: (worktreeId: string) => boolean
+  removeWorkspace: (workspaceId: string) => boolean
   prune: () => boolean
   summarize: () => AgentSummary
   slots: () => AgentSlot[]
@@ -75,16 +78,28 @@ const PRIORITY: Record<CanonicalAgentState, number> = {
 }
 
 /**
- * Slot key: worktree + pane. Empty strings are a valid single anonymous slot.
+ * Slot key: `t:<terminalId>` when the terminal is known, else
+ * `p:<workspaceId>\u001f<paneKey>`.
+ *
+ * Why: `agents.list` only knows terminals while `agent.status.changed` also
+ * knows the pane. Keying by terminal makes a seeded row and its later event
+ * the same slot, so one agent is never counted twice. Empty strings in the
+ * pane fallback stay a valid single anonymous slot.
  */
-export function agentSlotKey(worktreeId: string, paneKey: string): string {
-  return `${worktreeId}\u001f${paneKey}`
+export function agentSlotKey(
+  event: Pick<AgentStatusEvent, 'workspaceId' | 'paneKey' | 'terminalId'>
+): string {
+  if (typeof event.terminalId === 'string' && event.terminalId.length > 0) {
+    return `t:${event.terminalId}`
+  }
+  return `p:${event.workspaceId}\u001f${event.paneKey}`
 }
 
 /**
  * Parse a host `agent.status.changed` payload.
  *
- * Missing `worktreeId` / `paneKey` become `""`. Missing `receivedAt` uses
+ * Missing or null `workspaceId` / `paneKey` become `""`. A non-empty string
+ * `terminalId` is kept. Missing `receivedAt` uses
  * `nowMs`. A payload without a string `state` is ignored.
  *
  * @param payload - Event body from the host.
@@ -103,32 +118,72 @@ export function parseAgentStatusPayload(payload: unknown, nowMs: number): AgentS
     typeof source.receivedAt === 'number' && Number.isFinite(source.receivedAt)
       ? source.receivedAt
       : nowMs
-  return {
-    worktreeId: typeof source.worktreeId === 'string' ? source.worktreeId : '',
+  const event: AgentStatusEvent = {
+    workspaceId: typeof source.workspaceId === 'string' ? source.workspaceId : '',
     paneKey: typeof source.paneKey === 'string' ? source.paneKey : '',
     state: source.state,
     receivedAt
   }
+  if (typeof source.terminalId === 'string' && source.terminalId.length > 0) {
+    event.terminalId = source.terminalId
+  }
+  return event
 }
 
 /**
- * Best-effort worktree id from `worktree.removed`.
+ * Workspace id from a stock `workspace.removed` payload.
  */
-export function parseWorktreeRemovedId(payload: unknown): string | null {
-  if (typeof payload === 'string' && payload.trim().length > 0) {
-    return payload.trim()
-  }
+export function parseWorkspaceRemovedId(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') {
     return null
   }
-  const source = payload as Record<string, unknown>
-  if (typeof source.worktreeId === 'string' && source.worktreeId.trim().length > 0) {
-    return source.worktreeId.trim()
+  const id = (payload as Record<string, unknown>).workspaceId
+  return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null
+}
+
+/**
+ * Map an `agents.list` result to events for seeding the table.
+ *
+ * Why: the list has no workspace or pane, so seeded rows use `""` for both and
+ * adopt the real `workspaceId` when a later event for the same terminal
+ * replaces them. Rows without a `terminalId` cannot be deduped and are dropped.
+ *
+ * @param result - Raw `agents.list` result, `{ agents: [...] }`.
+ * @param nowMs - Fallback when a row has no numeric `stateStartedAt`.
+ * @returns Events, or `[]` for any non-conforming input.
+ */
+export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEvent[] {
+  if (!result || typeof result !== 'object') {
+    return []
   }
-  if (typeof source.id === 'string' && source.id.trim().length > 0) {
-    return source.id.trim()
+  const rows = (result as Record<string, unknown>).agents
+  if (!Array.isArray(rows)) {
+    return []
   }
-  return null
+  const events: AgentStatusEvent[] = []
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') {
+      continue
+    }
+    const source = row as Record<string, unknown>
+    if (typeof source.terminalId !== 'string' || source.terminalId.length === 0) {
+      continue
+    }
+    if (typeof source.state !== 'string') {
+      continue
+    }
+    events.push({
+      workspaceId: '',
+      paneKey: '',
+      terminalId: source.terminalId,
+      state: source.state,
+      receivedAt:
+        typeof source.stateStartedAt === 'number' && Number.isFinite(source.stateStartedAt)
+          ? source.stateStartedAt
+          : nowMs
+    })
+  }
+  return events
 }
 
 function retentionWindow(state: CanonicalAgentState): number {
@@ -228,9 +283,10 @@ export function createAgentTable({
   return {
     upsert(event) {
       const canonicalState = canonicalizeAgentState(event.state)
-      map.set(agentSlotKey(event.worktreeId, event.paneKey), {
-        worktreeId: event.worktreeId,
+      map.set(agentSlotKey(event), {
+        workspaceId: event.workspaceId,
         paneKey: event.paneKey,
+        ...(event.terminalId ? { terminalId: event.terminalId } : {}),
         rawState: event.state,
         canonicalState,
         receivedAt: event.receivedAt
@@ -238,10 +294,10 @@ export function createAgentTable({
       prune()
       schedulePrune()
     },
-    removeWorktree(worktreeId) {
+    removeWorkspace(workspaceId) {
       let changed = false
       for (const [key, slot] of map) {
-        if (slot.worktreeId === worktreeId) {
+        if (slot.workspaceId === workspaceId) {
           map.delete(key)
           changed = true
         }
