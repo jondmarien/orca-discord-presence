@@ -356,9 +356,12 @@
         return document.getElementById(id)
       }
 
+      // Why: snapshots arrive on every agent event; writing unchanged values
+      // re-lays out the panel and makes it look like it rebuilds itself.
       function setText(id, value) {
         var el = $(id)
-        if (el) el.textContent = value == null || value === '' ? '—' : String(value)
+        var next = value == null || value === '' ? '—' : String(value)
+        if (el && el.textContent !== next) el.textContent = next
       }
 
       function flash(message) {
@@ -367,7 +370,7 @@
 
       function setChecked(id, on) {
         var el = $(id)
-        if (el) el.checked = !!on
+        if (el && el.checked !== !!on) el.checked = !!on
       }
 
       function indicatorClass(snapshot) {
@@ -394,7 +397,8 @@
       }
 
       function render(snapshot) {
-        $('status-bar').className = 'status-bar ' + indicatorClass(snapshot)
+        var barClass = 'status-bar ' + indicatorClass(snapshot)
+        if ($('status-bar').className !== barClass) $('status-bar').className = barClass
         setText('indicator-label', indicatorLabel(snapshot))
         if (!snapshot || !snapshot.status) {
           setText('st-generated', 'No worker snapshot yet.')
@@ -425,8 +429,14 @@
         setChecked('f-open-button', fields.showOpenButton)
         setChecked('f-agent-count', fields.showAgentCount)
         if (snapshot.logs && snapshot.logs.length) {
-          $('log-view').textContent = snapshot.logs.join('\n')
-          $('logs-box').open = true
+          var view = $('log-view')
+          var text = snapshot.logs.join('\n')
+          if (view.textContent !== text) {
+            // Why: keep the reader's place; only follow the tail when already at the bottom.
+            var atBottom = view.scrollTop + view.clientHeight >= view.scrollHeight - 4
+            view.textContent = text
+            if (atBottom) view.scrollTop = view.scrollHeight
+          }
         }
       }
 
