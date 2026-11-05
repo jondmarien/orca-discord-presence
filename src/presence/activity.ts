@@ -3,7 +3,7 @@
  *
  * This module is the privacy boundary. Every identifying string must pass a
  * detail-level gate here; nothing downstream re-checks. Unknown agent states
- * never leave this file verbatim — they map to idle.
+ * never leave this file verbatim — they map to a known state.
  *
  * @module presence/activity
  * @author Jonathan Marien
@@ -66,10 +66,10 @@ export type DiscordActivity = {
     large_text: string
     /**
      * Small image key: `state-working` | `state-blocked` | `state-waiting`
-     * | `state-idle`.
+     * | `state-completed` | `state-idle` (each with the asset suffix).
      */
     small_image: string
-    /** Human label matching the small asset (`working`, `idle`, …). */
+    /** Human label matching the small asset (`working`, `completed`, `idle`, …). */
     small_text: string
   }
   /**
@@ -99,15 +99,19 @@ export function localAssetName(key: string): string {
 /**
  * Canonical agent states and their Discord labels / Rich Presence asset
  * keys. Incoming host strings are folded through
- * {@link canonicalizeAgentState} first; anything unknown becomes idle so a
- * future or malformed state can never be transmitted verbatim.
+ * {@link canonicalizeAgentState} first; anything unknown becomes `done`
+ * (completed) so a future or malformed state can never be transmitted
+ * verbatim. `idle` is separate: it means no agent state at all.
  */
 const AGENT_STATE_LABELS = {
   working: { label: 'working', asset: `state-working${DISCORD_ASSET_SUFFIX}` },
   blocked: { label: 'blocked', asset: `state-blocked${DISCORD_ASSET_SUFFIX}` },
   waiting: { label: 'waiting for input', asset: `state-waiting${DISCORD_ASSET_SUFFIX}` },
-  done: { label: 'idle', asset: `state-idle${DISCORD_ASSET_SUFFIX}` }
+  done: { label: 'completed', asset: `state-completed${DISCORD_ASSET_SUFFIX}` }
 } as const
+
+/** Shown when there is no agent state: nothing is running. */
+const IDLE_VISUAL = { label: 'idle', asset: `state-idle${DISCORD_ASSET_SUFFIX}` } as const
 
 /**
  * Truncate to Discord's 128-character text limit, appending an ellipsis.
@@ -117,9 +121,13 @@ function clamp(text: string): string {
 }
 
 /**
- * Map an agent state string to a known label/asset, or idle.
+ * Map an agent state string to a known label/asset. Missing state is idle;
+ * an unknown string is completed (never echoed).
  */
 function agentVisual(state: string | undefined) {
+  if (state === undefined) {
+    return IDLE_VISUAL
+  }
   const canonical = canonicalizeAgentState(state)
   return AGENT_STATE_LABELS[canonical]
 }

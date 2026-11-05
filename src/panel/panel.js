@@ -1,8 +1,25 @@
 var orca = window.orca
 var REQUEST_TIMEOUT_MS = 5000
 var TIMELINE_CELLS = 30
-var STATES = ['working', 'waiting', 'blocked', 'idle']
-var STATE_ASSET_RE = /^state-(working|waiting|blocked|idle)$/
+var STATES = ['working', 'waiting', 'blocked', 'completed', 'idle']
+var STATE_ASSET_RE = /^state-(working|waiting|blocked|completed|idle)$/
+// Why: Orca's `done` is shown as `completed`; the snapshot keeps the raw name.
+function displayState(state) {
+  return state === 'done' ? 'completed' : state
+}
+// Why: the Discord key (minus suffix) names a local file; this map is the one
+// place that decides which file backs each state.
+var STATE_FILES = {
+  working: 'state-working',
+  waiting: 'state-waiting',
+  blocked: 'state-blocked',
+  // TODO(author): switch to state-completed.png once assets/state-completed.png exists
+  completed: 'state-idle',
+  idle: 'state-idle'
+}
+function stateImage(state) {
+  return '../assets/' + (STATE_FILES[state] || STATE_FILES.idle) + '.png'
+}
 var DETAIL_LEVELS = [
   ['off', 'Off'],
   ['generic', 'Generic'],
@@ -122,7 +139,7 @@ function clearChildren(el) {
 // Why: snapshot `sinceMs` is the epoch time the agent entered its state, so
 // the chip shows the age; rows keep their chip nodes for the 1 s tick.
 function chipText(agent) {
-  return (agent.state === 'done' ? 'idle' : agent.state) + ' \u00b7 ' + formatSince(Math.max(0, Date.now() - agent.sinceMs))
+  return displayState(agent.state) + ' \u00b7 ' + formatSince(Math.max(0, Date.now() - agent.sinceMs))
 }
 
 var agentChips = []
@@ -154,7 +171,7 @@ function renderAgents(agents) {
     kind.textContent = String(agent.kind || 'agent')
     var chip = document.createElement('span')
     chip.className = 'chip'
-    var state = agent.state === 'done' ? 'idle' : normalizeState(agent.state)
+    var state = normalizeState(displayState(agent.state))
     chip.setAttribute('data-state', state)
     chip.textContent = chipText(agent)
     agentChips.push({ agent: agent, chip: chip })
@@ -168,7 +185,7 @@ var mixSignature = null
 function renderMix(agents) {
   var counts = {}
   ;(Array.isArray(agents) ? agents : []).forEach(function (agent) {
-    var state = agent.state === 'done' ? 'idle' : normalizeState(agent.state)
+    var state = normalizeState(displayState(agent.state))
     counts[state] = (counts[state] || 0) + 1
   })
   var signature = STATES.map(function (s) {
@@ -195,8 +212,8 @@ function renderCard(snapshot) {
   setText('dcard-details', details, 'Waiting for first update')
   setText('dcard-state', state)
   // Why: the key becomes part of a file path, so only known state assets pass.
-  var key = card && STATE_ASSET_RE.test(card.smallImageKey) ? card.smallImageKey : 'state-idle'
-  setAttr($('dcard-img'), 'src', '../assets/' + key + '.png')
+  var match = card && STATE_ASSET_RE.exec(card.smallImageKey)
+  setAttr($('dcard-img'), 'src', stateImage(match ? match[1] : 'idle'))
   var showTimer = !!(card && card.startMs) && !(snapshot.fields && snapshot.fields.showElapsed === false)
   timerStartMs = showTimer ? card.startMs : null
   setClass($('dcard-timer'), 'hidden', !showTimer)
@@ -216,7 +233,7 @@ function renderMinimal(snapshot, agents) {
   var summary = snapshot.status.lastActivity
   var details = card ? card.details : summary && summary.details
   setAttr($('min-hero'), 'data-state', state)
-  setAttr($('min-img'), 'src', '../assets/' + 'state-' + state + '.png')
+  setAttr($('min-img'), 'src', stateImage(state))
   setText('min-state', state.charAt(0).toUpperCase() + state.slice(1))
   setText('min-details', details ? '\u201c' + details + '\u201d' : '')
   updateMeta()

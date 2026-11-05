@@ -111,6 +111,13 @@ test('aggregate priority is blocked over waiting over working over done', () => 
   expect(table.summarize().agentState).toBe('blocked')
 })
 
+test('one done agent summarizes as done, which the panel shows as completed', () => {
+  const { table } = tableHarness()
+  table.upsert({ workspaceId: 'w', paneKey: '1', state: 'done', receivedAt: 1_000_000 })
+  expect(table.summarize().agentState).toBe('done')
+  expect(table.summarize().agentCount).toBe(1)
+})
+
 test('an empty table has no agent state', () => {
   const { table } = tableHarness()
   expect(table.summarize()).toEqual({

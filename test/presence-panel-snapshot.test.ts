@@ -7,7 +7,8 @@ import {
   formatPanelStatusToast,
   redactPanelLogLine,
   snapshotLeaksSecrets,
-  summarizePanelActivity
+  summarizePanelActivity,
+  summarizePanelAgents
 } from '../src/presence/panel-snapshot'
 import { PLUGIN_VERSION } from '../src/version'
 import type { PresenceStatus } from '../src/presence/controller'
@@ -25,6 +26,13 @@ function statusWith(overrides: Partial<PresenceStatus> = {}): PresenceStatus {
     ...overrides
   }
 }
+
+test('agent rows sort blocked, waiting, working, then done (completed)', () => {
+  const slot = (state: 'working' | 'blocked' | 'waiting' | 'done', receivedAt: number) =>
+    ({ workspaceId: 'w', paneKey: String(receivedAt), canonicalState: state, receivedAt }) as never
+  const rows = summarizePanelAgents([slot('done', 1), slot('working', 2), slot('blocked', 3), slot('waiting', 4)])
+  expect(rows.map((r) => r.state)).toEqual(['blocked', 'waiting', 'working', 'done'])
+})
 
 test('log ring drops the oldest lines once it is full', () => {
   const ring = createLogRing(3)

@@ -3,6 +3,7 @@
   --c-working: #12b8f0;
   --c-waiting: #f5b800;
   --c-blocked: #e81010;
+  --c-completed: #23a55a;
   --c-idle: #9aa3ad;
   --c-none: #262626;
   --c-live: #23a55a;
@@ -120,6 +121,9 @@ body {
 .dot[data-state='blocked'] {
   background: var(--c-blocked);
 }
+.dot[data-state='completed'] {
+  background: var(--c-completed);
+}
 .dot[data-state='idle'] {
   background: var(--c-idle);
 }
@@ -221,6 +225,9 @@ body {
 .strip i[data-state='blocked'] {
   background: var(--c-blocked);
 }
+.strip i[data-state='completed'] {
+  background: var(--c-completed);
+}
 .strip i[data-state='idle'] {
   background: var(--c-idle);
 }
@@ -269,6 +276,9 @@ body {
 .mix i[data-state='blocked'] {
   background: var(--c-blocked);
 }
+.mix i[data-state='completed'] {
+  background: var(--c-completed);
+}
 .mix i[data-state='idle'] {
   background: var(--c-idle);
 }
@@ -298,6 +308,10 @@ body {
 .chip[data-state='blocked'] {
   background: rgba(232, 16, 16, 0.15);
   color: #ff5a5a;
+}
+.chip[data-state='completed'] {
+  background: rgba(35, 165, 90, 0.15);
+  color: #3ecf7a;
 }
 .chip[data-state='idle'] {
   background: rgba(154, 163, 173, 0.15);
@@ -365,6 +379,9 @@ body {
 }
 .hero[data-state='blocked'] {
   --glow: 232, 16, 16;
+}
+.hero[data-state='completed'] {
+  --glow: 35, 165, 90;
 }
 .hero .live {
   font-size: 12px;

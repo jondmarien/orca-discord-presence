@@ -111,24 +111,36 @@ test('machineLabel overrides the detected machine name', () => {
   expect(activity?.state).toBe('work-laptop')
 })
 
-test('agent state done renders as idle with the idle asset', () => {
+test('agent state done renders as completed with the completed asset', () => {
   const activity = buildActivity(
     { ...SNAPSHOT, agentState: 'done' },
     settingsWith({ detailLevel: 'full' }),
     NOW_MS
   )
-  expect(activity?.state).toBe('idle')
-  expect(activity?.assets.small_image).toBe('state-idle-v2')
+  expect(activity?.state).toBe('completed')
+  expect(activity?.assets.small_image).toBe('state-completed-v2')
+  expect(activity?.assets.small_text).toBe('completed')
 })
 
-test('an unrecognized agent state falls back to idle rather than leaking it', () => {
+test('no agent state renders as idle with the idle asset', () => {
   const activity = buildActivity(
-    { ...SNAPSHOT, agentState: 'exfiltrating-secrets' },
+    { ...SNAPSHOT, agentState: undefined },
     settingsWith({ detailLevel: 'full' }),
     NOW_MS
   )
   expect(activity?.state).toBe('idle')
   expect(activity?.assets.small_image).toBe('state-idle-v2')
+  expect(activity?.assets.small_text).toBe('idle')
+})
+
+test('an unrecognized agent state never leaks verbatim', () => {
+  const activity = buildActivity(
+    { ...SNAPSHOT, agentState: 'exfiltrating-secrets' },
+    settingsWith({ detailLevel: 'full' }),
+    NOW_MS
+  )
+  expect(activity?.state).toBe('completed')
+  expect(activity?.assets.small_image).toBe('state-completed-v2')
 })
 
 test('showElapsed emits unix seconds, not milliseconds', () => {
@@ -191,7 +203,7 @@ test('an unrecognized agent state is omitted from the serialized payload', () =>
     NOW_MS
   )
   const serialized = JSON.stringify(activity)
-  expect(activity?.state).toBe('idle')
+  expect(activity?.state).toBe('completed')
   expect(serialized.includes('exfiltrating-secrets')).toBe(false)
 })
 

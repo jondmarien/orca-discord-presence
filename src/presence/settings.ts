@@ -110,8 +110,9 @@ type BooleanSetting = {
 /**
  * Public Discord application id. Not a secret — it rides in every presence
  * payload. The Discord Developer Portal already has this application and the
- * five Rich Presence assets uploaded (`orca`, `state-working`,
- * `state-blocked`, `state-waiting`, `state-idle`).
+ * Rich Presence assets uploaded (`orca`, `state-working`,
+ * `state-blocked`, `state-waiting`, `state-idle`; `state-completed` is being
+ * added).
  */
 export const SHIPPED_APPLICATION_ID = '1545653843239374848'
 

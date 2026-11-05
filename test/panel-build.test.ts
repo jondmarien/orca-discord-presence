@@ -204,7 +204,7 @@ test('full view renders timeline cells', () => {
   // Why: tests only; the hook must not be enumerable on window.
   expect(Object.keys(sandbox).includes('__presencePanel')).toBe(false)
   const timeline: Array<string | null> = Array.from({ length: 30 }, (_, i) =>
-    i < 3 ? null : (['working', 'waiting', 'blocked', 'idle'] as const)[i % 4]
+    i < 3 ? null : (['working', 'waiting', 'blocked', 'completed', 'idle'] as const)[i % 5]
   )
   hook?.render(fullSnapshot(timeline))
   const cells = byId.get('strip')?.children ?? []
@@ -289,7 +289,7 @@ test('minimal view hides full-only sections', async () => {
 
 test('minimal glow follows the current state', async () => {
   const { byId, hook } = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
-  for (const state of ['working', 'waiting', 'blocked', 'idle']) {
+  for (const state of ['working', 'waiting', 'blocked', 'completed', 'idle']) {
     const snap = fullSnapshot([])
     snap.activityCard.smallImageKey = `state-${state}`
     hook?.render(snap)
@@ -299,6 +299,24 @@ test('minimal glow follows the current state', async () => {
   none.activityCard = null as never
   hook?.render(none)
   expect(byId.get('min-hero')?.getAttribute('data-state')).toBe('idle')
+})
+
+test('minimal hero for completed is green-state and falls back to the idle image', async () => {
+  const { byId, hook } = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
+  const snap = fullSnapshot([])
+  snap.activityCard.smallImageKey = 'state-completed'
+  hook?.render(snap)
+  expect(byId.get('min-hero')?.getAttribute('data-state')).toBe('completed')
+  expect(byId.get('min-state')?.textContent).toBe('Completed')
+  // TODO(author): flip to state-completed.png once assets/state-completed.png exists.
+  expect(byId.get('min-img')?.getAttribute('src')).toBe('../assets/state-idle.png')
+  expect(byId.get('dcard-img')?.getAttribute('src')).toBe('../assets/state-idle.png')
+})
+
+test('completed is in the strip legend between waiting and idle', () => {
+  const html = buildPanelHtml()
+  const legend = [...html.matchAll(/<i class="dot" data-state="(\w+)"><\/i>/g)].map((m) => m[1])
+  expect(legend).toEqual(['working', 'waiting', 'blocked', 'completed', 'idle'])
 })
 
 test('settings.set rejection reverts switch', async () => {
@@ -360,4 +378,14 @@ test('agent chip shows time in state, not epoch', () => {
   snap.agents = [{ kind: 'claude', state: 'idle', sinceMs: Date.now() + 60_000 }]
   hook?.render(snap)
   expect(byId.get('agents-list')?.children[0]?.children[1]?.textContent).toBe('idle · 0s')
+})
+
+test('agent chip for a done agent starts with completed', () => {
+  const { byId, hook } = mountPanel()
+  const snap = fullSnapshot([])
+  snap.agents = [{ kind: 'claude', state: 'done', sinceMs: Date.now() - 5_000 }]
+  hook?.render(snap)
+  const chip = byId.get('agents-list')?.children[0]?.children[1]
+  expect(chip?.textContent?.startsWith('completed')).toBe(true)
+  expect(chip?.getAttribute('data-state')).toBe('completed')
 })

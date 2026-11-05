@@ -2,7 +2,7 @@
  * Rolling 30-minute agent-state timeline for the panel.
  *
  * Each minute holds the highest-priority state recorded in it
- * (`blocked > waiting > working > idle`). The worker records on every
+ * (`blocked > waiting > working > completed > idle`). The worker records on every
  * refresh; the panel draws `slots()` as a strip.
  *
  * Why: a minute with no events carries the previous state forward, so a long
@@ -15,8 +15,11 @@
  * @date 2026-11-04
  */
 
-/** States the timeline can hold. `done` is recorded as `idle`. */
-export type TimelineState = 'working' | 'waiting' | 'blocked' | 'idle'
+/**
+ * States the timeline can hold. Orca's `done` is recorded as `completed`;
+ * `idle` means nothing was running (no agents).
+ */
+export type TimelineState = 'working' | 'waiting' | 'blocked' | 'completed' | 'idle'
 
 /** One minute: a state, or `null` for no data. */
 export type TimelineSlot = TimelineState | null
@@ -27,10 +30,25 @@ export const TIMELINE_MINUTES = 30
 const MINUTE_MS = 60_000
 
 const PRIORITY: Record<TimelineState, number> = {
-  blocked: 3,
-  waiting: 2,
-  working: 1,
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  completed: 1,
   idle: 0
+}
+
+/**
+ * Map an agent summary state to the timeline state to record.
+ *
+ * Why: the agent table keeps Orca's canonical name `done`, while the panel
+ * shows it as `completed`; no agents at all is `idle`. Keeping the mapping in
+ * one place stops the worker and the panel disagreeing.
+ *
+ * @param agentState - `AgentSummary.agentState`, or undefined with no agents.
+ * @returns The {@link TimelineState} to record.
+ */
+export function timelineStateFor(agentState: string | undefined): TimelineState {
+  return agentState === undefined ? 'idle' : agentState === 'done' ? 'completed' : (agentState as TimelineState)
 }
 
 /** Construction options for {@link createTimeline}. */

@@ -1073,12 +1073,16 @@ var AGENT_STATE_LABELS = {
   working: { label: "working", asset: `state-working${DISCORD_ASSET_SUFFIX}` },
   blocked: { label: "blocked", asset: `state-blocked${DISCORD_ASSET_SUFFIX}` },
   waiting: { label: "waiting for input", asset: `state-waiting${DISCORD_ASSET_SUFFIX}` },
-  done: { label: "idle", asset: `state-idle${DISCORD_ASSET_SUFFIX}` }
+  done: { label: "completed", asset: `state-completed${DISCORD_ASSET_SUFFIX}` }
 };
+var IDLE_VISUAL = { label: "idle", asset: `state-idle${DISCORD_ASSET_SUFFIX}` };
 function clamp(text) {
   return text.length > DISCORD_TEXT_MAX ? `${text.slice(0, DISCORD_TEXT_MAX - 1)}…` : text;
 }
 function agentVisual(state) {
+  if (state === undefined) {
+    return IDLE_VISUAL;
+  }
   const canonical = canonicalizeAgentState(state);
   return AGENT_STATE_LABELS[canonical];
 }
@@ -1622,11 +1626,15 @@ function buildPresencePanelSnapshot(input) {
 var TIMELINE_MINUTES = 30;
 var MINUTE_MS = 60000;
 var PRIORITY2 = {
-  blocked: 3,
-  waiting: 2,
-  working: 1,
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  completed: 1,
   idle: 0
 };
+function timelineStateFor(agentState) {
+  return agentState === undefined ? "idle" : agentState === "done" ? "completed" : agentState;
+}
 function createTimeline({ now = () => Date.now() } = {}) {
   const buckets = new Map;
   let firstMinute = null;
@@ -1921,7 +1929,7 @@ async function activate(orca) {
     if (options.force) {
       await controller?.forceTransmit(resume);
     }
-    timeline?.record(summary.agentState === undefined || summary.agentState === "done" ? "idle" : summary.agentState);
+    timeline?.record(timelineStateFor(summary.agentState));
     publishPanelSnapshot("debounced");
   }
   pushAgentRefresh = () => {

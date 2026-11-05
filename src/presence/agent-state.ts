@@ -1,9 +1,9 @@
 /**
  * Canonical agent-state aliases for Discord presence.
  *
- * Hosts and agent CLIs emit more strings than the four Rich Presence
+ * Hosts and agent CLIs emit more strings than the Rich Presence
  * assets this plugin ships. Map those aliases here, then render only
- * `working` / `blocked` / `waiting` / idle. Unknown values become idle
+ * `working` / `blocked` / `waiting` / completed. Unknown values become completed
  * so a future or malformed state can never leak verbatim.
  *
  * @module presence/agent-state
@@ -12,8 +12,9 @@
  */
 
 /**
- * The four states this plugin knows how to show. `done` uses the idle
- * asset and the `idle` label in {@link buildActivity}.
+ * The four states this plugin knows how to show. `done` is Orca's name for
+ * a finished agent; it is displayed as `completed` (own asset and label in
+ * {@link buildActivity}), distinct from `idle` (no agents).
  */
 export type CanonicalAgentState = 'working' | 'blocked' | 'waiting' | 'done'
 
@@ -60,7 +61,7 @@ function normalizeStateKey(raw: string): string {
 /**
  * Map a host / CLI agent state to a canonical value.
  *
- * Unknown, empty, and missing strings become `done` (idle on Discord).
+ * Unknown, empty, and missing strings become `done` (completed on Discord).
  *
  * @param raw - `agent.status.changed` `state`, or undefined.
  * @returns One of {@link CanonicalAgentState}.

@@ -33,7 +33,7 @@ import { createPresenceController, type PresenceController } from './presence/co
 import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
 import { buildPresencePanelSnapshot } from './presence/panel-snapshot'
-import { createTimeline } from './presence/timeline'
+import { createTimeline, timelineStateFor } from './presence/timeline'
 import {
   normalizeSettings,
   nextDetailLevel,
@@ -501,10 +501,8 @@ export default async function activate(orca: OrcaHost) {
     if (options.force) {
       await controller?.forceTransmit(resume)
     }
-    // Why: `done` has no timeline colour of its own; it reads as idle.
-    timeline?.record(
-      summary.agentState === undefined || summary.agentState === 'done' ? 'idle' : summary.agentState
-    )
+    // Why: `done` is recorded as `completed`; no agents at all is `idle`.
+    timeline?.record(timelineStateFor(summary.agentState))
     publishPanelSnapshot('debounced')
   }
 

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { createTimeline, TIMELINE_MINUTES } from '../src/presence/timeline'
+import { createTimeline, timelineStateFor, TIMELINE_MINUTES } from '../src/presence/timeline'
 
 const MINUTE = 60_000
 
@@ -26,6 +26,33 @@ test('blocked beats working inside one minute', () => {
   timeline.record('blocked')
   timeline.record('idle')
   expect(timeline.slots()[29]).toBe('blocked')
+})
+
+test('working beats completed inside one minute, in either order', () => {
+  const a = harness()
+  a.timeline.record('completed')
+  a.timeline.record('working')
+  expect(a.timeline.slots()[29]).toBe('working')
+  const b = harness()
+  b.timeline.record('working')
+  b.timeline.record('completed')
+  expect(b.timeline.slots()[29]).toBe('working')
+})
+
+test('completed beats idle inside one minute', () => {
+  const { timeline } = harness()
+  timeline.record('idle')
+  timeline.record('completed')
+  timeline.record('idle')
+  expect(timeline.slots()[29]).toBe('completed')
+})
+
+test('agent summary state maps to a timeline state: done is completed, none is idle', () => {
+  expect(timelineStateFor('done')).toBe('completed')
+  expect(timelineStateFor(undefined)).toBe('idle')
+  expect(timelineStateFor('working')).toBe('working')
+  expect(timelineStateFor('waiting')).toBe('waiting')
+  expect(timelineStateFor('blocked')).toBe('blocked')
 })
 
 test('empty minutes carry forward last state', () => {
