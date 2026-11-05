@@ -3,7 +3,7 @@
 - **Date:** 2026-11-04
 - **Author:** Jonathan Marien (with Claude)
 - **Repos:** `jondmarien/orca-discord-presence` (plugin), `jondmarien/orca` (fork), `stablyai/orca` (upstream)
-- **Status:** Draft — awaiting approval
+- **Status:** Approved 2026-11-04
 
 ## 1. Intent
 
@@ -84,7 +84,7 @@ Repo `jondmarien/orca-discord-presence`, starting from `main` (0.5.0).
 - `manifestVersion: 2`, `execution: "trusted-worker"`, `$schema` set, `publisher` removed, `license` added, `author`/`repository`/`homepage` filled in, and `engines.orca` raised to the newest `Since` of the fields used (≥ `1.4.246` for settings/no-publisher, `1.4.248` if status bar items are used).
 - Capabilities: `workspace:read`, `agent:read`, `storage:own`, `settings:own`, `notifications:show`, plus `secrets:own` for the bridge token (A4).
 - Events: `agent.status.changed`, `workspace.removed`, `workspace.changed`. Drop `workspace.created`: it only triggered a refresh, which `workspace.changed` now covers, and dropping it leaves room for `ui.focus.changed` (fork) within the 4-event cap.
-- Display name changes to avoid leading with the Discord brand. **Name TBD — see §9.**
+- Display name: "Rich Presence for Discord" (§9).
 
 ### A2. Worker migration
 
@@ -180,12 +180,13 @@ Provider-neutral design, so Orca core never touches Discord:
 
 Implementation may use Orca orchestration workers (Sonnet 5.5) for independent tasks, per the author's instruction.
 
-## 9. Open questions for the author
+## 9. Author decisions (2026-11-04)
 
-1. **License** for the plugin (e.g. MIT, matching upstream Orca?).
-2. **Display name** (e.g. "Rich Presence for Discord", "Orca Presence for Discord").
-3. **Where Discord runs** — Windows only, or also on Linux / the Mac mini? This decides relay vs local IPC per machine.
-4. **Fork reset** — is a force-push of fork `main` to upstream `main` OK, given the archive tags are pushed first?
+1. **License:** MIT (`LICENSE` file + `"license": "MIT"`).
+2. **Display name:** "Rich Presence for Discord".
+3. **Discord location:** usually Windows (the paired client), so the relay/companion path is the daily path. Sometimes Vesktop runs on the Linux machine (Arch), where local IPC on the runtime host applies, including the existing Vesktop Flatpak/socket path detection.
+4. **Fork reset:** force-pushing fork `main` (and `develop`) is OK. **Do not force-push or rewrite `feat/plugin-host-presence-apis`**, the branch behind #19023; leave it as is and only close the PR with a comment.
+5. Install-id change and the calls in §10 are approved.
 
 ## 10. Calls made by Claude (please check)
 
