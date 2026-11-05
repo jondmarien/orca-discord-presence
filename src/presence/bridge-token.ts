@@ -76,20 +76,21 @@ export async function loadBridgeToken(host: TokenHost, settingsToken: string): P
 /**
  * Write the bridge token to the same store {@link loadBridgeToken} would read.
  *
- * An empty token deletes the secret. If the secrets write throws, the token is
- * kept in plugin settings so the bridge still works.
+ * An empty token deletes the secret. When a keyring backs secrets and the
+ * write throws, the error propagates and settings stay untouched.
+ *
+ * Why: falling back to settings there would leave the old secret next to a new
+ * plaintext copy, and `loadBridgeToken` reads the stale secret first. Settings
+ * are written only when no keyring can hold the token.
  *
  * @returns The store that now holds the token.
+ * @throws When the keyring write or delete fails.
  */
 export async function saveBridgeToken(host: TokenHost, token: string): Promise<TokenStore> {
   const method = token ? 'secrets.set' : 'secrets.delete'
   if (host.has(method) && (await keyringAvailable(host))) {
-    try {
-      await host.call(method, token ? { key: TOKEN_KEY, value: token } : { key: TOKEN_KEY })
-      return 'secrets'
-    } catch {
-      // Fall through to plugin settings.
-    }
+    await host.call(method, token ? { key: TOKEN_KEY, value: token } : { key: TOKEN_KEY })
+    return 'secrets'
   }
   await host.call('settings.set', { key: TOKEN_KEY, value: token })
   return 'settings'

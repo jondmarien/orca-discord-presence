@@ -495,6 +495,7 @@ export default async function activate(orca: OrcaHost) {
    */
   async function persist(nextSettings: PresenceSettings) {
     const previous = settings
+    let tokenFailure: Error | null = null
     for (const [key, value] of Object.entries(nextSettings)) {
       if (previous[key as keyof PresenceSettings] === value) {
         continue
@@ -509,7 +510,16 @@ export default async function activate(orca: OrcaHost) {
       await write.catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error)
         orca.log(`failed to persist ${key}: ${message}`)
+        // Why: a token the keyring refused must not look saved; the caller
+        // reports it and the old token stays in effect.
+        if (key === 'bridgeToken') {
+          tokenFailure = error instanceof Error ? error : new Error(message)
+        }
       })
+    }
+    if (tokenFailure) {
+      await applySettings({ ...nextSettings, bridgeToken: previous.bridgeToken })
+      throw tokenFailure
     }
     await applySettings(nextSettings)
   }
@@ -706,7 +716,17 @@ export default async function activate(orca: OrcaHost) {
       })
       return { ok: true, ...view, hint, changed: [] }
     }
-    await persist(result.settings)
+    try {
+      await persist(result.settings)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      diagnostics?.line('error', 'presence.configure_failed', { reason: message })
+      await orca.host.call('notifications.show', {
+        title: 'Rich Presence for Discord',
+        body: `Could not save: ${message}`
+      })
+      return { ok: false, error: message, message }
+    }
     await refresh(undefined, { resume: true })
     const view = publicConfigureView(settings)
     diagnostics?.line('info', 'presence.configure', { changed: result.changed })

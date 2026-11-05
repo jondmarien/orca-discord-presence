@@ -469,6 +469,7 @@ async function activateWithSecrets(options: {
   protection: 'os-keyring' | 'unavailable'
   settings: Record<string, unknown>
   secret?: string | null
+  failSecretSet?: boolean
 }) {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-token-'))
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
@@ -500,7 +501,7 @@ async function activateWithSecrets(options: {
           case 'secrets.get':
             return { value: state.secret }
           case 'secrets.set':
-            if (options.protection === 'unavailable') {
+            if (options.protection === 'unavailable' || options.failSecretSet) {
               throw new Error('secrets unavailable')
             }
             secretSets.push({ key: String(args?.key), value: args?.value })
@@ -599,6 +600,19 @@ test('configure writes bridgeToken to secrets and never through settings.set', a
   expect(result.ok).toBe(true)
   expect(result.changed).toEqual(['bridgeToken'])
   expect(run.secretSets).toEqual([{ key: 'bridgeToken', value: 'fresh-token' }])
+  expect(run.settingsSets.some((entry) => entry.key === 'bridgeToken')).toBe(false)
+  expect(run.notifications.join('\n').includes('fresh-token')).toBe(false)
+  await run.finish()
+})
+
+test('configure with a failing keyring returns ok:false and never falls back to settings', async () => {
+  const run = await activateWithSecrets({ protection: 'os-keyring', settings: {}, failSecretSet: true })
+  const result = (await run.handlers.get('presence.configure')?.({ bridgeToken: 'fresh-token' })) as {
+    ok: boolean
+    message?: string
+  }
+  expect(result.ok).toBe(false)
+  expect(result.message).toContain('secrets unavailable')
   expect(run.settingsSets.some((entry) => entry.key === 'bridgeToken')).toBe(false)
   expect(run.notifications.join('\n').includes('fresh-token')).toBe(false)
   await run.finish()

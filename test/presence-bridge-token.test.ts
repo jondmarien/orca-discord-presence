@@ -104,7 +104,7 @@ test('saveBridgeToken writes plugin settings when secrets are unavailable', asyn
   expect(host.calls.at(-1)).toEqual({ method: 'settings.set', args: { key: 'bridgeToken', value: 'tok' } })
 })
 
-test('saveBridgeToken falls back to settings when secrets.set throws', async () => {
+test('saveBridgeToken rethrows and never writes settings when the keyring set throws', async () => {
   const host = fakeHost({
     ...keyring,
     'secrets.set': () => {
@@ -112,8 +112,20 @@ test('saveBridgeToken falls back to settings when secrets.set throws', async () 
     },
     'settings.set': () => null
   })
-  expect(await saveBridgeToken(host, 'tok')).toBe('settings')
-  expect(host.calls.at(-1)?.method).toBe('settings.set')
+  await expect(saveBridgeToken(host, 'tok')).rejects.toThrow('denied')
+  expect(host.calls.some((call) => call.method === 'settings.set')).toBe(false)
+})
+
+test('saveBridgeToken rethrows and never writes settings when the keyring delete throws', async () => {
+  const host = fakeHost({
+    ...keyring,
+    'secrets.delete': () => {
+      throw new Error('denied')
+    },
+    'settings.set': () => null
+  })
+  await expect(saveBridgeToken(host, '')).rejects.toThrow('denied')
+  expect(host.calls.some((call) => call.method === 'settings.set')).toBe(false)
 })
 
 test('migrateSettingsToken moves a settings token into secrets, then blanks the setting', async () => {

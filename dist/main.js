@@ -981,10 +981,8 @@ async function loadBridgeToken(host, settingsToken) {
 async function saveBridgeToken(host, token) {
   const method = token ? "secrets.set" : "secrets.delete";
   if (host.has(method) && await keyringAvailable(host)) {
-    try {
-      await host.call(method, token ? { key: TOKEN_KEY, value: token } : { key: TOKEN_KEY });
-      return "secrets";
-    } catch {}
+    await host.call(method, token ? { key: TOKEN_KEY, value: token } : { key: TOKEN_KEY });
+    return "secrets";
   }
   await host.call("settings.set", { key: TOKEN_KEY, value: token });
   return "settings";
@@ -2107,6 +2105,7 @@ async function activate(orca) {
   }
   async function persist(nextSettings) {
     const previous = settings;
+    let tokenFailure = null;
     for (const [key, value] of Object.entries(nextSettings)) {
       if (previous[key] === value) {
         continue;
@@ -2118,7 +2117,14 @@ async function activate(orca) {
       await write.catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         orca.log(`failed to persist ${key}: ${message}`);
+        if (key === "bridgeToken") {
+          tokenFailure = error instanceof Error ? error : new Error(message);
+        }
       });
+    }
+    if (tokenFailure) {
+      await applySettings({ ...nextSettings, bridgeToken: previous.bridgeToken });
+      throw tokenFailure;
     }
     await applySettings(nextSettings);
   }
@@ -2276,7 +2282,17 @@ async function activate(orca) {
       });
       return { ok: true, ...view, hint, changed: [] };
     }
-    await persist(result.settings);
+    try {
+      await persist(result.settings);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      diagnostics?.line("error", "presence.configure_failed", { reason: message });
+      await orca.host.call("notifications.show", {
+        title: "Rich Presence for Discord",
+        body: `Could not save: ${message}`
+      });
+      return { ok: false, error: message, message };
+    }
     await refresh(undefined, { resume: true });
     const view = publicConfigureView(settings);
     diagnostics?.line("info", "presence.configure", { changed: result.changed });
