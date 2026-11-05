@@ -433,7 +433,8 @@ body {
   cursor: wait;
 }
 .sw:focus-visible,
-.seg button:focus-visible {
+.seg button:focus-visible,
+.icon-btn:focus-visible {
   outline: 2px solid var(--c-working);
   outline-offset: 1px;
 }
@@ -556,11 +557,31 @@ pre.log {
   word-break: break-word;
 }
 
-/* Refresh button: the glyph spins while a refresh request is pending. */
-.seg button .glyph {
-  display: inline-block;
+/* Refresh button: a compact icon button sized to the view switch; the icon spins while pending. */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--muted-fg);
+  cursor: pointer;
 }
-.seg button.spin .glyph {
+.icon-btn:hover:not(:disabled) {
+  color: var(--fg);
+}
+.icon-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.icon-btn .glyph {
+  display: block;
+}
+.icon-btn.spin .glyph {
   animation: refresh-spin 0.8s linear infinite;
 }
 @keyframes refresh-spin {
@@ -569,7 +590,8 @@ pre.log {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .seg button.spin .glyph {
+  .icon-btn.spin .glyph {
     animation: none;
   }
 }
+
