@@ -2051,8 +2051,25 @@ async function activate(orca) {
       return { ok: false, message: error instanceof Error ? error.message : String(error) };
     }
   });
+  const kindLookedUp = new Set;
+  async function syncAgentsFromList() {
+    if (!orca.host.has("agents.list")) {
+      return;
+    }
+    const listed = await orca.host.call("agents.list").catch(() => null);
+    for (const seeded of parseAgentsList(listed, Date.now())) {
+      if (seeded.terminalId) {
+        kindLookedUp.add(seeded.terminalId);
+      }
+      agentTable?.upsert(seeded);
+    }
+  }
   orca.events.on("agent.status.changed", async (payload) => {
     const parsed = parseAgentStatusPayload(payload, Date.now());
+    if (parsed?.terminalId && !kindLookedUp.has(parsed.terminalId)) {
+      kindLookedUp.add(parsed.terminalId);
+      await syncAgentsFromList();
+    }
     await refresh(parsed ?? undefined);
   });
   orca.events.on("workspace.removed", async (payload) => {
@@ -2067,12 +2084,7 @@ async function activate(orca) {
     const context = raw && typeof raw === "object" ? raw : null;
     await refresh(undefined, { context });
   });
-  if (orca.host.has("agents.list")) {
-    const listed = await orca.host.call("agents.list").catch(() => null);
-    for (const seeded of parseAgentsList(listed, Date.now())) {
-      agentTable?.upsert(seeded);
-    }
-  }
+  await syncAgentsFromList();
   if (orca.settings?.onDidChange) {
     settingsSubscription = orca.settings.onDidChange(() => {
       if (settingsChangeTimer) {

@@ -658,8 +658,34 @@ export default async function activate(orca: OrcaHost) {
     }
   })
 
+  /**
+   * Upsert every agent `agents.list` reports, which is the only source of an
+   * agent's kind (`claude`, `codex`, …).
+   *
+   * Why: `agent.status.changed` carries no kind, so an agent started after
+   * activation would show as `agent` forever. Each terminal is looked up once.
+   * Guarded: older Orca and browser clients lack `agents.list`.
+   */
+  const kindLookedUp = new Set<string>()
+  async function syncAgentsFromList() {
+    if (!orca.host.has('agents.list')) {
+      return
+    }
+    const listed = await orca.host.call('agents.list').catch(() => null)
+    for (const seeded of parseAgentsList(listed, Date.now())) {
+      if (seeded.terminalId) {
+        kindLookedUp.add(seeded.terminalId)
+      }
+      agentTable?.upsert(seeded)
+    }
+  }
+
   orca.events.on('agent.status.changed', async (payload) => {
     const parsed = parseAgentStatusPayload(payload, Date.now())
+    if (parsed?.terminalId && !kindLookedUp.has(parsed.terminalId)) {
+      kindLookedUp.add(parsed.terminalId)
+      await syncAgentsFromList()
+    }
     await refresh(parsed ?? undefined)
   })
   orca.events.on('workspace.removed', async (payload) => {
@@ -678,12 +704,7 @@ export default async function activate(orca: OrcaHost) {
   // Why: seed the table with agents already running when the worker starts,
   // so presence is right before the next status event. Guarded: older Orca and
   // browser clients lack `agents.list`.
-  if (orca.host.has('agents.list')) {
-    const listed = await orca.host.call('agents.list').catch(() => null)
-    for (const seeded of parseAgentsList(listed, Date.now())) {
-      agentTable?.upsert(seeded)
-    }
-  }
+  await syncAgentsFromList()
 
   // Why: the person can edit settings in Orca's Settings page while the worker
   // runs. Re-read and apply without a reload. Debounced so a multi-key

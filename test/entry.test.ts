@@ -803,3 +803,53 @@ test('shipped dist entry is Node-compatible ESM with the same exports', async ()
   expect(typeof mod.default).toBe('function')
   expect(typeof mod.deactivate).toBe('function')
 })
+
+test('an agent started after activation gets its kind from agents.list', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-kind-'))
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const { default: activate, deactivate } = await import('../src/main')
+  const panelHandlers = new Map<string, (input: unknown) => unknown>()
+  const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
+  let listed: Array<Record<string, unknown>> = []
+  let listCalls = 0
+  const orca: OrcaHost = {
+    log: () => {},
+    commands: { register: () => {} },
+    events: { on: (event, handler) => void eventHandlers.set(event, handler) },
+    host: {
+      has: (method) => method === 'agents.list',
+      call: async (method) => {
+        if (method === 'settings.get') return { settings: {} }
+        if (method === 'agents.list') {
+          listCalls += 1
+          return { agents: listed }
+        }
+        return null
+      }
+    },
+    panels: {
+      handle: (name, fn) => {
+        panelHandlers.set(name, fn)
+        return { dispose: () => void panelHandlers.delete(name) }
+      },
+      post: () => {}
+    }
+  }
+  await activate(orca)
+  listed = [{ terminalId: 't-late', title: null, agent: 'claude', state: 'working', stateStartedAt: Date.now() }]
+  const event = { workspaceId: 'w1', paneKey: 'tab:leaf', terminalId: 't-late', state: 'working', receivedAt: Date.now() }
+  await eventHandlers.get('agent.status.changed')?.(event)
+  await eventHandlers.get('agent.status.changed')?.(event)
+  const snapshot = (await panelHandlers.get('presence.snapshot')?.(undefined)) as { agents: Array<{ kind: string }> }
+  expect(snapshot.agents.map((row) => row.kind)).toEqual(['claude'])
+  // Why: one lookup per new terminal, not one per event.
+  expect(listCalls).toBe(2)
+  await deactivate()
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
