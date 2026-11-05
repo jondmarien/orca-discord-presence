@@ -138,23 +138,26 @@ The bridge token is not a visible setting. Set it with **Rich Presence: Configur
 | Terminals | `3 terminals` | `showTerminals` | off |
 | Machine | `jon-desktop` | `showMachine` and detail not `generic` | off |
 | Elapsed | start timestamp | `showElapsed` | on |
-| Assets | large `orca`, small `state-*` | any activity | n/a |
+| Assets | large `orca-v2`, small badge (`working`, `completed`, ...) | any activity | n/a |
 
 You cannot see your own Rich Presence buttons on your profile. Check with a second Discord account.
 
 ### Presence look
 
-Every activity uses large image `orca` plus one small `state-*` image:
+Every activity uses large image `orca-v2` plus one small badge image named after the state:
 
 | State | Asset key | Preview |
 |---|---|---|
-| any | `orca` | <img src="assets/orca.png" width="64" alt="orca" /> |
-| working | `state-working` | <img src="assets/state-working.png" width="48" alt="state-working" /> |
-| blocked | `state-blocked` | <img src="assets/state-blocked.png" width="48" alt="state-blocked" /> |
-| waiting for input | `state-waiting` | <img src="assets/state-waiting.png" width="48" alt="state-waiting" /> |
-| done, unknown | `state-idle` | <img src="assets/state-idle.png" width="48" alt="state-idle" /> |
+| any (large) | `orca-v2` | <img src="assets/orca.png" width="64" alt="orca-v2" /> |
+| working | `working` | <img src="assets/working.png" width="48" alt="working" /> |
+| blocked | `blocked` | <img src="assets/blocked.png" width="48" alt="blocked" /> |
+| waiting for input | `waiting` | <img src="assets/waiting.png" width="48" alt="waiting" /> |
+| completed | `completed` | <img src="assets/completed.png" width="48" alt="completed" /> |
+| idle, unknown | `idle` | <img src="assets/idle.png" width="48" alt="idle" /> |
 
-Aliases fold into these before anything is sent: `running` and `active` map to working, `error` and `failed` to blocked, `needs_input` to waiting, `complete` and `finished` to done. Unrecognized strings become idle and never appear in the payload.
+The Discord application must have these six keys uploaded under Rich Presence > Art Assets. The shipped application already does. If you use your own Application ID, upload `orca-v2` and the five badges from `assets/` under exactly those names, or the images will not show.
+
+Aliases fold into these before anything is sent: `running` and `active` map to working, `error` and `failed` to blocked, `needs_input` to waiting, `complete` and `finished` to done. Unrecognized strings become `idle` and never appear in the payload.
 
 ## How it works
 
