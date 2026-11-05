@@ -782,9 +782,11 @@ function createAgentTable({
       const title = event.title ?? map.get(key)?.title;
       const previous = map.get(key);
       const workspaceId = event.workspaceId || previous?.workspaceId || "";
-      const stateStartedAt = previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined ? previous.stateStartedAt : event.stateStartedAt ?? event.receivedAt;
+      const newerStart = event.stateStartedAt !== undefined && previous?.stateStartedAt !== undefined && event.stateStartedAt > previous.stateStartedAt;
+      const stateStartedAt = previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined && !newerStart ? previous.stateStartedAt : event.stateStartedAt ?? event.receivedAt;
       const finished = canonicalState === "done" || canonicalState === "idle";
-      const receivedAt = finished && previous?.canonicalState === canonicalState ? previous.receivedAt : event.receivedAt;
+      const keepReceived = finished && previous?.canonicalState === canonicalState && !newerStart;
+      const receivedAt = keepReceived ? previous.receivedAt : event.receivedAt;
       map.set(key, {
         workspaceId,
         paneKey: event.paneKey,
@@ -2129,7 +2131,8 @@ async function activate(orca, deps = {}) {
     diagnostics?.setDebugEnabled(nextSettings.debugLogging);
     if (applicationIdChanged || clientChanged || options.rebind) {
       diagnostics?.line("info", applicationIdChanged ? "discord.app_id_rebind" : "discord.client_rebind", applicationIdChanged ? { applicationId: nextSettings.applicationId } : { client: nextSettings.discordClient });
-      const held = controller?.status().heldClear ?? false;
+      const userChanged = applicationIdChanged || clientChanged;
+      const held = !userChanged && (controller?.status().heldClear ?? false);
       await controller?.stop();
       controller = createController(nextSettings);
       if (held) {

@@ -764,6 +764,32 @@ test('a Clear hold survives a redetect rebuild; the next agent event releases it
   }
 })
 
+test('choosing a Discord client after Clear releases the hold and publishes', async () => {
+  const discord = { id: 'discord:0', label: 'Discord', path: '/run/user/1/discord-ipc-0' }
+  const vesktop = { id: 'vesktop:0', label: 'Vesktop', path: '/run/user/1/app/dev.vencord.Vesktop/discord-ipc-0' }
+  const fake = fakeDiscordClients()
+  const run = await activateWithSecrets({
+    protection: 'unavailable',
+    settings: {},
+    deps: { detect: async () => [discord, vesktop], createClient: fake.createClient }
+  })
+  try {
+    await wait(100)
+    await run.handlers.get('presence.status')?.()
+    await run.handlers.get('presence.clear')?.()
+    const clientsBefore = fake.created.length
+    fake.sets.length = 0
+    run.state.stored = { ...run.state.stored, discordClient: 'vesktop:0' }
+    run.feed()
+    await wait(600)
+    expect(fake.created.length).toBe(clientsBefore + 1)
+    // Why: a setting the person changed is an action; the new client publishes.
+    expect(fake.sets.includes(clientsBefore)).toBe(true)
+  } finally {
+    await run.finish()
+  }
+})
+
 test('a settings re-read does not wipe a secrets-held token', async () => {
   const seen: string[] = []
   const server = Bun.serve({

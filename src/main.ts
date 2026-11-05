@@ -498,9 +498,12 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
           : { client: nextSettings.discordClient }
       )
       // Why: Rich Presence: Clear holds republishing until the next agent or
-      // workspace event. The replacement controller must inherit that hold,
-      // or the next heartbeat would publish against the person's choice.
-      const held = controller?.status().heldClear ?? false
+      // workspace event. An automatic rebind (re-detection switching clients)
+      // must inherit that hold, or the next heartbeat would publish against the
+      // person's choice. A setting the person changed is itself an action, so it
+      // releases the hold, the same as other settings do via setSettings.
+      const userChanged = applicationIdChanged || clientChanged
+      const held = !userChanged && (controller?.status().heldClear ?? false)
       await controller?.stop()
       controller = createController(nextSettings)
       if (held) {
