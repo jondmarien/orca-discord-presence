@@ -136,7 +136,7 @@ test('built panel script runs against a frozen window.orca', () => {
   expect(byId.get('app')?.className.includes('hidden')).toBe(true)
 })
 
-function fullSnapshot(timeline: Array<string | null>) {
+function fullSnapshot(timeline: Array<string[] | null>) {
   return {
     version: '1.0.0',
     generatedAt: '2026-11-04T20:00:00.000Z',
@@ -212,14 +212,14 @@ test('full view renders timeline cells', () => {
   expect(hook).toBeDefined()
   // Why: tests only; the hook must not be enumerable on window.
   expect(Object.keys(sandbox).includes('__presencePanel')).toBe(false)
-  const timeline: Array<string | null> = Array.from({ length: 30 }, (_, i) =>
-    i < 3 ? null : (['working', 'waiting', 'blocked', 'completed', 'idle'] as const)[i % 5]
+  const timeline: Array<string[] | null> = Array.from({ length: 30 }, (_, i) =>
+    i < 3 ? null : [(['working', 'waiting', 'blocked', 'completed', 'idle'] as const)[i % 5]]
   )
   hook?.render(fullSnapshot(timeline))
   const cells = byId.get('strip')?.children ?? []
   expect(cells.length).toBe(30)
   cells.forEach((cell, i) => {
-    expect(cell.getAttribute('data-state')).toBe(timeline[i] ?? 'none')
+    expect(cell.getAttribute('data-state')).toBe(timeline[i]?.[0] ?? 'none')
   })
   // A shorter or missing timeline still renders 30 "no data" cells.
   hook?.render(fullSnapshot([]))
@@ -229,7 +229,7 @@ test('full view renders timeline cells', () => {
 
 test('full view renders card, tiles and agent rows', () => {
   const { byId, hook } = mountPanel()
-  hook?.render(fullSnapshot(Array.from({ length: 30 }, () => 'working')))
+  hook?.render(fullSnapshot(Array.from({ length: 30 }, () => ['working'])))
   expect(byId.get('dcard-details')?.textContent).toBe('Working in Orca')
   expect(byId.get('dcard-state')?.textContent).toBe('Agent working · 3 agents')
   expect(byId.get('dcard-img')?.getAttribute('src')).toBe('../assets/state-working.png')
@@ -282,7 +282,7 @@ test('view switch persists the choice with storage.set', async () => {
 
 test('minimal view hides full-only sections', async () => {
   const { byId, hook } = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
-  hook?.render(fullSnapshot(Array.from({ length: 30 }, () => 'working')))
+  hook?.render(fullSnapshot(Array.from({ length: 30 }, () => ['working'])))
   await settle()
   for (const id of FULL_ONLY) expect(hidden(byId, id)).toBe(true)
   expect(hidden(byId, 'min-hero')).toBe(false)
@@ -512,4 +512,34 @@ test('client picker writes discordClient and reverts on rejection', async () => 
   expect(buttons[0].className.includes('on')).toBe(true)
   expect(buttons[2].className.includes('on')).toBe(false)
   expect(buttons[2].disabled).toBe(false)
+})
+
+test('strip cell stacks one segment per state; one state stays solid', () => {
+  const { byId, hook } = mountPanel()
+  const timeline: Array<string[] | null> = Array.from({ length: 30 }, () => ['working'])
+  timeline[28] = ['working', 'completed']
+  timeline[27] = ['blocked', 'waiting', 'idle']
+  hook?.render(fullSnapshot(timeline))
+  const cells = byId.get('strip')?.children ?? []
+  expect(cells[28].getAttribute('data-state')).toBe('working')
+  expect(cells[28].getAttribute('data-states')).toBe('working completed')
+  expect(cells[28].children.map((c) => c.getAttribute('data-state'))).toEqual(['working', 'completed'])
+  expect(cells[27].getAttribute('data-state')).toBe('blocked')
+  expect(cells[27].children.map((c) => c.getAttribute('data-state'))).toEqual(['blocked', 'waiting', 'idle'])
+  // One state: solid cell, no segments, same data-state as before.
+  expect(cells[29].getAttribute('data-state')).toBe('working')
+  expect(cells[29].children.length).toBe(0)
+  // Back to one state removes the segments; null is "no data".
+  timeline[28] = ['working']
+  timeline[27] = null
+  hook?.render(fullSnapshot(timeline))
+  expect(cells[28].children.length).toBe(0)
+  expect(cells[27].getAttribute('data-state')).toBe('none')
+  expect(cells[27].children.length).toBe(0)
+})
+
+test('strip still accepts a bare string slot as one state', () => {
+  const { byId, hook } = mountPanel()
+  hook?.render(fullSnapshot(Array.from({ length: 30 }, () => 'idle' as never)))
+  expect(byId.get('strip')?.children[0].getAttribute('data-state')).toBe('idle')
 })

@@ -574,8 +574,10 @@ export default async function activate(orca: OrcaHost) {
     if (options.force) {
       await controller?.forceTransmit(resume)
     }
-    // Why: `done` is recorded as `completed`; no agents at all is `idle`.
-    timeline?.record(timelineStateFor(summary.agentState))
+    // Why: every agent's state is recorded, so a minute with one working and
+    // two completed agents shows both. `done` is recorded as `completed`; no
+    // agents at all records `[]`, which is `idle`.
+    timeline?.record((agentTable?.slots() ?? []).map((slot) => timelineStateFor(slot.canonicalState)))
     persistTimeline()
     publishPanelSnapshot('debounced')
   }

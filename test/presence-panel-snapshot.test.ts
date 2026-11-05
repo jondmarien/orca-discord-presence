@@ -154,7 +154,7 @@ test('snapshot agents expose only kind/state/sinceMs', () => {
     version: '1.0.0',
     status: statusWith(),
     settings: DEFAULT_SETTINGS,
-    timeline: ['idle', null, 'working'],
+    timeline: [['idle'], null, ['working', 'completed']],
     logs: [],
     agents: [
       { workspaceId: 'secret-ws', paneKey: 'secret-pane', terminalId: 'term-secret', rawState: 'running', canonicalState: 'working', receivedAt: 200 },
@@ -170,7 +170,7 @@ test('snapshot agents expose only kind/state/sinceMs', () => {
     { kind: 'claude', state: 'working', sinceMs: 100 },
     { kind: 'agent', state: 'working', sinceMs: 200 }
   ])
-  expect(snapshot.timeline).toEqual(['idle', null, 'working'])
+  expect(snapshot.timeline).toEqual([['idle'], null, ['working', 'completed']])
   expect(snapshotLeaksSecrets(snapshot, ['secret-ws', 'secret-pane', 'term-secret'])).toBe(false)
 })
 

@@ -143,6 +143,15 @@ function buildStrip() {
   }
 }
 
+// Why: a minute lists every state present, strongest first. One state keeps the
+// cell solid; several stack as equal segments inside it. `data-state` stays the
+// strongest so the cell colour rule is unchanged. A bare string (older worker)
+// reads as a single state.
+function slotStates(slot) {
+  if (Array.isArray(slot)) return slot.filter(function (s) { return STATES.indexOf(s) !== -1 })
+  return STATES.indexOf(slot) === -1 ? [] : [slot]
+}
+
 function renderStrip(timeline) {
   var cells = $('strip').children
   var slots = Array.isArray(timeline) ? timeline : []
@@ -150,8 +159,21 @@ function renderStrip(timeline) {
   var offset = TIMELINE_CELLS - Math.min(slots.length, TIMELINE_CELLS)
   var start = Math.max(0, slots.length - TIMELINE_CELLS)
   for (var i = 0; i < cells.length; i += 1) {
-    var slot = i < offset ? null : slots[start + i - offset]
-    setAttr(cells[i], 'data-state', normalizeState(slot))
+    var states = i < offset ? [] : slotStates(slots[start + i - offset])
+    var cell = cells[i]
+    setAttr(cell, 'data-state', states.length ? states[0] : 'none')
+    setClass(cell, 'multi', states.length > 1)
+    var joined = states.join(' ')
+    if ((cell.getAttribute('data-states') || '') === joined) continue
+    setAttr(cell, 'data-states', joined)
+    clearChildren(cell)
+    if (states.length > 1) {
+      states.forEach(function (state) {
+        var seg = document.createElement('b')
+        seg.setAttribute('data-state', state)
+        cell.appendChild(seg)
+      })
+    }
   }
 }
 

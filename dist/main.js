@@ -1779,6 +1779,16 @@ function timelineStateFor(agentState) {
   return agentState === undefined ? "idle" : agentState === "done" ? "completed" : agentState;
 }
 var TIMELINE_STATES = new Set(["working", "waiting", "blocked", "completed", "idle"]);
+function orderStates(states) {
+  const unique = [...new Set(states)].sort((a, b) => PRIORITY2[b] - PRIORITY2[a]);
+  const active = unique.filter((state) => state !== "idle");
+  return active.length > 0 ? active : ["idle"];
+}
+function toStateList(value) {
+  const items = Array.isArray(value) ? value : [value];
+  const states = items.filter(isState);
+  return states.length > 0 ? orderStates(states) : null;
+}
 function createTimeline({ now = () => Date.now(), restore } = {}) {
   const buckets = new Map;
   let firstMinute = null;
@@ -1789,10 +1799,11 @@ function createTimeline({ now = () => Date.now(), restore } = {}) {
     }
     if (Array.isArray(dump.buckets)) {
       for (const entry of dump.buckets) {
-        if (!Array.isArray(entry) || typeof entry[0] !== "number" || !isState(entry[1])) {
+        const seen = Array.isArray(entry) && typeof entry[0] === "number" ? toStateList(entry[1]) : null;
+        if (!Array.isArray(entry) || !seen) {
           continue;
         }
-        buckets.set(entry[0], { top: entry[1], last: isState(entry[2]) ? entry[2] : entry[1] });
+        buckets.set(entry[0], { seen, last: toStateList(entry[2]) ?? seen });
       }
     }
   }
@@ -1811,15 +1822,16 @@ function createTimeline({ now = () => Date.now(), restore } = {}) {
     }
   }
   return {
-    record(state) {
+    record(states) {
       const minute = Math.floor(now() / MINUTE_MS);
       if (firstMinute === null) {
         firstMinute = minute;
       }
+      const latest = orderStates(states);
       const existing = buckets.get(minute);
       buckets.set(minute, {
-        top: existing && PRIORITY2[existing.top] >= PRIORITY2[state] ? existing.top : state,
-        last: state
+        seen: orderStates([...existing?.seen ?? [], ...latest]),
+        last: latest
       });
       prune(minute);
     },
@@ -1842,10 +1854,10 @@ function createTimeline({ now = () => Date.now(), restore } = {}) {
           continue;
         }
         if (own) {
-          out.push(own.top);
+          out.push([...own.seen]);
           carried = own.last;
         } else {
-          out.push(carried);
+          out.push(carried ? [...carried] : null);
         }
       }
       return out;
@@ -1853,7 +1865,7 @@ function createTimeline({ now = () => Date.now(), restore } = {}) {
     toJSON() {
       return {
         first: firstMinute,
-        buckets: [...buckets.entries()].map(([minute, bucket]) => [minute, bucket.top, bucket.last])
+        buckets: [...buckets.entries()].map(([minute, bucket]) => [minute, [...bucket.seen], [...bucket.last]])
       };
     }
   };
@@ -2142,7 +2154,7 @@ async function activate(orca) {
     if (options.force) {
       await controller?.forceTransmit(resume);
     }
-    timeline?.record(timelineStateFor(summary.agentState));
+    timeline?.record((agentTable?.slots() ?? []).map((slot) => timelineStateFor(slot.canonicalState)));
     persistTimeline();
     publishPanelSnapshot("debounced");
   }

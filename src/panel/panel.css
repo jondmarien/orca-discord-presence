@@ -231,6 +231,31 @@ body {
 .strip i[data-state='idle'] {
   background: var(--c-idle);
 }
+.strip i.multi {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: none;
+}
+.strip i b {
+  flex: 1;
+  background: var(--c-none);
+}
+.strip i b[data-state='working'] {
+  background: var(--c-working);
+}
+.strip i b[data-state='waiting'] {
+  background: var(--c-waiting);
+}
+.strip i b[data-state='blocked'] {
+  background: var(--c-blocked);
+}
+.strip i b[data-state='completed'] {
+  background: var(--c-completed);
+}
+.strip i b[data-state='idle'] {
+  background: var(--c-idle);
+}
 .leg {
   display: flex;
   gap: 10px;
