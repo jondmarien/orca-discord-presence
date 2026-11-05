@@ -308,6 +308,29 @@ body {
   text-overflow: ellipsis;
   color: var(--orca-foreground, #ececec);
 }
+.agent-label .title-inner {
+  display: inline-block;
+}
+.agent-label .title.marquee {
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 12px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 12px), transparent 100%);
+}
+.agent-label .title.marquee .title-inner {
+  padding-right: 12px;
+  animation: marquee var(--marquee-duration, 8s) ease-in-out infinite alternate;
+}
+.agent-row:hover .title.marquee .title-inner {
+  animation-play-state: paused;
+}
+@keyframes marquee {
+  0%, 15% { transform: translateX(0); }
+  85%, 100% { transform: translateX(calc(var(--marquee-shift, 0px) - 12px)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-label .title.marquee { text-overflow: ellipsis; -webkit-mask-image: none; mask-image: none; }
+  .agent-label .title.marquee .title-inner { animation: none; padding-right: 0; }
+}
 .chip {
   flex: none;
   font-size: 11px;

@@ -395,7 +395,10 @@ test('agent row shows kind, muted separator and title; title-less row shows only
   hook?.render(snap)
   const [titled, plain] = byId.get('agents-list')?.children ?? []
   const label = titled?.children[0]
-  expect(label?.children.map((c) => c.textContent)).toEqual(['claude', ' | ', 'Fix login bug'])
+  // Why: the shim's textContent does not aggregate children; the title text sits in .title-inner.
+  const text = (c: FakeElement) => c.children[0]?.textContent ?? c.textContent
+  expect(label?.children.map(text)).toEqual(['claude', ' | ', 'Fix login bug'])
+  expect(label?.children[2]?.children[0]?.className).toBe('title-inner')
   expect(label?.children[1]?.className).toContain('sep')
   expect(label?.children[2]?.className).toContain('title')
   expect(titled?.children[1]?.textContent?.startsWith('working')).toBe(true)
@@ -413,7 +416,7 @@ test('agent rows rebuild when only the title changes', () => {
   expect(byId.get('agents-list')?.children[0]).toBe(first)
   snap.agents = [{ kind: 'claude', title: 'Two', state: 'working', sinceMs: since }]
   hook?.render(snap)
-  expect(byId.get('agents-list')?.children[0]?.children[0]?.children[2]?.textContent).toBe('Two')
+  expect(byId.get('agents-list')?.children[0]?.children[0]?.children[2]?.children[0]?.textContent).toBe('Two')
 })
 
 test('agent chip for a done agent starts with completed', () => {

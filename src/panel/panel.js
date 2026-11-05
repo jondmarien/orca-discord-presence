@@ -95,6 +95,30 @@ function formatElapsed(ms) {
   return pad(Math.floor(total / 3600)) + ':' + pad(Math.floor((total % 3600) / 60)) + ':' + pad(total % 60)
 }
 
+// Why: long chat names are truncated; scroll the overflowing ones back and forth
+// so they stay readable. Measured after layout; reduced motion keeps the
+// ellipsis and the hover tooltip instead (see panel.css).
+var marqueeTitles = []
+var MARQUEE_PX_PER_S = 30
+function scheduleMarquee() {
+  // Why: measure after layout; environments without a frame callback (tests)
+  // simply skip the marquee.
+  if (typeof window.requestAnimationFrame !== 'function') return
+  window.requestAnimationFrame(function () {
+    marqueeTitles.forEach(function (title) {
+      var overflow = title.scrollWidth - title.clientWidth
+      if (overflow > 2) {
+        title.classList.add('marquee')
+        title.style.setProperty('--marquee-shift', -overflow + 'px')
+        // Pause ~1.5s at each end; the slide itself runs at a steady speed.
+        title.style.setProperty('--marquee-duration', (overflow / MARQUEE_PX_PER_S) * 2 + 3 + 's')
+      } else {
+        title.classList.remove('marquee')
+      }
+    })
+  })
+}
+
 function formatSince(ms) {
   var s = Math.max(0, Math.floor(ms / 1000))
   if (s < 60) return s + 's'
@@ -164,6 +188,7 @@ function renderAgents(agents) {
   var box = $('agents-list')
   clearChildren(box)
   agentChips = []
+  marqueeTitles = []
   list.forEach(function (agent) {
     var row = document.createElement('div')
     row.className = 'agent-row'
@@ -180,9 +205,14 @@ function renderAgents(agents) {
       sep.textContent = ' | '
       var title = document.createElement('span')
       title.className = 'title'
-      title.textContent = String(agent.title)
+      title.setAttribute('title', String(agent.title))
+      var inner = document.createElement('span')
+      inner.className = 'title-inner'
+      inner.textContent = String(agent.title)
+      title.appendChild(inner)
       label.appendChild(sep)
       label.appendChild(title)
+      marqueeTitles.push(title)
     }
     var chip = document.createElement('span')
     chip.className = 'chip'
@@ -194,6 +224,7 @@ function renderAgents(agents) {
     row.appendChild(chip)
     box.appendChild(row)
   })
+  scheduleMarquee()
 }
 
 var mixSignature = null
