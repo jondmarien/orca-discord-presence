@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import vm from 'node:vm'
 import { dirname, join } from 'node:path'
@@ -82,6 +82,18 @@ test('manifest identity is jondmarien.discord-presence on manifest v2', () => {
   expect(LOG_PLUGIN_ID).toBe('jondmarien.discord-presence')
   expect(LOG_DIR_NAME).toBe('jondmarien-discord-presence')
   expect(readFileSync(join(root, 'LICENSE'), 'utf8').includes('Copyright (c) 2026 Jonathan Marien')).toBe(true)
+})
+
+test('manifest icon and cover point at real files with alt text', () => {
+  const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')) as {
+    icon?: string
+    cover?: { path: string; alt: string }
+  }
+  expect(manifest.icon).toBe('assets/icon.png')
+  expect(existsSync(join(root, manifest.icon as string))).toBe(true)
+  expect(manifest.cover?.path).toBe('assets/cover.png')
+  expect(existsSync(join(root, manifest.cover?.path as string))).toBe(true)
+  expect((manifest.cover?.alt ?? '').length).toBeGreaterThan(0)
 })
 
 test('activate and deactivate exports are functions', async () => {

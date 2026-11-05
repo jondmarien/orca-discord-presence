@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8">
+<!--
+  Cover B for the plugin page, 1600x1000. Mockup values (640x400) scaled 2.5x.
+  Why: rendered once to assets/cover.png by scripts/render-cover.sh; the PNG is committed, this page is not shipped.
+-->
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1600px; height: 1000px; overflow: hidden; }
+  body { position: relative; font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #f2f3f5; background: linear-gradient(135deg, #0b1a24 0%, #111214 55%, #1d1410 100%); }
+  .left { position: absolute; left: 100px; top: 140px; width: 700px; }
+  h1 { margin: 0 0 25px; font-size: 85px; line-height: 1.1; font-weight: 700; }
+  p { margin: 0 0 45px; color: #b5bac1; font-size: 35px; }
+  .icons { display: flex; gap: 25px; }
+  .icons img { width: 130px; height: 130px; }
+  .dcard { position: absolute; right: 100px; top: 275px; width: 625px; background: #232428; border-radius: 25px; padding: 30px; border: 2.5px solid #2f3136; box-shadow: 0 50px 150px rgba(0, 0, 0, .5); }
+  .kicker { font-size: 27.5px; font-weight: 700; color: #b5bac1; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 20px; }
+  .row { display: flex; align-items: flex-start; gap: 30px; }
+  .row img { width: 160px; height: 160px; border-radius: 30px; }
+  .t1 { font-size: 40px; font-weight: 700; color: #f2f3f5; }
+  .t2, .t3 { color: #dbdee1; font-size: 30px; }
+  .t4 { color: #23a55a; font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+</style>
+<div class="left">
+  <h1>Rich Presence for Discord</h1>
+  <p>Workspace and agent state on your Discord profile. Every field opt-in.</p>
+  <div class="icons">
+    <img src="../../assets/state-working.png" alt="">
+    <img src="../../assets/state-waiting.png" alt="">
+    <img src="../../assets/state-blocked.png" alt="">
+    <img src="../../assets/state-idle.png" alt="">
+  </div>
+</div>
+<div class="dcard">
+  <div class="kicker">Playing a game</div>
+  <div class="row">
+    <img src="../../assets/state-working.png" alt="">
+    <div>
+      <div class="t1">Orca</div>
+      <div class="t2">Working in Orca</div>
+      <div class="t3">Agent working · 3 agents</div>
+      <div class="t4">00:42:17 elapsed</div>
+    </div>
+  </div>
+</div>
