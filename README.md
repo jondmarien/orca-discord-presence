@@ -18,6 +18,9 @@
 
 </div>
 
+<img width="1400" height="520" alt="image" src="https://github.com/user-attachments/assets/d8cf8947-c451-4e29-92f7-1a2cd271227d" />
+
+
 Default Discord copy is **`Working in Orca`** plus optional agent state and an elapsed timer. Repo, branch, and machine names stay off until you raise the detail level. You do **not** need your own Discord application — the plugin ships Application ID `1545653843239374848` (public snowflake; no bot token, no client secret).
 
 Browser Discord has **no** IPC socket. Presence needs the **desktop** client (Discord, Vesktop + arRPC, or Vencord-with-RPC) on the Orca host **or** on a [companion](#dual-host-companion).
