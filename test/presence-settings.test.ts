@@ -1,8 +1,12 @@
 import { expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_OPEN_BUTTON_LABEL,
   DEFAULT_SETTINGS,
   DETAIL_LEVELS,
+  SETTING_KEYS_DECLARED,
   SHIPPED_APPLICATION_ID,
   normalizeOpenButtonLabel,
   normalizeOpenUrl,
@@ -131,4 +135,42 @@ test('normalizeSettings accepts openUrl and drops an invalid one', () => {
     'https://example.com/x'
   )
   expect(normalizeSettings({ openUrl: 'http://example.com' }).openUrl).toBe('')
+})
+
+test('declared settings match DEFAULT_SETTINGS', () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')) as {
+    contributes: {
+      settings: Array<{
+        key: string
+        type: string
+        description?: string
+        default: unknown
+        enum?: string[]
+        enumLabels?: string[]
+        maxLength?: number
+      }>
+    }
+  }
+  const entries = manifest.contributes.settings
+  expect(entries.length).toBeLessThanOrEqual(64)
+  expect(entries.map((entry) => entry.key).sort()).toEqual([...SETTING_KEYS_DECLARED].sort())
+  expect(entries.some((entry) => entry.key === 'bridgeToken')).toBe(false)
+  expect(SETTING_KEYS_DECLARED).not.toContain('bridgeToken')
+  expect(SETTING_KEYS_DECLARED).toHaveLength(Object.keys(DEFAULT_SETTINGS).length - 1)
+  for (const key of SETTING_KEYS_DECLARED) {
+    const entry = entries.find((candidate) => candidate.key === key)
+    expect(entry).toBeDefined()
+    const expected = key === 'machineLabel' ? '' : DEFAULT_SETTINGS[key]
+    expect(entry?.default).toBe(expected as string | boolean)
+    expect(entry?.type).toBe(typeof expected)
+  }
+  const byKey = (key: string) => entries.find((entry) => entry.key === key)
+  expect(byKey('detailLevel')?.enum).toEqual(['off', 'generic', 'workspace', 'full'])
+  expect(byKey('detailLevel')?.enumLabels).toEqual(['Off', 'Generic', 'Workspace', 'Full'])
+  expect(byKey('applicationId')?.maxLength).toBe(20)
+  expect(byKey('openButtonLabel')?.maxLength).toBe(32)
+  expect(byKey('openUrl')?.maxLength).toBe(512)
+  expect(byKey('bridgeUrl')?.maxLength).toBe(512)
+  expect(byKey('bridgeUrl')?.description?.toLowerCase()).toContain('companion')
 })

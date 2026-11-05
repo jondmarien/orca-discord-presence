@@ -420,6 +420,88 @@ test('activate succeeds when host.has returns false for everything', async () =>
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('settings.onDidChange re-reads, applies once, and rebinds on a new Application ID', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-ondidchange-'))
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
+  const { default: activate, deactivate } = await import('../src/main')
+  const hostLines: string[] = []
+  const sets: string[] = []
+  const handlers = new Map<string, () => Promise<unknown>>()
+  let stored: Record<string, unknown> = {}
+  let feed: ((e: { key: string }) => void) | null = null
+  let disposed = false
+  const orca: OrcaHost = {
+    log: (message) => {
+      hostLines.push(message)
+    },
+    commands: { register: (id, handler) => handlers.set(id, handler) },
+    events: { on: () => {} },
+    host: {
+      has: () => false,
+      call: async (method, args) => {
+        if (method === 'settings.get') {
+          return { settings: stored }
+        }
+        if (method === 'settings.set') {
+          sets.push(String(args?.key))
+          return null
+        }
+        return null
+      }
+    },
+    settings: {
+      onDidChange: (handler) => {
+        feed = handler
+        return {
+          dispose: () => {
+            disposed = true
+          }
+        }
+      }
+    }
+  }
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  const detail = async () => ((await handlers.get('presence.status')?.()) as { detailLevel: string }).detailLevel
+  await activate(orca)
+  expect(feed).not.toBeNull()
+  expect(await detail()).toBe('generic')
+
+  stored = { detailLevel: 'full' }
+  feed!({ key: 'detailLevel' })
+  await wait(400)
+  expect(await detail()).toBe('full')
+  expect(hostLines.some((line) => line.includes('discord.app_id_rebind'))).toBe(false)
+
+  stored = { detailLevel: 'full', applicationId: '1234567890123456789' }
+  feed!({ key: 'applicationId' })
+  feed!({ key: 'detailLevel' })
+  await wait(400)
+  expect(hostLines.filter((line) => line.includes('discord.app_id_rebind'))).toHaveLength(1)
+  // Applying a host-originated change must not echo writes back to the host.
+  expect(sets).toEqual([])
+
+  // persist skips unchanged keys and never writes bridgeToken unless it changed.
+  await handlers.get('presence.toggle-branch')?.()
+  expect(sets).toEqual(['showBranch'])
+
+  await deactivate()
+  expect(disposed).toBe(true)
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  if (previousSkip === undefined) {
+    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  } else {
+    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test('formatStatusTransmitting includes lastActivity and truncates long JSON', () => {
   expect(formatStatusTransmitting(null)).toBe('transmitting=null')
   expect(formatStatusTransmitting({ details: 'Working in Orca' })).toBe(

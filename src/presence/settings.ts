@@ -158,6 +158,18 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   showAgentCount: false
 })
 
+/**
+ * Keys declared under `contributes.settings` in `orca-plugin.json`, so Orca's
+ * native Settings page can edit them.
+ *
+ * Why: `bridgeToken` is excluded on purpose. A bearer token must not sit in a
+ * plain settings form (Task 5 moves it to secrets). A test pins the manifest
+ * to this list and to {@link DEFAULT_SETTINGS}.
+ */
+export const SETTING_KEYS_DECLARED = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(
+  (key) => key !== 'bridgeToken'
+) as readonly (keyof PresenceSettings)[]
+
 const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(
   (key): key is BooleanSetting => typeof DEFAULT_SETTINGS[key] === 'boolean'
 )

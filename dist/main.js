@@ -834,6 +834,7 @@ var DEFAULT_SETTINGS = Object.freeze({
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
   showAgentCount: false
 });
+var SETTING_KEYS_DECLARED = Object.keys(DEFAULT_SETTINGS).filter((key) => key !== "bridgeToken");
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
 function isDetailLevel(value) {
   return typeof value === "string" && DETAIL_LEVELS.includes(value);
@@ -1590,6 +1591,7 @@ function buildPresencePanelSnapshot(input) {
 // src/main.ts
 var HEARTBEAT_MS = 90000;
 var PANEL_WRITE_DEBOUNCE_MS = 2000;
+var SETTINGS_CHANGE_DEBOUNCE_MS = 250;
 var TRANSMITTING_TOAST_MAX = 180;
 function formatStatusTransmitting(activity) {
   const json = JSON.stringify(activity) ?? "null";
@@ -1617,6 +1619,8 @@ var logRing = null;
 var panelWriteTimer = null;
 var panelWriteNoted = false;
 var deactivated = false;
+var settingsChangeTimer = null;
+var settingsSubscription = null;
 function publicConfigureView(settings) {
   return {
     applicationId: settings.applicationId,
@@ -1738,16 +1742,10 @@ async function activate(orca) {
     }
   });
   controller = createController(settings);
-  async function persist(nextSettings) {
+  async function applySettings(nextSettings) {
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId;
     settings = nextSettings;
     diagnostics?.setDebugEnabled(nextSettings.debugLogging);
-    for (const [key, value] of Object.entries(nextSettings)) {
-      await orca.host.call("settings.set", { key, value }).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        orca.log(`failed to persist ${key}: ${message}`);
-      });
-    }
     if (applicationIdChanged) {
       diagnostics?.line("info", "discord.app_id_rebind", { applicationId: nextSettings.applicationId });
       await controller?.stop();
@@ -1756,6 +1754,19 @@ async function activate(orca) {
       await controller?.setSettings(nextSettings);
     }
     publishPanelSnapshot("immediate");
+  }
+  async function persist(nextSettings) {
+    const previous = settings;
+    for (const [key, value] of Object.entries(nextSettings)) {
+      if (previous[key] === value) {
+        continue;
+      }
+      await orca.host.call("settings.set", { key, value }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        orca.log(`failed to persist ${key}: ${message}`);
+      });
+    }
+    await applySettings(nextSettings);
   }
   async function refresh(agentEvent, options = {}) {
     if (agentEvent) {
@@ -1930,6 +1941,27 @@ async function activate(orca) {
       agentTable?.upsert(seeded);
     }
   }
+  if (orca.settings?.onDidChange) {
+    settingsSubscription = orca.settings.onDidChange(() => {
+      if (settingsChangeTimer) {
+        clearTimeout(settingsChangeTimer);
+      }
+      settingsChangeTimer = setTimeout(() => {
+        settingsChangeTimer = null;
+        (async () => {
+          const latest = await orca.host.call("settings.get").catch(() => null);
+          if (deactivated || !latest) {
+            return;
+          }
+          const next = applyBridgeEnvOverrides(normalizeSettings(latest.settings), process.env);
+          if (JSON.stringify(next) !== JSON.stringify(settings)) {
+            await applySettings(next);
+          }
+        })();
+      }, SETTINGS_CHANGE_DEBOUNCE_MS);
+      settingsChangeTimer.unref?.();
+    });
+  }
   heartbeat = setInterval(() => {
     refresh(undefined, { force: true });
   }, HEARTBEAT_MS);
@@ -1951,6 +1983,12 @@ async function deactivate() {
     clearTimeout(panelWriteTimer);
     panelWriteTimer = null;
   }
+  if (settingsChangeTimer) {
+    clearTimeout(settingsChangeTimer);
+    settingsChangeTimer = null;
+  }
+  settingsSubscription?.dispose();
+  settingsSubscription = null;
   diagnostics?.line("info", "deactivate");
   agentTable?.clear();
   agentTable = null;

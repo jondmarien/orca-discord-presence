@@ -89,6 +89,138 @@
         "title": "Rich Presence: Configure"
       }
     ],
+    "settings": [
+      {
+        "key": "enabled",
+        "title": "Show Rich Presence",
+        "description": "Master switch. Off clears your Discord activity.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "detailLevel",
+        "title": "Detail level",
+        "description": "How much Orca detail Discord may see. Generic shows no repo, branch or machine name.",
+        "type": "string",
+        "default": "generic",
+        "enum": [
+          "off",
+          "generic",
+          "workspace",
+          "full"
+        ],
+        "enumLabels": [
+          "Off",
+          "Generic",
+          "Workspace",
+          "Full"
+        ]
+      },
+      {
+        "key": "applicationId",
+        "title": "Discord Application ID",
+        "description": "Your own Discord Application ID. Leave as is to use the shipped one; an invalid value falls back to it.",
+        "type": "string",
+        "default": "1545653843239374848",
+        "maxLength": 20
+      },
+      {
+        "key": "machineLabel",
+        "title": "Machine name",
+        "description": "Name shown instead of this computer's hostname. Only used when \"Show machine name\" is on and detail is not Generic. Empty uses the hostname.",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "key": "showBranch",
+        "title": "Show git branch",
+        "description": "Include the branch name. Needs detail level Full.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "showAgentState",
+        "title": "Show agent state",
+        "description": "Show whether an agent is working, waiting or blocked.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "showTerminals",
+        "title": "Show terminal count",
+        "description": "Include how many terminals are open.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "showMachine",
+        "title": "Show machine name",
+        "description": "Include the machine name. Needs detail level Full.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "showElapsed",
+        "title": "Show elapsed timer",
+        "description": "Show how long the current agent state has lasted.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "bridgeEnabled",
+        "title": "Use HTTP bridge",
+        "description": "Send presence to the companion app when Discord is not reachable locally, for example from a remote machine.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "bridgeUrl",
+        "title": "Bridge URL",
+        "description": "Base URL of the Orca Presence companion that talks to Discord (http or https). Empty when unused.",
+        "type": "string",
+        "default": "",
+        "maxLength": 512,
+        "placeholder": "http://127.0.0.1:3848"
+      },
+      {
+        "key": "debugLogging",
+        "title": "Debug logging",
+        "description": "Write detailed diagnostics to the plugin log.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "openUrl",
+        "title": "Button URL",
+        "description": "HTTPS link for the optional Discord button. Empty means no button.",
+        "type": "string",
+        "default": "",
+        "maxLength": 512,
+        "placeholder": "https://"
+      },
+      {
+        "key": "showOpenButton",
+        "title": "Show button",
+        "description": "Attach the button to your activity. Needs a Button URL.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "openButtonLabel",
+        "title": "Button label",
+        "description": "Text on the Discord button (1-32 characters).",
+        "type": "string",
+        "default": "Open Orca",
+        "maxLength": 32
+      },
+      {
+        "key": "showAgentCount",
+        "title": "Show agent count",
+        "description": "Include how many agents are running.",
+        "type": "boolean",
+        "default": false
+      }
+    ],
     "events": [
       {
         "on": "agent.status.changed"

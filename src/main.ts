@@ -52,6 +52,12 @@ const HEARTBEAT_MS = 90_000
 const PANEL_WRITE_DEBOUNCE_MS = 2_000
 
 /**
+ * Quiet period before re-reading settings after `onDidChange`. Why: a multi-key
+ * `persist` fires the feed once per key; this collapses them into one apply.
+ */
+const SETTINGS_CHANGE_DEBOUNCE_MS = 250
+
+/**
  * Notification / log budget for the `transmitting=` JSON. Discord toasts
  * truncate; keep enough of `details` / `state` to confirm what was sent.
  */
@@ -173,6 +179,8 @@ let logRing: LogRing | null = null
 let panelWriteTimer: ReturnType<typeof setTimeout> | null = null
 let panelWriteNoted = false
 let deactivated = false
+let settingsChangeTimer: ReturnType<typeof setTimeout> | null = null
+let settingsSubscription: { dispose(): void } | null = null
 
 /**
  * Public configure view (no bridge token). Used by **Configure** help/result.
@@ -328,21 +336,17 @@ export default async function activate(orca: OrcaHost) {
   controller = createController(settings)
 
   /**
-   * Persist every settings field through `settings.set`, then push the
-   * normalized object into the controller (which bypasses the debounce).
-   * A changed Application ID recreates the Discord client (handshake
-   * `client_id` is fixed at construct time).
+   * Push normalized settings into the controller. A changed Application ID
+   * recreates the Discord client (handshake `client_id` is fixed at construct
+   * time); anything else goes through `setSettings`, which bypasses the debounce.
+   *
+   * Why: shared by `persist` (our own writes) and the `onDidChange` feed (edits
+   * in Orca's Settings page), so both paths rebind the same way.
    */
-  async function persist(nextSettings: PresenceSettings) {
+  async function applySettings(nextSettings: PresenceSettings) {
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId
     settings = nextSettings
     diagnostics?.setDebugEnabled(nextSettings.debugLogging)
-    for (const [key, value] of Object.entries(nextSettings)) {
-      await orca.host.call('settings.set', { key, value }).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error)
-        orca.log(`failed to persist ${key}: ${message}`)
-      })
-    }
     if (applicationIdChanged) {
       diagnostics?.line('info', 'discord.app_id_rebind', { applicationId: nextSettings.applicationId })
       await controller?.stop()
@@ -351,6 +355,28 @@ export default async function activate(orca: OrcaHost) {
       await controller?.setSettings(nextSettings)
     }
     publishPanelSnapshot('immediate')
+  }
+
+  /**
+   * Write changed settings fields through `settings.set`, then apply them.
+   *
+   * Why: unchanged keys are skipped so a toggle is one write, not sixteen, and
+   * `bridgeToken` is only written when it actually changed (Task 5 moves it to
+   * secrets). Writes echo back through `onDidChange`; the re-read then equals
+   * `settings`, so the echo applies nothing new.
+   */
+  async function persist(nextSettings: PresenceSettings) {
+    const previous = settings
+    for (const [key, value] of Object.entries(nextSettings)) {
+      if (previous[key as keyof PresenceSettings] === value) {
+        continue
+      }
+      await orca.host.call('settings.set', { key, value }).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        orca.log(`failed to persist ${key}: ${message}`)
+      })
+    }
+    await applySettings(nextSettings)
   }
 
   /**
@@ -564,6 +590,34 @@ export default async function activate(orca: OrcaHost) {
     }
   }
 
+  // Why: the person can edit settings in Orca's Settings page while the worker
+  // runs. Re-read and apply without a reload. Debounced so a multi-key
+  // `persist` (each `settings.set` fires the feed) applies at most once.
+  // Guarded: older hosts have no `orca.settings`.
+  if (orca.settings?.onDidChange) {
+    settingsSubscription = orca.settings.onDidChange(() => {
+      if (settingsChangeTimer) {
+        clearTimeout(settingsChangeTimer)
+      }
+      settingsChangeTimer = setTimeout(() => {
+        settingsChangeTimer = null
+        void (async () => {
+          const latest = (await orca.host.call('settings.get').catch(() => null)) as {
+            settings?: unknown
+          } | null
+          if (deactivated || !latest) {
+            return
+          }
+          const next = applyBridgeEnvOverrides(normalizeSettings(latest.settings), process.env)
+          if (JSON.stringify(next) !== JSON.stringify(settings)) {
+            await applySettings(next)
+          }
+        })()
+      }, SETTINGS_CHANGE_DEBOUNCE_MS)
+      settingsChangeTimer.unref?.()
+    })
+  }
+
   heartbeat = setInterval(() => {
     void refresh(undefined, { force: true })
   }, HEARTBEAT_MS)
@@ -595,6 +649,12 @@ export async function deactivate() {
     clearTimeout(panelWriteTimer)
     panelWriteTimer = null
   }
+  if (settingsChangeTimer) {
+    clearTimeout(settingsChangeTimer)
+    settingsChangeTimer = null
+  }
+  settingsSubscription?.dispose()
+  settingsSubscription = null
   diagnostics?.line('info', 'deactivate')
   agentTable?.clear()
   agentTable = null
