@@ -239,7 +239,6 @@
           <button type="button" id="btn-detail">Cycle Detail</button>
           <button type="button" id="btn-reload">Reload RPC</button>
           <button type="button" id="btn-clear">Clear</button>
-          <button type="button" id="btn-open-link" class="hidden">Open link</button>
         </div>
       </header>
       <p class="flash" id="flash"></p>
@@ -350,7 +349,6 @@
       'use strict'
       var orca = window.orca
       var REQUEST_TIMEOUT_MS = 5000
-      var lastOpenUrl = ''
 
       function $(id) {
         return document.getElementById(id)
@@ -424,8 +422,6 @@
         setChecked('f-debug', fields.debugLogging)
         setChecked('f-open-button', fields.showOpenButton)
         setChecked('f-agent-count', fields.showAgentCount)
-        lastOpenUrl = typeof fields.openUrl === 'string' ? fields.openUrl : ''
-        $('btn-open-link').classList.toggle('hidden', !lastOpenUrl || !(orca && orca.shell))
         if (snapshot.logs && snapshot.logs.length) {
           $('log-view').textContent = snapshot.logs.join('\n')
           $('logs-box').open = true
@@ -539,11 +535,6 @@
         })
         $('btn-clear').addEventListener('click', function () {
           run('presence.clear', 'Presence cleared until the next event.')
-        })
-        $('btn-open-link').addEventListener('click', function () {
-          if (lastOpenUrl && orca.shell && typeof orca.shell.openExternal === 'function') {
-            orca.shell.openExternal(lastOpenUrl)
-          }
         })
 
         if (typeof orca.plugin.on === 'function') {
