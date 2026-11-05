@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test'
-import { buildActivity } from '../src/presence/activity'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { buildActivity, localAssetName } from '../src/presence/activity'
 import { normalizeSettings } from '../src/presence/settings'
 
 const SNAPSHOT = {
@@ -116,7 +118,7 @@ test('agent state done renders as idle with the idle asset', () => {
     NOW_MS
   )
   expect(activity?.state).toBe('idle')
-  expect(activity?.assets.small_image).toBe('state-idle')
+  expect(activity?.assets.small_image).toBe('state-idle-v2')
 })
 
 test('an unrecognized agent state falls back to idle rather than leaking it', () => {
@@ -126,7 +128,7 @@ test('an unrecognized agent state falls back to idle rather than leaking it', ()
     NOW_MS
   )
   expect(activity?.state).toBe('idle')
-  expect(activity?.assets.small_image).toBe('state-idle')
+  expect(activity?.assets.small_image).toBe('state-idle-v2')
 })
 
 test('showElapsed emits unix seconds, not milliseconds', () => {
@@ -168,7 +170,7 @@ test('running aliases to the working asset and label', () => {
     NOW_MS
   )
   expect(activity?.state).toBe('working')
-  expect(activity?.assets.small_image).toBe('state-working')
+  expect(activity?.assets.small_image).toBe('state-working-v2')
   expect(activity?.assets.small_text).toBe('working')
 })
 
@@ -179,7 +181,7 @@ test('needs_input aliases to waiting for input', () => {
     NOW_MS
   )
   expect(activity?.state).toBe('waiting for input')
-  expect(activity?.assets.small_image).toBe('state-waiting')
+  expect(activity?.assets.small_image).toBe('state-waiting-v2')
 })
 
 test('an unrecognized agent state is omitted from the serialized payload', () => {
@@ -254,4 +256,12 @@ test('an empty state string is omitted rather than sent blank', () => {
     NOW_MS
   )
   expect(activity && 'state' in activity).toBe(false)
+})
+
+test('every Discord asset key carries the -v2 suffix and maps back to a local file', () => {
+  const activity = buildActivity({ ...SNAPSHOT, agentState: 'blocked' }, normalizeSettings({}), NOW_MS)
+  expect(activity?.assets.large_image).toBe('orca-v2')
+  expect(activity?.assets.small_image).toBe('state-blocked-v2')
+  expect(localAssetName('state-blocked-v2')).toBe('state-blocked')
+  expect(existsSync(join(import.meta.dir, '..', 'assets', `${localAssetName(activity!.assets.small_image)}.png`))).toBe(true)
 })

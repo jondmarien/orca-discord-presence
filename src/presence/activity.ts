@@ -80,16 +80,33 @@ export type DiscordActivity = {
 }
 
 /**
+ * Suffix on every Discord art asset key.
+ *
+ * Why: Discord caches asset art by key name for hours or days, so redesigned
+ * icons ship under new keys (`orca-v2`, `state-working-v2`, …) uploaded to the
+ * shipped application. Bump this when the art changes again.
+ */
+export const DISCORD_ASSET_SUFFIX = '-v2'
+
+/**
+ * Local file name (in `assets/`) for a Discord asset key: the key without
+ * {@link DISCORD_ASSET_SUFFIX}.
+ */
+export function localAssetName(key: string): string {
+  return key.endsWith(DISCORD_ASSET_SUFFIX) ? key.slice(0, -DISCORD_ASSET_SUFFIX.length) : key
+}
+
+/**
  * Canonical agent states and their Discord labels / Rich Presence asset
  * keys. Incoming host strings are folded through
  * {@link canonicalizeAgentState} first; anything unknown becomes idle so a
  * future or malformed state can never be transmitted verbatim.
  */
 const AGENT_STATE_LABELS = {
-  working: { label: 'working', asset: 'state-working' },
-  blocked: { label: 'blocked', asset: 'state-blocked' },
-  waiting: { label: 'waiting for input', asset: 'state-waiting' },
-  done: { label: 'idle', asset: 'state-idle' }
+  working: { label: 'working', asset: `state-working${DISCORD_ASSET_SUFFIX}` },
+  blocked: { label: 'blocked', asset: `state-blocked${DISCORD_ASSET_SUFFIX}` },
+  waiting: { label: 'waiting for input', asset: `state-waiting${DISCORD_ASSET_SUFFIX}` },
+  done: { label: 'idle', asset: `state-idle${DISCORD_ASSET_SUFFIX}` }
 } as const
 
 /**
@@ -177,7 +194,7 @@ export function buildActivity(
   const activity: DiscordActivity = {
     details: clamp(buildDetails(snapshot, settings)),
     assets: {
-      large_image: 'orca',
+      large_image: `orca${DISCORD_ASSET_SUFFIX}`,
       large_text: 'Orca',
       small_image: small.asset,
       small_text: small.label

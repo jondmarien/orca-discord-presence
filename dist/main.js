@@ -1065,11 +1065,15 @@ function applyConfigure(current, args) {
 
 // src/presence/activity.ts
 var DISCORD_TEXT_MAX = 128;
+var DISCORD_ASSET_SUFFIX = "-v2";
+function localAssetName(key) {
+  return key.endsWith(DISCORD_ASSET_SUFFIX) ? key.slice(0, -DISCORD_ASSET_SUFFIX.length) : key;
+}
 var AGENT_STATE_LABELS = {
-  working: { label: "working", asset: "state-working" },
-  blocked: { label: "blocked", asset: "state-blocked" },
-  waiting: { label: "waiting for input", asset: "state-waiting" },
-  done: { label: "idle", asset: "state-idle" }
+  working: { label: "working", asset: `state-working${DISCORD_ASSET_SUFFIX}` },
+  blocked: { label: "blocked", asset: `state-blocked${DISCORD_ASSET_SUFFIX}` },
+  waiting: { label: "waiting for input", asset: `state-waiting${DISCORD_ASSET_SUFFIX}` },
+  done: { label: "idle", asset: `state-idle${DISCORD_ASSET_SUFFIX}` }
 };
 function clamp(text) {
   return text.length > DISCORD_TEXT_MAX ? `${text.slice(0, DISCORD_TEXT_MAX - 1)}…` : text;
@@ -1115,7 +1119,7 @@ function buildActivity(snapshot, settings, nowMs) {
   const activity = {
     details: clamp(buildDetails(snapshot, settings)),
     assets: {
-      large_image: "orca",
+      large_image: `orca${DISCORD_ASSET_SUFFIX}`,
       large_text: "Orca",
       small_image: small.asset,
       small_text: small.label
@@ -1574,8 +1578,8 @@ function summarizePanelActivityCard(activity) {
   return {
     details: activity.details,
     state: typeof activity.state === "string" ? activity.state : null,
-    largeImageKey: activity.assets.large_image,
-    smallImageKey: activity.assets.small_image,
+    largeImageKey: localAssetName(activity.assets.large_image),
+    smallImageKey: localAssetName(activity.assets.small_image),
     startMs: activity.timestamps ? activity.timestamps.start * 1000 : null
   };
 }

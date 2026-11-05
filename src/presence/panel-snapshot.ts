@@ -12,7 +12,7 @@
  * @date 2026-09-05
  */
 
-import type { DiscordActivity } from './activity'
+import { localAssetName, type DiscordActivity } from './activity'
 import type { CanonicalAgentState } from './agent-state'
 import type { AgentSlot } from './agents'
 import type { PresenceStatus } from './controller'
@@ -177,8 +177,8 @@ export function summarizePanelActivityCard(
   return {
     details: activity.details,
     state: typeof activity.state === 'string' ? activity.state : null,
-    largeImageKey: activity.assets.large_image,
-    smallImageKey: activity.assets.small_image,
+    largeImageKey: localAssetName(activity.assets.large_image),
+    smallImageKey: localAssetName(activity.assets.small_image),
     startMs: activity.timestamps ? activity.timestamps.start * 1000 : null
   }
 }
