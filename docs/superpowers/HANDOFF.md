@@ -21,9 +21,9 @@ Open a new Claude Code session in a clone of this repo and say: **"Read docs/sup
 **Upstream issues filed:** stablyai/orca #38340 (prompt kind), #38341 (UI focus), #38342 (panels in paired clients), #38343 (client relay).
 
 **Upstream PR 1 (#38340): in progress, unverified**
-- The worker's diff is saved as `orca-handoff/38340-prompt-kind-wip.patch`, against upstream commit `308b500050`. It is about 16 files, +186/−35: a new `src/shared/plugins/events/plugin-agent-prompt-kind.ts`, the projection changes, the host-API spec, and the regenerated docs and types.
+- The worker's diff is saved as `handoff/38340-prompt-kind-wip.patch`, against upstream commit `308b500050`. It is about 16 files, +186/−35: a new `src/shared/plugins/events/plugin-agent-prompt-kind.ts`, the projection changes, the host-API spec, and the regenerated docs and types.
 - None of it has been type-checked, tested or reviewed.
-- To get the patch onto Windows, either copy `~/orca-handoff/` across, or ask the Linux session to push it to the fork branch `feat/plugin-agent-prompt-kind`.
+- The patch is in this branch at `handoff/38340-prompt-kind-wip.patch` (base commit in `handoff/38340-base.txt`). **Delete `handoff/` before merging this branch to main.**
 
 ## Next steps (Windows desktop)
 
