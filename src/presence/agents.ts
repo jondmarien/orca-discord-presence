@@ -340,15 +340,21 @@ export function createAgentTable({
       // Why: `agents.list` rows have no workspace, so a re-sync must not wipe
       // the id a status event supplied or `removeWorkspace` would miss it.
       const workspaceId = event.workspaceId || previous?.workspaceId || ''
+      // Why: a newer start for the same terminal is a separate, later run.
+      const newerStart =
+        event.stateStartedAt !== undefined &&
+        previous?.stateStartedAt !== undefined &&
+        event.stateStartedAt > previous.stateStartedAt
       const stateStartedAt =
-        previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined
+        previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined && !newerStart
           ? previous.stateStartedAt
           : (event.stateStartedAt ?? event.receivedAt)
       // Why: a re-sync of an already finished slot must never extend its
-      // retention; it keeps the receivedAt of the first sighting.
+      // retention; it keeps the receivedAt of the first sighting. A later
+      // completion (newer start) gets its own schedule.
       const finished = canonicalState === 'done' || canonicalState === 'idle'
-      const receivedAt =
-        finished && previous?.canonicalState === canonicalState ? previous.receivedAt : event.receivedAt
+      const keepReceived = finished && previous?.canonicalState === canonicalState && !newerStart
+      const receivedAt = keepReceived ? previous.receivedAt : event.receivedAt
       map.set(key, {
         workspaceId,
         paneKey: event.paneKey,

@@ -311,8 +311,16 @@ test('a re-sync of a completed slot does not extend its receivedAt', () => {
   seedList(table, nowRef(), 'done', finishedAt)
   seedList(table, nowRef() + 60_000, 'done', finishedAt)
   expect(table.slots()[0]?.receivedAt).toBe(finishedAt)
-  seedList(table, nowRef() + 60_000, 'done', nowRef() + 60_000)
-  expect(table.slots()[0]?.receivedAt).toBe(finishedAt)
+})
+
+test('a later completion of the same terminal gets its own retention', () => {
+  const { table, nowRef } = tableHarness()
+  const firstDone = nowRef() - 2 * 60_000
+  seedList(table, nowRef(), 'done', firstDone)
+  const secondDone = nowRef() - 10_000
+  seedList(table, nowRef(), 'done', secondDone)
+  expect(table.slots()[0]?.receivedAt).toBe(secondDone)
+  expect(table.slots()[0]?.stateStartedAt).toBe(secondDone)
 })
 
 test('same-state event keeps stateStartedAt; a state change resets it', () => {
