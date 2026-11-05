@@ -290,7 +290,26 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
+.agent-label {
+  display: flex;
+  min-width: 0;
+  white-space: pre;
+}
+.agent-label .kind,
+.agent-label .sep {
+  flex: none;
+}
+.agent-label .sep {
+  color: var(--orca-muted-foreground, #9a9a9a);
+}
+.agent-label .title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--orca-foreground, #ececec);
+}
 .chip {
+  flex: none;
   font-size: 11px;
   padding: 1px 8px;
   border-radius: 999px;

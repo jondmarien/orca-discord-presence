@@ -155,7 +155,7 @@ function renderAgents(agents) {
   var list = Array.isArray(agents) ? agents : []
   var signature = list
     .map(function (a) {
-      return a.kind + '|' + a.state + '|' + a.sinceMs
+      return a.kind + '|' + (a.title || '') + '|' + a.state + '|' + a.sinceMs
     })
     .join(';')
   setClass($('agents-empty'), 'hidden', list.length > 0)
@@ -167,15 +167,30 @@ function renderAgents(agents) {
   list.forEach(function (agent) {
     var row = document.createElement('div')
     row.className = 'agent-row'
+    // Why: kind, muted ` | `, then the chat name; only the title truncates.
+    var label = document.createElement('span')
+    label.className = 'agent-label'
     var kind = document.createElement('span')
+    kind.className = 'kind'
     kind.textContent = String(agent.kind || 'agent')
+    label.appendChild(kind)
+    if (agent.title) {
+      var sep = document.createElement('span')
+      sep.className = 'sep'
+      sep.textContent = ' | '
+      var title = document.createElement('span')
+      title.className = 'title'
+      title.textContent = String(agent.title)
+      label.appendChild(sep)
+      label.appendChild(title)
+    }
     var chip = document.createElement('span')
     chip.className = 'chip'
     var state = normalizeState(displayState(agent.state))
     chip.setAttribute('data-state', state)
     chip.textContent = chipText(agent)
     agentChips.push({ agent: agent, chip: chip })
-    row.appendChild(kind)
+    row.appendChild(label)
     row.appendChild(chip)
     box.appendChild(row)
   })

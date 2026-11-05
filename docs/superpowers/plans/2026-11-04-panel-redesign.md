@@ -15,7 +15,7 @@
 - All of plan 1's Global Constraints (`docs/superpowers/plans/2026-11-04-plugin-v1-stock-orca.md`) still apply.
 - `panel/index.html`: everything inline, no network, no `<script src>`, script wrapped in a function scope (never a top-level `var orca`; see `fedd05d`), and DOM writes only when a value changes (see `c6650ec`).
 - State colours and fallback surfaces: exactly the table in the spec.
-- Snapshot never contains terminal titles, paths, terminal ids, the bridge token, the bridge URL, the application ID or the open URL. The existing `snapshotLeaksSecrets` redaction tests must keep passing.
+- Snapshot may carry chat titles (local panel only, truncated to 80 characters; never Discord, bridge or logs). It never contains paths, terminal ids, the bridge token, the bridge URL, the application ID or the open URL. The existing `snapshotLeaksSecrets` redaction tests must keep passing.
 - Cover `assets/cover.png` is 1600×1000 and ≤1024 KB. Icon `assets/icon.png` is 256×256 and ≤256 KB.
 
 ## Review Focus

@@ -164,7 +164,12 @@ function fullSnapshot(timeline: Array<string | null>) {
     },
     timeline,
     agents: [
-      { kind: 'claude', state: 'working', sinceMs: Date.now() - 12 * 60_000 },
+      { kind: 'claude', state: 'working', sinceMs: Date.now() - 12 * 60_000 } as {
+        kind: string
+        title?: string
+        state: string
+        sinceMs: number
+      },
       { kind: 'codex', state: 'working', sinceMs: Date.now() - 3 * 60_000 },
       { kind: 'claude', state: 'waiting', sinceMs: Date.now() - 40_000 }
     ],
@@ -378,6 +383,37 @@ test('agent chip shows time in state, not epoch', () => {
   snap.agents = [{ kind: 'claude', state: 'idle', sinceMs: Date.now() + 60_000 }]
   hook?.render(snap)
   expect(byId.get('agents-list')?.children[0]?.children[1]?.textContent).toBe('idle · 0s')
+})
+
+test('agent row shows kind, muted separator and title; title-less row shows only kind', () => {
+  const { byId, hook } = mountPanel()
+  const snap = fullSnapshot([])
+  snap.agents = [
+    { kind: 'claude', title: 'Fix login bug', state: 'working', sinceMs: Date.now() - 9_000 },
+    { kind: 'codex', state: 'working', sinceMs: Date.now() - 9_000 }
+  ]
+  hook?.render(snap)
+  const [titled, plain] = byId.get('agents-list')?.children ?? []
+  const label = titled?.children[0]
+  expect(label?.children.map((c) => c.textContent)).toEqual(['claude', ' | ', 'Fix login bug'])
+  expect(label?.children[1]?.className).toContain('sep')
+  expect(label?.children[2]?.className).toContain('title')
+  expect(titled?.children[1]?.textContent?.startsWith('working')).toBe(true)
+  expect(plain?.children[0]?.children.map((c) => c.textContent)).toEqual(['codex'])
+})
+
+test('agent rows rebuild when only the title changes', () => {
+  const { byId, hook } = mountPanel()
+  const since = Date.now() - 9_000
+  const snap = fullSnapshot([])
+  snap.agents = [{ kind: 'claude', title: 'One', state: 'working', sinceMs: since }]
+  hook?.render(snap)
+  const first = byId.get('agents-list')?.children[0]
+  hook?.render(snap)
+  expect(byId.get('agents-list')?.children[0]).toBe(first)
+  snap.agents = [{ kind: 'claude', title: 'Two', state: 'working', sinceMs: since }]
+  hook?.render(snap)
+  expect(byId.get('agents-list')?.children[0]?.children[0]?.children[2]?.textContent).toBe('Two')
 })
 
 test('agent chip for a done agent starts with completed', () => {

@@ -26,6 +26,11 @@ export type AgentStatusEvent = {
   receivedAt: number
   /** Agent CLI name from `agents.list` (`claude`, `codex`, ...). */
   kind?: string
+  /**
+   * Chat name from `agents.list` or `agent.status.changed`. Local panel only:
+   * never copy it into the Discord activity, bridge payload or logs.
+   */
+  title?: string
 }
 
 /**
@@ -39,6 +44,8 @@ export type AgentSlot = {
   canonicalState: CanonicalAgentState
   receivedAt: number
   kind?: string
+  /** Chat name; see {@link AgentStatusEvent.title}. Panel snapshot only. */
+  title?: string
 }
 
 /**
@@ -131,6 +138,9 @@ export function parseAgentStatusPayload(payload: unknown, nowMs: number): AgentS
   if (typeof source.terminalId === 'string' && source.terminalId.length > 0) {
     event.terminalId = source.terminalId
   }
+  if (typeof source.title === 'string' && source.title.trim().length > 0) {
+    event.title = source.title
+  }
   return event
 }
 
@@ -188,6 +198,9 @@ export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEven
     }
     if (typeof source.agent === 'string' && source.agent.length > 0) {
       event.kind = source.agent
+    }
+    if (typeof source.title === 'string' && source.title.trim().length > 0) {
+      event.title = source.title
     }
     events.push(event)
   }
@@ -296,6 +309,8 @@ export function createAgentTable({
       // Why: `agent.status.changed` has no agent name, so a later event must
       // not erase the `kind` the seeded `agents.list` row supplied.
       const kind = event.kind ?? map.get(key)?.kind
+      // Why: same for `title`; a status event without one keeps the last known.
+      const title = event.title ?? map.get(key)?.title
       map.set(key, {
         workspaceId: event.workspaceId,
         paneKey: event.paneKey,
@@ -303,7 +318,8 @@ export function createAgentTable({
         rawState: event.state,
         canonicalState,
         receivedAt: event.receivedAt,
-        ...(kind ? { kind } : {})
+        ...(kind ? { kind } : {}),
+        ...(title ? { title } : {})
       })
       prune()
       schedulePrune()

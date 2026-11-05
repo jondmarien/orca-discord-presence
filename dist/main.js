@@ -507,6 +507,9 @@ function parseAgentStatusPayload(payload, nowMs) {
   if (typeof source.terminalId === "string" && source.terminalId.length > 0) {
     event.terminalId = source.terminalId;
   }
+  if (typeof source.title === "string" && source.title.trim().length > 0) {
+    event.title = source.title;
+  }
   return event;
 }
 function parseWorkspaceRemovedId(payload) {
@@ -545,6 +548,9 @@ function parseAgentsList(result, nowMs) {
     };
     if (typeof source.agent === "string" && source.agent.length > 0) {
       event.kind = source.agent;
+    }
+    if (typeof source.title === "string" && source.title.trim().length > 0) {
+      event.title = source.title;
     }
     events.push(event);
   }
@@ -633,6 +639,7 @@ function createAgentTable({
       const canonicalState = canonicalizeAgentState(event.state);
       const key = agentSlotKey(event);
       const kind = event.kind ?? map.get(key)?.kind;
+      const title = event.title ?? map.get(key)?.title;
       map.set(key, {
         workspaceId: event.workspaceId,
         paneKey: event.paneKey,
@@ -640,7 +647,8 @@ function createAgentTable({
         rawState: event.state,
         canonicalState,
         receivedAt: event.receivedAt,
-        ...kind ? { kind } : {}
+        ...kind ? { kind } : {},
+        ...title ? { title } : {}
       });
       prune();
       schedulePrune();
@@ -1567,9 +1575,18 @@ var AGENT_ROW_PRIORITY = {
   done: 1,
   idle: 0
 };
+var PANEL_TITLE_MAX = 80;
+function panelTitle(title) {
+  const text = typeof title === "string" ? title.trim() : "";
+  if (!text) {
+    return;
+  }
+  return text.length > PANEL_TITLE_MAX ? `${text.slice(0, PANEL_TITLE_MAX - 1)}…` : text;
+}
 function summarizePanelAgents(slots) {
   return slots.map((slot) => ({
     kind: slot.kind && slot.kind.length > 0 ? slot.kind : "agent",
+    ...panelTitle(slot.title) ? { title: panelTitle(slot.title) } : {},
     state: slot.canonicalState,
     sinceMs: slot.receivedAt
   })).sort((a, b) => AGENT_ROW_PRIORITY[b.state] - AGENT_ROW_PRIORITY[a.state] || a.sinceMs - b.sinceMs);

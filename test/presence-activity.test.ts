@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildActivity, localAssetName } from '../src/presence/activity'
+import { createAgentTable } from '../src/presence/agents'
 import { normalizeSettings } from '../src/presence/settings'
 
 const SNAPSHOT = {
@@ -287,4 +288,19 @@ test('every Discord asset key carries the -v2 suffix and maps back to a local fi
   expect(activity?.assets.small_image).toBe('state-blocked-v2')
   expect(localAssetName('state-blocked-v2')).toBe('state-blocked')
   expect(existsSync(join(import.meta.dir, '..', 'assets', `${localAssetName(activity!.assets.small_image)}.png`))).toBe(true)
+})
+
+test('a chat title in the agent table never reaches the Discord or bridge payload', () => {
+  const table = createAgentTable({ now: () => 1_000_000 })
+  const title = 'Secret chat: rotate prod keys'
+  table.upsert({ workspaceId: 'w', paneKey: 'p', terminalId: 't1', state: 'working', receivedAt: 1_000_000, kind: 'claude', title })
+  const summary = table.summarize()
+  const activity = buildActivity(
+    { ...SNAPSHOT, ...summary },
+    settingsWith({ detailLevel: 'full', showAgentCount: true, showTerminals: true, showMachine: true }),
+    NOW_MS
+  )
+  // The bridge POSTs exactly this activity as JSON.
+  expect(JSON.stringify(activity)).not.toContain(title)
+  expect(JSON.stringify(summary)).not.toContain(title)
 })

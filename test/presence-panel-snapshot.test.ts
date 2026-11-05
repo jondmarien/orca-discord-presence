@@ -131,6 +131,19 @@ test('snapshot agents expose only kind/state/sinceMs', () => {
   expect(snapshotLeaksSecrets(snapshot, ['secret-ws', 'secret-pane', 'term-secret'])).toBe(false)
 })
 
+test('snapshot agent rows carry the chat title, truncated to 80 characters', () => {
+  const long = 'x'.repeat(200)
+  const rows = summarizePanelAgents([
+    { workspaceId: 'w', paneKey: '1', rawState: 'x', canonicalState: 'working', receivedAt: 1, kind: 'claude', title: 'Fix login bug' },
+    { workspaceId: 'w', paneKey: '2', rawState: 'x', canonicalState: 'working', receivedAt: 2, kind: 'codex', title: long },
+    { workspaceId: 'w', paneKey: '3', rawState: 'x', canonicalState: 'working', receivedAt: 3, kind: 'codex', title: '   ' }
+  ])
+  expect(rows[0]).toEqual({ kind: 'claude', title: 'Fix login bug', state: 'working', sinceMs: 1 })
+  expect(rows[1]?.title).toHaveLength(80)
+  expect(rows[1]?.title?.endsWith('…')).toBe(true)
+  expect(rows[2]).not.toHaveProperty('title')
+})
+
 test('activityCard maps keys and ms timestamp', () => {
   const base = { version: '1.0.0', settings: DEFAULT_SETTINGS, timeline: [], agents: [], logs: [] }
   const card = buildPresencePanelSnapshot({

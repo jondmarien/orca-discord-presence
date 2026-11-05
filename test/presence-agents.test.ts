@@ -210,8 +210,26 @@ test('parseAgentsList maps rows and drops null terminalId', () => {
     )
   ).toEqual([
     { workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: 7, kind: 'claude' },
-    { workspaceId: '', paneKey: '', terminalId: 't2', state: 'done', receivedAt: 10, kind: 'codex' }
+    { workspaceId: '', paneKey: '', terminalId: 't2', state: 'done', receivedAt: 10, kind: 'codex', title: 'x' }
   ])
+})
+
+test('agent.status.changed title is parsed; blank or non-string titles are dropped', () => {
+  const base = { workspaceId: 'w', paneKey: 'k', state: 'working' }
+  expect(parseAgentStatusPayload({ ...base, title: 'Fix login bug' }, 5)?.title).toBe('Fix login bug')
+  expect(parseAgentStatusPayload({ ...base, title: '' }, 5)).not.toHaveProperty('title')
+  expect(parseAgentStatusPayload({ ...base, title: 7 }, 5)).not.toHaveProperty('title')
+  expect(parseAgentStatusPayload(base, 5)).not.toHaveProperty('title')
+})
+
+test('a seeded title survives a later event without one, and a new title replaces it', () => {
+  const { table } = tableHarness()
+  const at = 1_000_000
+  table.upsert({ workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: at, title: 'First chat' })
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'blocked', receivedAt: at })
+  expect(table.slots()[0]?.title).toBe('First chat')
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'blocked', receivedAt: at, title: 'Renamed' })
+  expect(table.slots()[0]?.title).toBe('Renamed')
 })
 
 test('parseAgentsList tolerates junk', () => {

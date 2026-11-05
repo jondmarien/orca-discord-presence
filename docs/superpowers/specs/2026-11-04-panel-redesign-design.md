@@ -49,9 +49,10 @@ Neutral surfaces use Orca frame variables with the mockup values as fallbacks: `
 ## Data contract additions (worker → panel snapshot)
 
 - `timeline: TimelineSlot[]`, exactly 30 entries, oldest first. A slot is one minute holding the highest-priority state seen that minute (`blocked > waiting > working > idle`), or `null` when the worker was not running. *Our call: memory only; it resets when the worker restarts.*
-- `agents: { kind: string; state: CanonicalAgentState; sinceMs: number }[]`.
+- `agents: { kind: string; title?: string; state: CanonicalAgentState; sinceMs: number }[]`.
   - `kind` comes from `agents.list`'s `agent` field when that terminal was seeded, else `'agent'`.
-  - Never a title, path or terminal id.
+  - `title` is the chat name from `agents.list` / `agent.status.changed`. It is allowed in the local panel snapshot only, truncated to 80 characters, and never reaches Discord, the bridge payload or logs.
+  - Never a path, workspace id, pane key or terminal id.
 - `activity` (already sent as `status.lastActivity`) plus `largeImageKey` / `smallImageKey` and `startTimestamp`, so the card shows the right icon and ticks the timer locally.
 - `view` is **not** in the snapshot. The panel reads and writes it in `storage` key `panelView` (`'full' | 'minimal'`, default `'full'`).
 

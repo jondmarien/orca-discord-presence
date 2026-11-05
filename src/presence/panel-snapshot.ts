@@ -34,10 +34,12 @@ export type PresencePanelActivitySummary = {
 }
 
 /**
- * One agent row: no workspace, pane, terminal id or title ever.
+ * One agent row: no workspace, pane or terminal id ever. `title` is the chat
+ * name, local panel only (never Discord, bridge or logs), truncated.
  */
 export type PresencePanelAgent = {
   kind: string
+  title?: string
   state: CanonicalAgentState
   sinceMs: number
 }
@@ -148,16 +150,28 @@ const AGENT_ROW_PRIORITY: Record<CanonicalAgentState, number> = {
   idle: 0
 }
 
+/** Longest chat title the panel snapshot carries, ellipsis included. */
+export const PANEL_TITLE_MAX = 80
+
+function panelTitle(title: string | undefined): string | undefined {
+  const text = typeof title === 'string' ? title.trim() : ''
+  if (!text) {
+    return undefined
+  }
+  return text.length > PANEL_TITLE_MAX ? `${text.slice(0, PANEL_TITLE_MAX - 1)}…` : text
+}
+
 /**
  * Privacy-safe agent rows, highest-priority state first, then oldest first.
  *
  * Why: slots carry workspace ids, pane keys and terminal ids. Rebuilding each
- * row from three fields means none of those can reach the panel.
+ * row from kind, title, state and time means none of those can reach the panel.
  */
 export function summarizePanelAgents(slots: readonly AgentSlot[]): PresencePanelAgent[] {
   return slots
     .map((slot) => ({
       kind: slot.kind && slot.kind.length > 0 ? slot.kind : 'agent',
+      ...(panelTitle(slot.title) ? { title: panelTitle(slot.title) } : {}),
       state: slot.canonicalState,
       sinceMs: slot.receivedAt
     }))
