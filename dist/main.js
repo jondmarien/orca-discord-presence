@@ -53,6 +53,7 @@ import net from "node:net";
 import os from "node:os";
 
 // src/discord/ipc.ts
+import path from "node:path";
 var SOCKET_INDEX_LIMIT = 10;
 var SANDBOX_SUBDIRS = [
   "",
@@ -68,10 +69,16 @@ var OPCODE = {
   PONG: 4
 };
 var MAX_FRAME_BYTES = 1024 * 1024;
+var DISCORD_IPC_ENV = "ORCA_PRESENCE_DISCORD_IPC";
 function trimTrailingSeparator(value) {
   return value.replace(/[\\/]+$/, "");
 }
 function discordIpcCandidates({ platform, env, uid }) {
+  const override = env[DISCORD_IPC_ENV];
+  if (override) {
+    const delimiter = platform === "win32" ? path.win32.delimiter : path.posix.delimiter;
+    return override.split(delimiter).filter((entry) => entry.length > 0);
+  }
   if (platform === "win32") {
     return Array.from({ length: SOCKET_INDEX_LIMIT }, (_unused, index) => `\\\\?\\pipe\\discord-ipc-${index}`);
   }
@@ -475,8 +482,11 @@ var PRIORITY = {
   working: 1,
   done: 0
 };
-function agentSlotKey(worktreeId, paneKey) {
-  return `${worktreeId}\x1F${paneKey}`;
+function agentSlotKey(event) {
+  if (typeof event.terminalId === "string" && event.terminalId.length > 0) {
+    return `t:${event.terminalId}`;
+  }
+  return `p:${event.workspaceId}\x1F${event.paneKey}`;
 }
 function parseAgentStatusPayload(payload, nowMs) {
   if (!payload || typeof payload !== "object") {
@@ -487,28 +497,53 @@ function parseAgentStatusPayload(payload, nowMs) {
     return null;
   }
   const receivedAt = typeof source.receivedAt === "number" && Number.isFinite(source.receivedAt) ? source.receivedAt : nowMs;
-  return {
-    worktreeId: typeof source.worktreeId === "string" ? source.worktreeId : "",
+  const event = {
+    workspaceId: typeof source.workspaceId === "string" ? source.workspaceId : "",
     paneKey: typeof source.paneKey === "string" ? source.paneKey : "",
     state: source.state,
     receivedAt
   };
-}
-function parseWorktreeRemovedId(payload) {
-  if (typeof payload === "string" && payload.trim().length > 0) {
-    return payload.trim();
+  if (typeof source.terminalId === "string" && source.terminalId.length > 0) {
+    event.terminalId = source.terminalId;
   }
+  return event;
+}
+function parseWorkspaceRemovedId(payload) {
   if (!payload || typeof payload !== "object") {
     return null;
   }
-  const source = payload;
-  if (typeof source.worktreeId === "string" && source.worktreeId.trim().length > 0) {
-    return source.worktreeId.trim();
+  const id = payload.workspaceId;
+  return typeof id === "string" && id.trim().length > 0 ? id.trim() : null;
+}
+function parseAgentsList(result, nowMs) {
+  if (!result || typeof result !== "object") {
+    return [];
   }
-  if (typeof source.id === "string" && source.id.trim().length > 0) {
-    return source.id.trim();
+  const rows = result.agents;
+  if (!Array.isArray(rows)) {
+    return [];
   }
-  return null;
+  const events = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const source = row;
+    if (typeof source.terminalId !== "string" || source.terminalId.length === 0) {
+      continue;
+    }
+    if (typeof source.state !== "string") {
+      continue;
+    }
+    events.push({
+      workspaceId: "",
+      paneKey: "",
+      terminalId: source.terminalId,
+      state: source.state,
+      receivedAt: typeof source.stateStartedAt === "number" && Number.isFinite(source.stateStartedAt) ? source.stateStartedAt : nowMs
+    });
+  }
+  return events;
 }
 function retentionWindow(state) {
   return state === "done" ? AGENT_RETENTION_MS.done : AGENT_RETENTION_MS.stale;
@@ -591,9 +626,10 @@ function createAgentTable({
   return {
     upsert(event) {
       const canonicalState = canonicalizeAgentState(event.state);
-      map.set(agentSlotKey(event.worktreeId, event.paneKey), {
-        worktreeId: event.worktreeId,
+      map.set(agentSlotKey(event), {
+        workspaceId: event.workspaceId,
         paneKey: event.paneKey,
+        ...event.terminalId ? { terminalId: event.terminalId } : {},
         rawState: event.state,
         canonicalState,
         receivedAt: event.receivedAt
@@ -601,10 +637,10 @@ function createAgentTable({
       prune();
       schedulePrune();
     },
-    removeWorktree(worktreeId) {
+    removeWorkspace(workspaceId) {
       let changed = false;
       for (const [key, slot] of map) {
-        if (slot.worktreeId === worktreeId) {
+        if (slot.workspaceId === workspaceId) {
           map.delete(key);
           changed = true;
         }
@@ -1024,8 +1060,8 @@ function buildActivity(snapshot, settings, nowMs) {
 // src/presence/log.ts
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-var LOG_PLUGIN_ID = "chron0.discord-presence";
-var LOG_DIR_NAME = "chron0-discord-presence";
+var LOG_PLUGIN_ID = "jondmarien.discord-presence";
+var LOG_DIR_NAME = "jondmarien-discord-presence";
 var LOG_FILE_NAME = "plugin.log";
 var MAX_LOG_BYTES = 256 * 1024;
 var LOG_FILE_ENV = "ORCA_PRESENCE_LOG_FILE";
@@ -1431,7 +1467,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // src/version.ts
-var PLUGIN_VERSION = "0.5.0";
+var PLUGIN_VERSION = "1.0.0";
 
 // src/presence/panel-html.ts
 var PANEL_HTML_ENV = "ORCA_PRESENCE_PANEL_HTML";
@@ -1671,7 +1707,7 @@ async function activate(orca) {
       fallback: SHIPPED_APPLICATION_ID
     });
     orca.host.call("notifications.show", {
-      title: "Discord Rich Presence",
+      title: "Rich Presence for Discord",
       body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ""}. Using shipped id. ${appId.reason ?? ""}`
     });
   }
@@ -1733,9 +1769,12 @@ async function activate(orca) {
       agentState: undefined,
       stateStartedAtMs: undefined
     };
-    const context = await orca.host.call("workspace.readContext").catch(() => null);
+    const context = options.context !== undefined ? options.context : await orca.host.call("workspace.readContext").catch(() => null);
     if (!context) {
-      diagnostics?.line("debug", "refresh.minimal", { reason: "no workspace context" });
+      diagnostics?.line("debug", "refresh.minimal", {
+        reason: "no workspace context",
+        agents: summary.agentCount
+      });
     } else if (agentEvent) {
       diagnostics?.line("debug", "refresh", {
         source: "agent.status.changed",
@@ -1797,7 +1836,7 @@ async function activate(orca) {
       transmitting: JSON.stringify(status?.lastActivity)
     });
     await orca.host.call("notifications.show", {
-      title: "Discord Rich Presence",
+      title: "Rich Presence for Discord",
       body: `${summary} ${transmitting}`
     });
     publishPanelSnapshot("immediate");
@@ -1816,7 +1855,7 @@ async function activate(orca) {
       transmitting: JSON.stringify(status?.lastActivity)
     });
     await orca.host.call("notifications.show", {
-      title: "Discord Rich Presence",
+      title: "Rich Presence for Discord",
       body: summary
     });
     publishPanelSnapshot("immediate");
@@ -1833,7 +1872,7 @@ async function activate(orca) {
       sink: status?.sink
     });
     await orca.host.call("notifications.show", {
-      title: "Discord Rich Presence",
+      title: "Rich Presence for Discord",
       body: `${summary} Presence is cleared until the next agent event, Show Status, Reload RPC, or a settings change. enabled stays on.`
     });
     publishPanelSnapshot("immediate");
@@ -1844,7 +1883,7 @@ async function activate(orca) {
     if (!result.ok) {
       diagnostics?.line("error", "presence.configure_failed", { reason: result.error });
       await orca.host.call("notifications.show", {
-        title: "Discord Rich Presence",
+        title: "Rich Presence for Discord",
         body: result.error
       });
       return result;
@@ -1854,7 +1893,7 @@ async function activate(orca) {
       const hint = "Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.";
       const body = `applicationId=${view.shippedApplicationId ? "shipped" : view.applicationId} openUrl=${view.openUrl || "(empty)"} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} label=${view.openButtonLabel}`;
       await orca.host.call("notifications.show", {
-        title: "Discord Rich Presence",
+        title: "Rich Presence for Discord",
         body: `${body} ${hint}`
       });
       return { ok: true, ...view, hint, changed: [] };
@@ -1864,7 +1903,7 @@ async function activate(orca) {
     const view = publicConfigureView(settings);
     diagnostics?.line("info", "presence.configure", { changed: result.changed });
     await orca.host.call("notifications.show", {
-      title: "Discord Rich Presence",
+      title: "Rich Presence for Discord",
       body: `updated ${result.changed.join(", ")}`
     });
     return { ok: true, changed: result.changed, ...view };
@@ -1873,16 +1912,24 @@ async function activate(orca) {
     const parsed = parseAgentStatusPayload(payload, Date.now());
     await refresh(parsed ?? undefined);
   });
-  orca.events.on("worktree.created", async () => {
-    await refresh();
-  });
-  orca.events.on("worktree.removed", async (payload) => {
-    const worktreeId = parseWorktreeRemovedId(payload);
-    if (worktreeId) {
-      agentTable?.removeWorktree(worktreeId);
+  orca.events.on("workspace.removed", async (payload) => {
+    const workspaceId = parseWorkspaceRemovedId(payload);
+    if (workspaceId) {
+      agentTable?.removeWorkspace(workspaceId);
     }
     await refresh();
   });
+  orca.events.on("workspace.changed", async (payload) => {
+    const raw = payload?.context;
+    const context = raw && typeof raw === "object" ? raw : null;
+    await refresh(undefined, { context });
+  });
+  if (orca.host.has("agents.list")) {
+    const listed = await orca.host.call("agents.list").catch(() => null);
+    for (const seeded of parseAgentsList(listed, Date.now())) {
+      agentTable?.upsert(seeded);
+    }
+  }
   heartbeat = setInterval(() => {
     refresh(undefined, { force: true });
   }, HEARTBEAT_MS);

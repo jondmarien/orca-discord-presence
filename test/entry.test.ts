@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DISCORD_IPC_ENV } from '../src/discord/ipc'
 import { formatStatusTransmitting, type OrcaHost } from '../src/main'
+import { LOG_DIR_NAME, LOG_PLUGIN_ID } from '../src/presence/log'
 import { extractPanelSnapshot } from '../src/presence/panel-html'
 import { PLUGIN_VERSION } from '../src/version'
 
@@ -27,32 +28,59 @@ afterAll(() => {
   rmSync(ipcDir, { recursive: true, force: true })
 })
 
-test('manifest identity is chron0.discord-presence', () => {
+test('manifest identity is jondmarien.discord-presence on manifest v2', () => {
   const manifest = JSON.parse(readFileSync(join(root, 'orca-plugin.json'), 'utf8')) as {
+    manifestVersion: number
+    execution: string
     id: string
-    publisher: string
+    publisher?: string
+    name: string
     version: string
+    license: string
+    engines: { orca: string }
     contributes: {
       panels: Array<{ id: string; title: string; icon?: string; entry: string }>
-      commands: Array<{ id: string }>
+      commands: Array<{ id: string; title: string }>
+      events: Array<{ on: string }>
     }
     capabilities: Array<{ kind: string }>
   }
-  expect(manifest.publisher).toBe('chron0')
+  expect('publisher' in manifest).toBe(false)
+  expect(manifest.manifestVersion).toBe(2)
+  expect(manifest.execution).toBe('trusted-worker')
+  expect(manifest.engines.orca).toBe('>=1.4.248')
+  expect(manifest.license).toBe('MIT')
+  expect(manifest.name).toBe('Rich Presence for Discord')
   expect(manifest.id).toBe('discord-presence')
-  expect(`${manifest.publisher}.${manifest.id}`).toBe('chron0.discord-presence')
   expect(manifest.version).toBe(PLUGIN_VERSION)
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string }
   expect(pkg.version).toBe(PLUGIN_VERSION)
-  expect(manifest.id.includes('prescence')).toBe(false)
-  expect(manifest.contributes.panels).toEqual([
-    { id: 'presence', title: 'Discord Presence', icon: 'settings', entry: 'panel/index.html' }
+  expect(manifest.capabilities.map((cap) => cap.kind).sort()).toEqual(
+    [
+      'agent:read',
+      'notifications:show',
+      'secrets:own',
+      'settings:own',
+      'storage:own',
+      'workspace:read'
+    ].sort()
+  )
+  expect(manifest.contributes.events.map((event) => event.on)).toEqual([
+    'agent.status.changed',
+    'workspace.removed',
+    'workspace.changed'
   ])
-  expect(manifest.contributes.commands.some((command) => command.id === 'presence.reload')).toBe(true)
-  expect(manifest.capabilities.some((cap) => cap.kind === 'terminal:send')).toBe(false)
-  expect(readFileSync(join(root, manifest.contributes.panels[0]!.entry), 'utf8').includes('orca-panel-action')).toBe(
+  expect(manifest.contributes.panels).toEqual([
+    { id: 'presence', title: 'Rich Presence', icon: 'activity', entry: 'panel/index.html' }
+  ])
+  expect(manifest.contributes.commands).toHaveLength(15)
+  expect(manifest.contributes.commands.every((command) => command.title.startsWith('Rich Presence: '))).toBe(
     true
   )
+  expect(manifest.contributes.commands.some((command) => command.id === 'presence.reload')).toBe(true)
+  expect(LOG_PLUGIN_ID).toBe('jondmarien.discord-presence')
+  expect(LOG_DIR_NAME).toBe('jondmarien-discord-presence')
+  expect(readFileSync(join(root, 'LICENSE'), 'utf8').includes('Copyright (c) 2026 Jonathan Marien')).toBe(true)
 })
 
 test('activate and deactivate exports are functions', async () => {
@@ -92,6 +120,7 @@ test('activate registers commands and events; deactivate is safe to call', async
       }
     },
     host: {
+      has: () => false,
       call: async (method, args) => {
         if (method === 'settings.get') {
           return { settings: {} }
@@ -123,8 +152,8 @@ test('activate registers commands and events; deactivate is safe to call', async
     'presence.clear',
     'presence.configure'
   ])
-  expect(events).toEqual(['agent.status.changed', 'worktree.created', 'worktree.removed'])
-  expect(hostLines.some((line) => line.includes('activate') && line.includes('chron0.discord-presence'))).toBe(
+  expect(events).toEqual(['agent.status.changed', 'workspace.removed', 'workspace.changed'])
+  expect(hostLines.some((line) => line.includes('activate') && line.includes('jondmarien.discord-presence'))).toBe(
     true
   )
   const onDisk = readFileSync(logFile, 'utf8')
@@ -175,6 +204,7 @@ test('an invalid persisted Application ID is logged and toasted', async () => {
     commands: { register: () => {} },
     events: { on: () => {} },
     host: {
+      has: () => false,
       call: async (method, args) => {
         if (method === 'settings.get') {
           return { settings: { applicationId: 'not-a-snowflake' } }
@@ -232,6 +262,7 @@ test('configure fails fast on a junk Application ID and accepts two paneKeys', a
       }
     },
     host: {
+      has: () => false,
       call: async (method, args) => {
         if (method === 'settings.get') {
           return { settings: Object.fromEntries(persisted) }
@@ -270,13 +301,13 @@ test('configure fails fast on a junk Application ID and accepts two paneKeys', a
 
   const agent = eventHandlers.get('agent.status.changed')
   await agent?.({
-    worktreeId: 'wt',
+    workspaceId: 'wt',
     paneKey: 'a',
     state: 'working',
     receivedAt: Date.now()
   })
   await agent?.({
-    worktreeId: 'wt',
+    workspaceId: 'wt',
     paneKey: 'b',
     state: 'running',
     receivedAt: Date.now()
@@ -290,6 +321,91 @@ test('configure fails fast on a junk Application ID and accepts two paneKeys', a
   expect(clearResult.enabled).toBe(true)
   expect(clearResult.heldClear).toBe(true)
 
+  await deactivate()
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  if (previousSkip === undefined) {
+    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  } else {
+    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('workspace.changed null context publishes minimal snapshot', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-wschanged-'))
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
+  const { default: activate, deactivate } = await import('../src/main')
+  const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
+  const handlers = new Map<string, () => Promise<unknown>>()
+  const hostLines: string[] = []
+  const orca: OrcaHost = {
+    log: (message) => void hostLines.push(message),
+    commands: { register: (id, handler) => void handlers.set(id, handler) },
+    events: { on: (event, handler) => void eventHandlers.set(event, handler) },
+    host: {
+      has: () => false,
+      call: async (method) => (method === 'settings.get' ? { settings: { debugLogging: true } } : null)
+    }
+  }
+  await activate(orca)
+  await eventHandlers.get('agent.status.changed')?.({
+    workspaceId: 'wt',
+    paneKey: 'a',
+    terminalId: 't1',
+    state: 'working',
+    receivedAt: Date.now()
+  })
+  await eventHandlers.get('workspace.changed')?.({ context: null })
+  // Why: status() carries no agentCount; the minimal-refresh debug line does,
+  // proving the table survived the null context and still published.
+  expect(hostLines.some((line) => line.includes('refresh.minimal') && line.includes('agents=1'))).toBe(true)
+  await handlers.get('presence.status')?.()
+  await eventHandlers.get('workspace.changed')?.({
+    context: { branch: 'main', displayName: 'orca', terminals: [{ id: 't1' }] }
+  })
+  await deactivate()
+  if (previous === undefined) {
+    delete process.env.ORCA_PRESENCE_LOG_FILE
+  } else {
+    process.env.ORCA_PRESENCE_LOG_FILE = previous
+  }
+  if (previousSkip === undefined) {
+    delete process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  } else {
+    process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = previousSkip
+  }
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('activate succeeds when host.has returns false for everything', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-nohas-'))
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  const previousSkip = process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE
+  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  process.env.ORCA_PRESENCE_SKIP_PANEL_WRITE = '1'
+  const { default: activate, deactivate } = await import('../src/main')
+  const calls: string[] = []
+  const orca: OrcaHost = {
+    log: () => {},
+    commands: { register: () => {} },
+    events: { on: () => {} },
+    host: {
+      has: () => false,
+      call: async (method) => {
+        calls.push(method)
+        return method === 'settings.get' ? { settings: {} } : null
+      }
+    }
+  }
+  await activate(orca)
+  expect(calls.includes('agents.list')).toBe(false)
   await deactivate()
   if (previous === undefined) {
     delete process.env.ORCA_PRESENCE_LOG_FILE

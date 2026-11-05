@@ -15,7 +15,12 @@
 import os from 'node:os'
 import { inspectApplicationId } from './discord/app-id'
 import { createDiscordClient } from './discord/client'
-import { createAgentTable, parseAgentStatusPayload, parseWorkspaceRemovedId } from './presence/agents'
+import {
+  createAgentTable,
+  parseAgentsList,
+  parseAgentStatusPayload,
+  parseWorkspaceRemovedId
+} from './presence/agents'
 import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
 import { applyConfigure } from './presence/configure'
 import { createPresenceController, type PresenceController } from './presence/controller'
@@ -95,7 +100,8 @@ type ToggleCommandId = keyof typeof TOGGLE_COMMANDS
 type AgentStatusPayload = {
   state: string
   receivedAt: number
-  worktreeId?: string
+  workspaceId?: string
+  terminalId?: string
   paneKey?: string
 }
 
@@ -103,7 +109,9 @@ type AgentStatusPayload = {
  * Subset of `workspace.readContext` this plugin reads.
  *
  * `terminals` is only used for its length. Missing `displayName` / `branch`
- * are treated as absent by the activity builder.
+ * are treated as absent by the activity builder. The `workspace.changed`
+ * event carries the same shape as `{ context }`, where `context` is `null`
+ * when no workspace is focused.
  */
 type WorkspaceContext = {
   displayName?: string
@@ -134,10 +142,26 @@ export type OrcaHost = {
   }
   host: {
     /**
+     * True when the connected Orca exposes `method`.
+     *
+     * Why: fork-only or newer host methods are guarded by this so an older
+     * Orca degrades instead of throwing.
+     */
+    has: (method: string) => boolean
+    /**
      * Invoke a host method. This plugin uses `settings.get`, `settings.set`,
-     * `workspace.readContext`, and `notifications.show`.
+     * `workspace.readContext`, `agents.list`, and `notifications.show`.
      */
     call: (method: string, args?: Record<string, unknown>) => Promise<unknown>
+  }
+  /** Native Settings page change feed. Absent on older hosts. */
+  settings?: {
+    onDidChange(handler: (e: { key: string }) => void): { dispose(): void }
+  }
+  /** Panel RPC channel. Absent on older hosts or browser clients. */
+  panels?: {
+    handle(name: string, fn: (input: unknown) => unknown): { dispose(): void }
+    post(name: string, payload: unknown): void
   }
 }
 
@@ -268,7 +292,7 @@ export default async function activate(orca: OrcaHost) {
       fallback: SHIPPED_APPLICATION_ID
     })
     void orca.host.call('notifications.show', {
-      title: 'Discord Rich Presence',
+      title: 'Rich Presence for Discord',
       body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ''}. Using shipped id. ${appId.reason ?? ''}`
     })
   }
@@ -338,7 +362,7 @@ export default async function activate(orca: OrcaHost) {
    */
   async function refresh(
     agentEvent?: AgentStatusPayload | null,
-    options: { force?: boolean; resume?: boolean } = {}
+    options: { force?: boolean; resume?: boolean; context?: WorkspaceContext | null } = {}
   ) {
     if (agentEvent) {
       const parsed = parseAgentStatusPayload(agentEvent, Date.now())
@@ -351,11 +375,17 @@ export default async function activate(orca: OrcaHost) {
       agentState: undefined,
       stateStartedAtMs: undefined
     }
-    const context = (await orca.host.call('workspace.readContext').catch(() => null)) as
-      | WorkspaceContext
-      | null
+    // Why: `workspace.changed` already carries the context (possibly null for
+    // "nothing focused"), so use it instead of a second host round trip.
+    const context =
+      options.context !== undefined
+        ? options.context
+        : ((await orca.host.call('workspace.readContext').catch(() => null)) as WorkspaceContext | null)
     if (!context) {
-      diagnostics?.line('debug', 'refresh.minimal', { reason: 'no workspace context' })
+      diagnostics?.line('debug', 'refresh.minimal', {
+        reason: 'no workspace context',
+        agents: summary.agentCount
+      })
     } else if (agentEvent) {
       diagnostics?.line('debug', 'refresh', {
         source: 'agent.status.changed',
@@ -430,7 +460,7 @@ export default async function activate(orca: OrcaHost) {
       transmitting: JSON.stringify(status?.lastActivity)
     })
     await orca.host.call('notifications.show', {
-      title: 'Discord Rich Presence',
+      title: 'Rich Presence for Discord',
       body: `${summary} ${transmitting}`
     })
     publishPanelSnapshot('immediate')
@@ -450,7 +480,7 @@ export default async function activate(orca: OrcaHost) {
       transmitting: JSON.stringify(status?.lastActivity)
     })
     await orca.host.call('notifications.show', {
-      title: 'Discord Rich Presence',
+      title: 'Rich Presence for Discord',
       body: summary
     })
     publishPanelSnapshot('immediate')
@@ -468,7 +498,7 @@ export default async function activate(orca: OrcaHost) {
       sink: status?.sink
     })
     await orca.host.call('notifications.show', {
-      title: 'Discord Rich Presence',
+      title: 'Rich Presence for Discord',
       body: `${summary} Presence is cleared until the next agent event, Show Status, Reload RPC, or a settings change. enabled stays on.`
     })
     publishPanelSnapshot('immediate')
@@ -480,7 +510,7 @@ export default async function activate(orca: OrcaHost) {
     if (!result.ok) {
       diagnostics?.line('error', 'presence.configure_failed', { reason: result.error })
       await orca.host.call('notifications.show', {
-        title: 'Discord Rich Presence',
+        title: 'Rich Presence for Discord',
         body: result.error
       })
       return result
@@ -491,7 +521,7 @@ export default async function activate(orca: OrcaHost) {
         'Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.'
       const body = `applicationId=${view.shippedApplicationId ? 'shipped' : view.applicationId} openUrl=${view.openUrl || '(empty)'} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} label=${view.openButtonLabel}`
       await orca.host.call('notifications.show', {
-        title: 'Discord Rich Presence',
+        title: 'Rich Presence for Discord',
         body: `${body} ${hint}`
       })
       return { ok: true, ...view, hint, changed: [] }
@@ -501,7 +531,7 @@ export default async function activate(orca: OrcaHost) {
     const view = publicConfigureView(settings)
     diagnostics?.line('info', 'presence.configure', { changed: result.changed })
     await orca.host.call('notifications.show', {
-      title: 'Discord Rich Presence',
+      title: 'Rich Presence for Discord',
       body: `updated ${result.changed.join(', ')}`
     })
     return { ok: true, changed: result.changed, ...view }
@@ -511,16 +541,28 @@ export default async function activate(orca: OrcaHost) {
     const parsed = parseAgentStatusPayload(payload, Date.now())
     await refresh(parsed ?? undefined)
   })
-  orca.events.on('worktree.created', async () => {
-    await refresh()
-  })
-  orca.events.on('worktree.removed', async (payload) => {
-    const worktreeId = parseWorkspaceRemovedId(payload)
-    if (worktreeId) {
-      agentTable?.removeWorkspace(worktreeId)
+  orca.events.on('workspace.removed', async (payload) => {
+    const workspaceId = parseWorkspaceRemovedId(payload)
+    if (workspaceId) {
+      agentTable?.removeWorkspace(workspaceId)
     }
     await refresh()
   })
+  orca.events.on('workspace.changed', async (payload) => {
+    const raw = (payload as { context?: unknown } | null | undefined)?.context
+    const context = raw && typeof raw === 'object' ? (raw as WorkspaceContext) : null
+    await refresh(undefined, { context })
+  })
+
+  // Why: seed the table with agents already running when the worker starts,
+  // so presence is right before the next status event. Guarded: older Orca and
+  // browser clients lack `agents.list`.
+  if (orca.host.has('agents.list')) {
+    const listed = await orca.host.call('agents.list').catch(() => null)
+    for (const seeded of parseAgentsList(listed, Date.now())) {
+      agentTable?.upsert(seeded)
+    }
+  }
 
   heartbeat = setInterval(() => {
     void refresh(undefined, { force: true })

@@ -79,7 +79,7 @@ test('buildPresencePanelSnapshot omits secrets and summarizes activity', () => {
       bridgeToken: 'super-secret-token',
       applicationId: SHIPPED_APPLICATION_ID
     },
-    logs: ['[chron0.discord-presence] info bridge.publish token=super-secret-token']
+    logs: ['[jondmarien.discord-presence] info bridge.publish token=super-secret-token']
   })
   expect(snapshot.version).toBe(PLUGIN_VERSION)
   expect(snapshot.generatedAt).toBe('2026-09-05T06:00:00.000Z')
@@ -100,7 +100,7 @@ test('buildPresencePanelSnapshot omits secrets and summarizes activity', () => {
 
 test('summarizePanelActivity and conventional log hint', () => {
   expect(summarizePanelActivity(null)).toBe(null)
-  expect(CONVENTIONAL_LOG_HINT).toBe('~/.local/state/chron0-discord-presence/plugin.log')
+  expect(CONVENTIONAL_LOG_HINT).toBe('~/.local/state/jondmarien-discord-presence/plugin.log')
   const emptyFile = buildPresencePanelSnapshot({
     version: '0.4.0',
     status: statusWith({ logFile: null }),

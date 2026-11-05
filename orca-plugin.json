@@ -1,50 +1,124 @@
 {
-  "manifestVersion": 1,
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "execution": "trusted-worker",
   "id": "discord-presence",
-  "publisher": "chron0",
-  "name": "Discord Rich Presence",
-  "version": "0.5.0",
-  "description": "Shows your current Orca workspace, branch, and agent state as Discord Rich Presence. Every field is opt-in.",
-  "engines": { "orca": ">=1.4.0" },
+  "name": "Rich Presence for Discord",
+  "version": "1.0.0",
+  "description": "Shows your Orca workspace, branch and agent state on your Discord profile. Every field is opt-in. Not affiliated with Discord.",
+  "author": {
+    "name": "Jonathan Marien",
+    "url": "https://github.com/jondmarien"
+  },
+  "repository": "https://github.com/jondmarien/orca-discord-presence",
+  "homepage": "https://github.com/jondmarien/orca-discord-presence",
+  "license": "MIT",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
   "pluginApi": 1,
   "main": "dist/main.js",
   "contributes": {
     "panels": [
       {
         "id": "presence",
-        "title": "Discord Presence",
-        "icon": "settings",
+        "title": "Rich Presence",
+        "icon": "activity",
         "entry": "panel/index.html"
       }
     ],
     "commands": [
-      { "id": "presence.toggle", "title": "Discord Presence: Enable/Disable" },
-      { "id": "presence.status", "title": "Discord Presence: Show Status" },
-      { "id": "presence.reload", "title": "Discord Presence: Reload RPC" },
-      { "id": "presence.detail-level", "title": "Discord Presence: Cycle Detail Level" },
-      { "id": "presence.toggle-branch", "title": "Discord Presence: Toggle Branch" },
-      { "id": "presence.toggle-agent-state", "title": "Discord Presence: Toggle Agent State" },
-      { "id": "presence.toggle-terminals", "title": "Discord Presence: Toggle Terminal Count" },
-      { "id": "presence.toggle-machine", "title": "Discord Presence: Toggle Machine Name" },
-      { "id": "presence.toggle-elapsed", "title": "Discord Presence: Toggle Elapsed Timer" },
-      { "id": "presence.toggle-bridge", "title": "Discord Presence: Toggle Bridge" },
-      { "id": "presence.debug-logging", "title": "Discord Presence: Toggle Debug Logging" },
-      { "id": "presence.toggle-open-button", "title": "Discord Presence: Toggle Open Button" },
-      { "id": "presence.toggle-agent-count", "title": "Discord Presence: Toggle Agent Count" },
-      { "id": "presence.clear", "title": "Discord Presence: Clear" },
-      { "id": "presence.configure", "title": "Discord Presence: Configure" }
+      {
+        "id": "presence.toggle",
+        "title": "Rich Presence: Enable/Disable"
+      },
+      {
+        "id": "presence.status",
+        "title": "Rich Presence: Show Status"
+      },
+      {
+        "id": "presence.reload",
+        "title": "Rich Presence: Reload RPC"
+      },
+      {
+        "id": "presence.detail-level",
+        "title": "Rich Presence: Cycle Detail Level"
+      },
+      {
+        "id": "presence.toggle-branch",
+        "title": "Rich Presence: Toggle Branch"
+      },
+      {
+        "id": "presence.toggle-agent-state",
+        "title": "Rich Presence: Toggle Agent State"
+      },
+      {
+        "id": "presence.toggle-terminals",
+        "title": "Rich Presence: Toggle Terminal Count"
+      },
+      {
+        "id": "presence.toggle-machine",
+        "title": "Rich Presence: Toggle Machine Name"
+      },
+      {
+        "id": "presence.toggle-elapsed",
+        "title": "Rich Presence: Toggle Elapsed Timer"
+      },
+      {
+        "id": "presence.toggle-bridge",
+        "title": "Rich Presence: Toggle Bridge"
+      },
+      {
+        "id": "presence.debug-logging",
+        "title": "Rich Presence: Toggle Debug Logging"
+      },
+      {
+        "id": "presence.toggle-open-button",
+        "title": "Rich Presence: Toggle Open Button"
+      },
+      {
+        "id": "presence.toggle-agent-count",
+        "title": "Rich Presence: Toggle Agent Count"
+      },
+      {
+        "id": "presence.clear",
+        "title": "Rich Presence: Clear"
+      },
+      {
+        "id": "presence.configure",
+        "title": "Rich Presence: Configure"
+      }
     ],
     "events": [
-      { "on": "agent.status.changed" },
-      { "on": "worktree.created" },
-      { "on": "worktree.removed" }
+      {
+        "on": "agent.status.changed"
+      },
+      {
+        "on": "workspace.removed"
+      },
+      {
+        "on": "workspace.changed"
+      }
     ]
   },
   "capabilities": [
-    { "kind": "workspace:read" },
-    { "kind": "events:subscribe" },
-    { "kind": "storage" },
-    { "kind": "settings:own" },
-    { "kind": "notifications:show" }
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "agent:read"
+    },
+    {
+      "kind": "storage:own"
+    },
+    {
+      "kind": "settings:own"
+    },
+    {
+      "kind": "secrets:own"
+    },
+    {
+      "kind": "notifications:show"
+    }
   ]
 }
