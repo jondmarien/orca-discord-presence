@@ -3,7 +3,7 @@
  *
  * Hosts and agent CLIs emit more strings than the Rich Presence
  * assets this plugin ships. Map those aliases here, then render only
- * `working` / `blocked` / `waiting` / completed. Unknown values become completed
+ * `working` / `blocked` / `waiting` / completed / idle. Unknown values become idle
  * so a future or malformed state can never leak verbatim.
  *
  * @module presence/agent-state
@@ -14,9 +14,9 @@
 /**
  * The four states this plugin knows how to show. `done` is Orca's name for
  * a finished agent; it is displayed as `completed` (own asset and label in
- * {@link buildActivity}), distinct from `idle` (no agents).
+ * {@link buildActivity}), distinct from `idle` (nothing running, or unknown).
  */
-export type CanonicalAgentState = 'working' | 'blocked' | 'waiting' | 'done'
+export type CanonicalAgentState = 'working' | 'blocked' | 'waiting' | 'done' | 'idle'
 
 /**
  * Alias table after {@link normalizeStateKey}. Keys are lowercase with
@@ -45,7 +45,7 @@ const AGENT_STATE_ALIASES: Record<string, CanonicalAgentState> = {
   complete: 'done',
   completed: 'done',
   finished: 'done',
-  idle: 'done',
+  idle: 'idle',
   success: 'done',
   cancelled: 'done',
   canceled: 'done'
@@ -61,18 +61,19 @@ function normalizeStateKey(raw: string): string {
 /**
  * Map a host / CLI agent state to a canonical value.
  *
- * Unknown, empty, and missing strings become `done` (completed on Discord).
+ * Unknown, empty, and missing strings become `idle`: only a real `done`
+ * (or its aliases) may claim completion.
  *
  * @param raw - `agent.status.changed` `state`, or undefined.
  * @returns One of {@link CanonicalAgentState}.
  */
 export function canonicalizeAgentState(raw: string | undefined): CanonicalAgentState {
   if (typeof raw !== 'string') {
-    return 'done'
+    return 'idle'
   }
   const key = normalizeStateKey(raw)
   if (!key) {
-    return 'done'
+    return 'idle'
   }
-  return AGENT_STATE_ALIASES[key] ?? 'done'
+  return AGENT_STATE_ALIASES[key] ?? 'idle'
 }

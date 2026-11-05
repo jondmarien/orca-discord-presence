@@ -74,10 +74,11 @@ export type AgentTable = {
 }
 
 const PRIORITY: Record<CanonicalAgentState, number> = {
-  blocked: 3,
-  waiting: 2,
-  working: 1,
-  done: 0
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  done: 1,
+  idle: 0
 }
 
 /**
@@ -194,7 +195,8 @@ export function parseAgentsList(result: unknown, nowMs: number): AgentStatusEven
 }
 
 function retentionWindow(state: CanonicalAgentState): number {
-  return state === 'done' ? AGENT_RETENTION_MS.done : AGENT_RETENTION_MS.stale
+  // Why: an idle agent is not running work, so it lingers only as long as `done`.
+  return state === 'done' || state === 'idle' ? AGENT_RETENTION_MS.done : AGENT_RETENTION_MS.stale
 }
 
 /**
@@ -208,7 +210,7 @@ function summarizeSlots(slots: readonly AgentSlot[]): AgentSummary {
   if (slots.length === 0) {
     return { agentCount: 0, agentState: undefined, stateStartedAtMs: undefined }
   }
-  let winner: CanonicalAgentState = 'done'
+  let winner: CanonicalAgentState = 'idle'
   let winnerPriority = -1
   for (const slot of slots) {
     const priority = PRIORITY[slot.canonicalState]

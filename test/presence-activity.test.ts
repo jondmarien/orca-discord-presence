@@ -133,14 +133,25 @@ test('no agent state renders as idle with the idle asset', () => {
   expect(activity?.assets.small_text).toBe('idle')
 })
 
-test('an unrecognized agent state never leaks verbatim', () => {
+test('a raw idle state renders as idle, not completed', () => {
+  const activity = buildActivity(
+    { ...SNAPSHOT, agentState: 'idle' },
+    settingsWith({ detailLevel: 'full' }),
+    NOW_MS
+  )
+  expect(activity?.state).toBe('idle')
+  expect(activity?.assets.small_image).toBe('state-idle-v2')
+})
+
+test('an unrecognized agent state reads idle rather than leaking or claiming completion', () => {
   const activity = buildActivity(
     { ...SNAPSHOT, agentState: 'exfiltrating-secrets' },
     settingsWith({ detailLevel: 'full' }),
     NOW_MS
   )
-  expect(activity?.state).toBe('completed')
-  expect(activity?.assets.small_image).toBe('state-completed-v2')
+  expect(activity?.state).toBe('idle')
+  expect(activity?.assets.small_image).toBe('state-idle-v2')
+  expect(activity?.assets.small_text).toBe('idle')
 })
 
 test('showElapsed emits unix seconds, not milliseconds', () => {
@@ -203,7 +214,7 @@ test('an unrecognized agent state is omitted from the serialized payload', () =>
     NOW_MS
   )
   const serialized = JSON.stringify(activity)
-  expect(activity?.state).toBe('completed')
+  expect(activity?.state).toBe('idle')
   expect(serialized.includes('exfiltrating-secrets')).toBe(false)
 })
 

@@ -50,6 +50,7 @@ test('completed beats idle inside one minute', () => {
 test('agent summary state maps to a timeline state: done is completed, none is idle', () => {
   expect(timelineStateFor('done')).toBe('completed')
   expect(timelineStateFor(undefined)).toBe('idle')
+  expect(timelineStateFor('idle')).toBe('idle')
   expect(timelineStateFor('working')).toBe('working')
   expect(timelineStateFor('waiting')).toBe('waiting')
   expect(timelineStateFor('blocked')).toBe('blocked')

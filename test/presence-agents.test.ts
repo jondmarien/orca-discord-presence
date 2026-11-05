@@ -118,6 +118,14 @@ test('one done agent summarizes as done, which the panel shows as completed', ()
   expect(table.summarize().agentCount).toBe(1)
 })
 
+test('an idle agent summarizes as idle, below done', () => {
+  const { table } = tableHarness()
+  table.upsert({ workspaceId: 'w', paneKey: '1', state: 'idle', receivedAt: 1_000_000 })
+  expect(table.summarize().agentState).toBe('idle')
+  table.upsert({ workspaceId: 'w', paneKey: '2', state: 'done', receivedAt: 1_000_000 })
+  expect(table.summarize().agentState).toBe('done')
+})
+
 test('an empty table has no agent state', () => {
   const { table } = tableHarness()
   expect(table.summarize()).toEqual({

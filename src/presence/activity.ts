@@ -99,19 +99,17 @@ export function localAssetName(key: string): string {
 /**
  * Canonical agent states and their Discord labels / Rich Presence asset
  * keys. Incoming host strings are folded through
- * {@link canonicalizeAgentState} first; anything unknown becomes `done`
- * (completed) so a future or malformed state can never be transmitted
- * verbatim. `idle` is separate: it means no agent state at all.
+ * {@link canonicalizeAgentState} first; anything unknown becomes `idle` so a
+ * future or malformed state can never be transmitted verbatim, and never
+ * claims completion.
  */
 const AGENT_STATE_LABELS = {
   working: { label: 'working', asset: `state-working${DISCORD_ASSET_SUFFIX}` },
   blocked: { label: 'blocked', asset: `state-blocked${DISCORD_ASSET_SUFFIX}` },
   waiting: { label: 'waiting for input', asset: `state-waiting${DISCORD_ASSET_SUFFIX}` },
-  done: { label: 'completed', asset: `state-completed${DISCORD_ASSET_SUFFIX}` }
+  done: { label: 'completed', asset: `state-completed${DISCORD_ASSET_SUFFIX}` },
+  idle: { label: 'idle', asset: `state-idle${DISCORD_ASSET_SUFFIX}` }
 } as const
-
-/** Shown when there is no agent state: nothing is running. */
-const IDLE_VISUAL = { label: 'idle', asset: `state-idle${DISCORD_ASSET_SUFFIX}` } as const
 
 /**
  * Truncate to Discord's 128-character text limit, appending an ellipsis.
@@ -121,13 +119,10 @@ function clamp(text: string): string {
 }
 
 /**
- * Map an agent state string to a known label/asset. Missing state is idle;
- * an unknown string is completed (never echoed).
+ * Map an agent state string to a known label/asset. Missing and unknown
+ * strings are idle (never echoed).
  */
 function agentVisual(state: string | undefined) {
-  if (state === undefined) {
-    return IDLE_VISUAL
-  }
   const canonical = canonicalizeAgentState(state)
   return AGENT_STATE_LABELS[canonical]
 }

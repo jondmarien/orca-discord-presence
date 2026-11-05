@@ -441,7 +441,7 @@ var AGENT_STATE_ALIASES = {
   complete: "done",
   completed: "done",
   finished: "done",
-  idle: "done",
+  idle: "idle",
   success: "done",
   cancelled: "done",
   canceled: "done"
@@ -451,13 +451,13 @@ function normalizeStateKey(raw) {
 }
 function canonicalizeAgentState(raw) {
   if (typeof raw !== "string") {
-    return "done";
+    return "idle";
   }
   const key = normalizeStateKey(raw);
   if (!key) {
-    return "done";
+    return "idle";
   }
-  return AGENT_STATE_ALIASES[key] ?? "done";
+  return AGENT_STATE_ALIASES[key] ?? "idle";
 }
 
 // src/presence/expiry.ts
@@ -477,10 +477,11 @@ function isActivityFresh(lastSeenAtMs, nowMs, windowMs) {
 
 // src/presence/agents.ts
 var PRIORITY = {
-  blocked: 3,
-  waiting: 2,
-  working: 1,
-  done: 0
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  done: 1,
+  idle: 0
 };
 function agentSlotKey(event) {
   if (typeof event.terminalId === "string" && event.terminalId.length > 0) {
@@ -550,7 +551,7 @@ function parseAgentsList(result, nowMs) {
   return events;
 }
 function retentionWindow(state) {
-  return state === "done" ? AGENT_RETENTION_MS.done : AGENT_RETENTION_MS.stale;
+  return state === "done" || state === "idle" ? AGENT_RETENTION_MS.done : AGENT_RETENTION_MS.stale;
 }
 function isAgentSlotFresh(slot, nowMs) {
   return isActivityFresh(slot.receivedAt, nowMs, retentionWindow(slot.canonicalState));
@@ -559,7 +560,7 @@ function summarizeSlots(slots) {
   if (slots.length === 0) {
     return { agentCount: 0, agentState: undefined, stateStartedAtMs: undefined };
   }
-  let winner = "done";
+  let winner = "idle";
   let winnerPriority = -1;
   for (const slot of slots) {
     const priority = PRIORITY[slot.canonicalState];
@@ -1073,16 +1074,13 @@ var AGENT_STATE_LABELS = {
   working: { label: "working", asset: `state-working${DISCORD_ASSET_SUFFIX}` },
   blocked: { label: "blocked", asset: `state-blocked${DISCORD_ASSET_SUFFIX}` },
   waiting: { label: "waiting for input", asset: `state-waiting${DISCORD_ASSET_SUFFIX}` },
-  done: { label: "completed", asset: `state-completed${DISCORD_ASSET_SUFFIX}` }
+  done: { label: "completed", asset: `state-completed${DISCORD_ASSET_SUFFIX}` },
+  idle: { label: "idle", asset: `state-idle${DISCORD_ASSET_SUFFIX}` }
 };
-var IDLE_VISUAL = { label: "idle", asset: `state-idle${DISCORD_ASSET_SUFFIX}` };
 function clamp(text) {
   return text.length > DISCORD_TEXT_MAX ? `${text.slice(0, DISCORD_TEXT_MAX - 1)}…` : text;
 }
 function agentVisual(state) {
-  if (state === undefined) {
-    return IDLE_VISUAL;
-  }
   const canonical = canonicalizeAgentState(state);
   return AGENT_STATE_LABELS[canonical];
 }
@@ -1563,10 +1561,11 @@ function summarizePanelActivity(activity) {
   };
 }
 var AGENT_ROW_PRIORITY = {
-  blocked: 3,
-  waiting: 2,
-  working: 1,
-  done: 0
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  done: 1,
+  idle: 0
 };
 function summarizePanelAgents(slots) {
   return slots.map((slot) => ({

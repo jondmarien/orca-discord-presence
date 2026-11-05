@@ -141,10 +141,11 @@ export function summarizePanelActivity(
 }
 
 const AGENT_ROW_PRIORITY: Record<CanonicalAgentState, number> = {
-  blocked: 3,
-  waiting: 2,
-  working: 1,
-  done: 0
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  done: 1,
+  idle: 0
 }
 
 /**
