@@ -16,6 +16,13 @@ import os from 'node:os'
 import { inspectApplicationId } from './discord/app-id'
 import { createDiscordClient } from './discord/client'
 import {
+  detectDiscordClients,
+  resolveClientCandidates,
+  summarizeClients,
+  type DetectedClient
+} from './discord/detect'
+import { defaultDiscordIpcCandidates } from './discord/ipc'
+import {
   createAgentTable,
   parseAgentsList,
   parseAgentStatusPayload,
@@ -51,6 +58,12 @@ import { PLUGIN_VERSION } from './version'
  * switches, which emit no event.
  */
 const HEARTBEAT_MS = 90_000
+
+/**
+ * Minimum gap between Discord client scans. Why: each scan dials up to ~240
+ * sockets, so it rides the heartbeat instead of running on every event.
+ */
+const DETECT_MIN_INTERVAL_MS = 60_000
 
 /**
  * Coalesce `panels.post` pushes during a chatty agent event stream.
@@ -380,12 +393,36 @@ export default async function activate(orca: OrcaHost) {
     })
   }
 
+  // Why: detection keeps socket paths; only id/label ever leave the worker.
+  let detected: DetectedClient[] = []
+  let lastDetectAt = 0
+  async function redetect(force = false) {
+    if (!force && Date.now() - lastDetectAt < DETECT_MIN_INTERVAL_MS) {
+      return
+    }
+    lastDetectAt = Date.now()
+    const found = await detectDiscordClients()
+    if (!deactivated) {
+      detected = found
+    }
+  }
+
   function createController(nextSettings: PresenceSettings): PresenceController {
+    const discord = createDiscordClient({
+      clientId: nextSettings.applicationId,
+      candidates: () =>
+        resolveClientCandidates(nextSettings.discordClient, detected, defaultDiscordIpcCandidates())
+          .candidates,
+      log: (message, level = 'error') => diagnostics?.line(level, 'discord.client', { reason: message })
+    })
     return createPresenceController({
-      client: createDiscordClient({
-        clientId: nextSettings.applicationId,
-        log: (message, level = 'error') => diagnostics?.line(level, 'discord.client', { reason: message })
-      }),
+      client: discord,
+      describeClient: () =>
+        summarizeClients({
+          connectedPath: discord.connectedPath(),
+          choice: nextSettings.discordClient,
+          detected
+        }),
       bridge: createBridgeTransport({
         log: (message) => diagnostics?.line('error', 'bridge.transport', { reason: message })
       }),
@@ -425,11 +462,20 @@ export default async function activate(orca: OrcaHost) {
    * in Orca's Settings page), so both paths rebind the same way.
    */
   async function applySettings(nextSettings: PresenceSettings) {
+    // Why: both are fixed when the Discord client is built (handshake client_id,
+    // candidate list), so either change recreates it.
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId
+    const clientChanged = nextSettings.discordClient !== settings.discordClient
     settings = nextSettings
     diagnostics?.setDebugEnabled(nextSettings.debugLogging)
-    if (applicationIdChanged) {
-      diagnostics?.line('info', 'discord.app_id_rebind', { applicationId: nextSettings.applicationId })
+    if (applicationIdChanged || clientChanged) {
+      diagnostics?.line(
+        'info',
+        applicationIdChanged ? 'discord.app_id_rebind' : 'discord.client_rebind',
+        applicationIdChanged
+          ? { applicationId: nextSettings.applicationId }
+          : { client: nextSettings.discordClient }
+      )
       await controller?.stop()
       controller = createController(nextSettings)
     } else {
@@ -576,10 +622,11 @@ export default async function activate(orca: OrcaHost) {
     const file = status?.logFile ?? diagnostics?.filePath ?? ''
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null)
     const warned = tokenWarnings.length > 0 ? ` warnings=${tokenWarnings.join('; ')}` : ''
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} tokenStore=${tokenStore} detail=${status?.detailLevel} debug=${settings.debugLogging}${warned}`
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} client=${status?.client?.id ?? 'none'} sink=${status?.sink} bridge=${status?.bridgeEnabled} tokenStore=${tokenStore} detail=${status?.detailLevel} debug=${settings.debugLogging}${warned}`
     diagnostics?.line('info', 'status', {
       enabled: status?.enabled,
       connected: status?.connected,
+      client: status?.client?.id ?? 'none',
       sink: status?.sink,
       bridge: status?.bridgeEnabled,
       tokenStore,
@@ -598,12 +645,13 @@ export default async function activate(orca: OrcaHost) {
   })
 
   registerPalette('presence.reload', async () => {
+    await redetect(true)
     await refresh()
     diagnostics?.line('info', 'discord.reload_command')
     await controller?.reload()
     const status = controller?.status()
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null)
-    const summary = `reloaded connected=${status?.connected} sink=${status?.sink} ${transmitting}`
+    const summary = `reloaded connected=${status?.connected} client=${status?.client?.id ?? 'none'} sink=${status?.sink} ${transmitting}`
     diagnostics?.line('info', 'discord.reload_done', {
       connected: status?.connected,
       sink: status?.sink,
@@ -781,16 +829,18 @@ export default async function activate(orca: OrcaHost) {
   }
 
   heartbeat = setInterval(() => {
-    void refresh(undefined, { force: true })
+    void redetect().then(() => refresh(undefined, { force: true }))
   }, HEARTBEAT_MS)
   heartbeat.unref?.()
 
   // Why: fire-and-forget. `activate` must resolve inside
   // PLUGIN_WORKER_READY_TIMEOUT_MS (10s) or the host SIGKILLs the worker, and
   // the first refresh chains into a socket scan plus a 5s handshake timeout.
-  void refresh().then(() => {
-    publishPanelSnapshot('immediate')
-  })
+  void redetect(true)
+    .then(() => refresh())
+    .then(() => {
+      publishPanelSnapshot('immediate')
+    })
 }
 
 /**

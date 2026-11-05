@@ -17,6 +17,9 @@ function statusWith(overrides: Partial<PresenceStatus> = {}): PresenceStatus {
   return {
     enabled: true,
     connected: true,
+    client: null,
+    clients: [],
+    clientFallback: false,
     bridgeEnabled: false,
     sink: 'local',
     detailLevel: 'generic',
@@ -50,6 +53,46 @@ test('redactPanelLogLine replaces leftover token assignments', () => {
     'bridge.publish token=*** url=http://127.0.0.1:3848'
   )
   expect(redactPanelLogLine('bridge.publish token=***')).toBe('bridge.publish token=***')
+})
+
+test('snapshot carries client info with no socket path anywhere', () => {
+  for (const path of ['/run/user/1000/.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-0', '\\\\?\\pipe\\discord-ipc-0']) {
+    const snapshot = buildPresencePanelSnapshot({
+      version: PLUGIN_VERSION,
+      status: statusWith({
+        client: { id: 'vesktop:0', label: 'Vesktop' },
+        // A careless caller handing paths through must still not leak them.
+        clients: [{ id: 'vesktop:0', label: 'Vesktop', path } as never],
+        clientFallback: true
+      }),
+      settings: { ...DEFAULT_SETTINGS, discordClient: 'vesktop:0' },
+      logs: [],
+      timeline: [],
+      agents: []
+    })
+    expect(snapshot.status.client).toEqual({ id: 'vesktop:0', label: 'Vesktop' })
+    expect(snapshot.status.clients).toEqual([{ id: 'vesktop:0', label: 'Vesktop' }])
+    expect(snapshot.status.clientFallback).toBe(true)
+    expect(snapshot.fields.discordClient).toBe('vesktop:0')
+    expect('path' in snapshot.status.clients[0]).toBe(false)
+    const json = JSON.stringify(snapshot)
+    expect(json.includes('/run/user')).toBe(false)
+    expect(json.includes('\\\\pipe')).toBe(false)
+  }
+})
+
+test('toast includes the connected client id', () => {
+  const snapshot = buildPresencePanelSnapshot({
+    version: PLUGIN_VERSION,
+    status: statusWith({ client: { id: 'vesktop:0', label: 'Vesktop' } }),
+    settings: DEFAULT_SETTINGS,
+    logs: [],
+    timeline: [],
+    agents: []
+  })
+  expect(formatPanelStatusToast(snapshot)).toContain('client=vesktop:0')
+  snapshot.status.client = null
+  expect(formatPanelStatusToast(snapshot)).toContain('client=none')
 })
 
 test('buildPresencePanelSnapshot omits secrets and summarizes activity', () => {
@@ -89,7 +132,7 @@ test('buildPresencePanelSnapshot omits secrets and summarizes activity', () => {
   expect(JSON.stringify(snapshot).includes('openUrl')).toBe(false)
   expect(snapshot.fields.showOpenButton).toBe(false)
   expect(snapshot.fields.showAgentCount).toBe(false)
-  expect(formatPanelStatusToast(snapshot)).toBe('enabled=true connected=true sink=local detail=generic')
+  expect(formatPanelStatusToast(snapshot)).toBe('enabled=true connected=true client=none sink=local detail=generic')
 })
 
 test('summarizePanelActivity and conventional log hint', () => {

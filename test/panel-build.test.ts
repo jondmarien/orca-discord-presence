@@ -148,7 +148,10 @@ function fullSnapshot(timeline: Array<string | null>) {
       bridgeEnabled: false,
       debugLogging: false,
       lastActivity: { details: 'Working in Orca', state: 'Agent working · 3 agents' },
-      logFile: null
+      logFile: null,
+      client: { id: 'vesktop:0', label: 'Vesktop' } as { id: string; label: string } | null,
+      clients: [{ id: 'vesktop:0', label: 'Vesktop' }] as Array<{ id: string; label: string }>,
+      clientFallback: false
     },
     fields: {
       enabled: true,
@@ -160,7 +163,8 @@ function fullSnapshot(timeline: Array<string | null>) {
       bridgeEnabled: false,
       debugLogging: false,
       showOpenButton: false,
-      showAgentCount: true
+      showAgentCount: true,
+      discordClient: 'auto'
     },
     timeline,
     agents: [
@@ -427,4 +431,85 @@ test('agent chip for a done agent starts with completed', () => {
   const chip = byId.get('agents-list')?.children[0]?.children[1]
   expect(chip?.textContent?.startsWith('completed')).toBe(true)
   expect(chip?.getAttribute('data-state')).toBe('completed')
+})
+
+const TWO_CLIENTS = [
+  { id: 'vesktop:0', label: 'Vesktop' },
+  { id: 'discord:0', label: 'Discord' }
+]
+
+test('sending-to tile names the connected client', () => {
+  const { byId, hook } = mountPanel()
+  hook?.render(fullSnapshot([]))
+  expect(byId.get('tile-sink-sub')?.textContent).toBe('Vesktop \u00b7 IPC')
+  const bare = fullSnapshot([])
+  bare.status.client = null
+  hook?.render(bare)
+  expect(byId.get('tile-sink-sub')?.textContent).toBe('Discord IPC')
+})
+
+test('client card is hidden with one client and shown with two', () => {
+  const { byId, hook } = mountPanel()
+  hook?.render(fullSnapshot([]))
+  expect(hidden(byId, 'client-card')).toBe(true)
+  const two = fullSnapshot([])
+  two.status.clients = TWO_CLIENTS
+  hook?.render(two)
+  expect(hidden(byId, 'client-card')).toBe(false)
+  // Auto plus one button per detected client.
+  expect(byId.get('client-seg')?.children.map((b) => b.textContent)).toEqual(['Auto', 'Vesktop', 'Discord'])
+  hook?.render(fullSnapshot([]))
+  expect(hidden(byId, 'client-card')).toBe(true)
+})
+
+test('client card shows only the matching choice as on, and the fallback note', () => {
+  const { byId, hook } = mountPanel()
+  const two = fullSnapshot([])
+  two.status.clients = TWO_CLIENTS
+  two.fields.discordClient = 'discord:0'
+  hook?.render(two)
+  const buttons = byId.get('client-seg')?.children ?? []
+  expect(buttons.map((b) => b.className.includes('on'))).toEqual([false, false, true])
+  expect(hidden(byId, 'client-note')).toBe(true)
+  two.fields.discordClient = 'discord-snap:0'
+  two.status.clientFallback = true
+  hook?.render(two)
+  expect(hidden(byId, 'client-note')).toBe(false)
+  expect(byId.get('client-note')?.textContent).toBe('Chosen client not running \u2014 using Vesktop.')
+})
+
+test('client card is full-view only', async () => {
+  const { byId, hook } = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
+  await settle()
+  hook?.render(fullSnapshot([]))
+  expect(hidden(byId, 'full-d')).toBe(true)
+})
+
+test('client picker writes discordClient and reverts on rejection', async () => {
+  let fail = false
+  const calls: Array<[string, Record<string, unknown>]> = []
+  const { byId, hook } = mountPanel(async (name, input) => {
+    calls.push([name, input])
+    if (name === 'settings.set' && fail) throw new Error('not allowed')
+    return undefined
+  })
+  const two = fullSnapshot([])
+  two.status.clients = TWO_CLIENTS
+  hook?.render(two)
+  const buttons = (byId.get('client-seg') as FakeElement).children
+  buttons[1].dispatch('click')
+  expect(buttons[1].getAttribute('aria-busy')).toBe('true')
+  await settle()
+  expect(calls).toContainEqual(['settings.set', { key: 'discordClient', value: 'vesktop:0' }])
+  buttons[0].dispatch('click')
+  await settle()
+  expect(calls).toContainEqual(['settings.set', { key: 'discordClient', value: 'auto' }])
+  fail = true
+  buttons[2].dispatch('click')
+  await settle()
+  expect(byId.get('flash')?.textContent).toContain('not allowed')
+  // Snapshot still says auto, so Auto stays on and the clicked one does not.
+  expect(buttons[0].className.includes('on')).toBe(true)
+  expect(buttons[2].className.includes('on')).toBe(false)
+  expect(buttons[2].disabled).toBe(false)
 })

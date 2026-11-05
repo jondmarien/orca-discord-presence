@@ -12,6 +12,7 @@
  * @date 2026-09-05
  */
 
+import os from 'node:os'
 import path from 'node:path'
 
 /**
@@ -144,6 +145,17 @@ export function discordIpcCandidates({ platform, env, uid }: IpcPathInput): stri
     }
   }
   return candidates
+}
+
+/**
+ * Candidate list for the live plugin worker (platform, env, uid).
+ */
+export function defaultDiscordIpcCandidates(): string[] {
+  return discordIpcCandidates({
+    platform: process.platform,
+    env: process.env,
+    uid: typeof os.userInfo === 'function' ? os.userInfo().uid : undefined
+  })
 }
 
 /**

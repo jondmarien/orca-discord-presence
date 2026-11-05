@@ -31,6 +31,15 @@ test('defaults are privacy-preserving', () => {
   expect(DEFAULT_SETTINGS.showOpenButton).toBe(false)
   expect(DEFAULT_SETTINGS.openButtonLabel).toBe(DEFAULT_OPEN_BUTTON_LABEL)
   expect(DEFAULT_SETTINGS.showAgentCount).toBe(false)
+  expect(DEFAULT_SETTINGS.discordClient).toBe('auto')
+})
+
+test('discordClient normalizes: trimmed, capped at 64, junk or empty is auto', () => {
+  expect(normalizeSettings({ discordClient: ' vesktop:0 ' }).discordClient).toBe('vesktop:0')
+  expect(normalizeSettings({ discordClient: 'x'.repeat(100) }).discordClient).toHaveLength(64)
+  expect(normalizeSettings({ discordClient: '' }).discordClient).toBe('auto')
+  expect(normalizeSettings({ discordClient: 7 }).discordClient).toBe('auto')
+  expect(normalizeSettings({}).discordClient).toBe('auto')
 })
 
 test('normalize fills gaps and drops unknown keys', () => {
@@ -169,6 +178,8 @@ test('declared settings match DEFAULT_SETTINGS', () => {
   expect(byKey('detailLevel')?.enum).toEqual(['off', 'generic', 'workspace', 'full'])
   expect(byKey('detailLevel')?.enumLabels).toEqual(['Off', 'Generic', 'Workspace', 'Full'])
   expect(byKey('applicationId')?.maxLength).toBe(20)
+  expect(byKey('discordClient')?.maxLength).toBe(64)
+  expect(byKey('discordClient')?.default).toBe('auto')
   expect(byKey('openButtonLabel')?.maxLength).toBe(32)
   expect(byKey('openUrl')?.maxLength).toBe(512)
   expect(byKey('bridgeUrl')?.maxLength).toBe(512)

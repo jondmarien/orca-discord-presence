@@ -16,9 +16,8 @@
 
 import { randomUUID } from 'node:crypto'
 import net from 'node:net'
-import os from 'node:os'
 import { assertPlausibleApplicationId } from './app-id'
-import { createFrameDecoder, discordIpcCandidates, encodeFrame, OPCODE } from './ipc'
+import { createFrameDecoder, defaultDiscordIpcCandidates, encodeFrame, OPCODE } from './ipc'
 import {
   CONNECT_RETRY_ATTEMPTS,
   CONNECT_RETRY_INITIAL_MS,
@@ -114,6 +113,11 @@ export type DiscordClient = {
   /** Whether a handshake has completed and the socket is still up. */
   isConnected: () => boolean
   /**
+   * Socket path of the live connection, or `null`. Stays inside the worker:
+   * the path reveals the home directory.
+   */
+  connectedPath: () => string | null
+  /**
    * Send `SET_ACTIVITY` with this process pid and the given activity object.
    * Rejects if not connected or if Discord times out / returns `ERROR`.
    */
@@ -130,10 +134,12 @@ export type DiscordClient = {
  * Try each candidate path in order until one TCP/named-pipe connect succeeds.
  *
  * @param candidates - Socket or named-pipe paths, most-likely first.
- * @returns The connected `net.Socket`.
+ * @returns The connected `net.Socket` and the path that answered.
  * @throws If every candidate errors (typical when Discord desktop is closed).
  */
-function connectToFirstAvailable(candidates: string[]): Promise<net.Socket> {
+function connectToFirstAvailable(
+  candidates: string[]
+): Promise<{ socket: net.Socket; path: string }> {
   return new Promise((resolve, reject) => {
     let index = 0
     const attempt = () => {
@@ -150,21 +156,10 @@ function connectToFirstAvailable(candidates: string[]): Promise<net.Socket> {
       socket.once('error', onError)
       socket.once('connect', () => {
         socket.removeListener('error', onError)
-        resolve(socket)
+        resolve({ socket, path: candidate })
       })
     }
     attempt()
-  })
-}
-
-/**
- * Default candidate list for the live plugin worker (platform, env, uid).
- */
-function defaultCandidates(): string[] {
-  return discordIpcCandidates({
-    platform: process.platform,
-    env: process.env,
-    uid: typeof os.userInfo === 'function' ? os.userInfo().uid : undefined
   })
 }
 
@@ -179,7 +174,7 @@ function defaultCandidates(): string[] {
  */
 export function createDiscordClient({
   clientId,
-  candidates = defaultCandidates,
+  candidates = defaultDiscordIpcCandidates,
   onClose = () => {},
   log = () => {},
   handshakeTimeoutMs = HANDSHAKE_TIMEOUT_MS,
@@ -190,6 +185,7 @@ export function createDiscordClient({
 }: DiscordClientOptions): DiscordClient {
   let socket: net.Socket | null = null
   let connected = false
+  let socketPath: string | null = null
   let closeNotified = false
   let closed = false
   const pending = new Map<string, PendingCommand>()
@@ -201,6 +197,7 @@ export function createDiscordClient({
 
   function teardown() {
     connected = false
+    socketPath = null
     for (const entry of pending.values()) {
       clearTimeout(entry.timer)
       entry.reject(new Error('discord connection closed'))
@@ -281,7 +278,9 @@ export function createDiscordClient({
   async function connectOnce() {
     closeNotified = false
     closed = false
-    socket = await connectToFirstAvailable(candidates())
+    const answered = await connectToFirstAvailable(candidates())
+    socket = answered.socket
+    socketPath = answered.path
     const decoder = createFrameDecoder(handleFrame, (error) => {
       const message = error instanceof Error ? error.message : String(error)
       log(`discord frame error: ${message}`)
@@ -369,6 +368,7 @@ export function createDiscordClient({
   return {
     connect,
     isConnected: () => connected,
+    connectedPath: () => (connected ? socketPath : null),
     setActivity: (activity) => command('SET_ACTIVITY', { pid: process.pid, activity }),
     clearActivity: () => command('SET_ACTIVITY', { pid: process.pid, activity: null }),
     async close() {

@@ -98,6 +98,12 @@ export type PresenceSettings = {
    * multi-agent table.
    */
   showAgentCount: boolean
+  /**
+   * Which running Discord app gets the presence: `auto` (first socket that
+   * answers) or a detected client id such as `vesktop:0`. An id that is not
+   * running falls back to auto order (`clientFallback` in the status).
+   */
+  discordClient: string
 }
 
 /**
@@ -156,7 +162,8 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   openUrl: '',
   showOpenButton: false,
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
-  showAgentCount: false
+  showAgentCount: false,
+  discordClient: 'auto'
 })
 
 /**
@@ -273,6 +280,11 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
   settings.openButtonLabel = normalizeOpenButtonLabel(
     source.openButtonLabel === undefined ? DEFAULT_SETTINGS.openButtonLabel : source.openButtonLabel
   )
+  // Why: an empty or non-string value must mean auto, never "no client".
+  settings.discordClient =
+    typeof source.discordClient === 'string' && source.discordClient.trim().length > 0
+      ? source.discordClient.trim().slice(0, 64)
+      : DEFAULT_SETTINGS.discordClient
   return settings
 }
 

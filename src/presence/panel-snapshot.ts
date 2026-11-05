@@ -70,6 +70,8 @@ export type PresencePanelFields = {
   debugLogging: boolean
   showOpenButton: boolean
   showAgentCount: boolean
+  /** `auto` or a detected client id (never a socket path). */
+  discordClient: string
 }
 
 /**
@@ -81,6 +83,11 @@ export type PresencePanelSnapshot = {
   status: {
     enabled: boolean
     connected: boolean
+    /** The Discord app connected over IPC, or `null`. */
+    client: PresenceStatus['client']
+    /** Detected Discord apps; `id` and `label` only, never a path. */
+    clients: PresenceStatus['clients']
+    clientFallback: boolean
     sink: PresenceStatus['sink']
     detailLevel: PresenceSettings['detailLevel']
     bridgeEnabled: boolean
@@ -204,8 +211,8 @@ export function summarizePanelActivityCard(
  * Title stays `Discord Rich Presence` (host cap 120). Body is well under 1000.
  */
 export function formatPanelStatusToast(snapshot: PresencePanelSnapshot): string {
-  const { enabled, connected, sink, detailLevel } = snapshot.status
-  return `enabled=${enabled} connected=${connected} sink=${sink} detail=${detailLevel}`
+  const { enabled, connected, sink, detailLevel, client } = snapshot.status
+  return `enabled=${enabled} connected=${connected} client=${client?.id ?? 'none'} sink=${sink} detail=${detailLevel}`
 }
 
 /**
@@ -220,6 +227,10 @@ export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): P
     status: {
       enabled: status.enabled,
       connected: status.connected,
+      // Why: rebuilt field by field so a path can never ride along.
+      client: status.client ? { id: status.client.id, label: status.client.label } : null,
+      clients: status.clients.map(({ id, label }) => ({ id, label })),
+      clientFallback: status.clientFallback,
       sink: status.sink,
       detailLevel: status.detailLevel,
       bridgeEnabled: status.bridgeEnabled,
@@ -237,7 +248,8 @@ export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): P
       bridgeEnabled: settings.bridgeEnabled,
       debugLogging: settings.debugLogging,
       showOpenButton: settings.showOpenButton,
-      showAgentCount: settings.showAgentCount
+      showAgentCount: settings.showAgentCount,
+      discordClient: settings.discordClient
     },
     timeline: [...timeline],
     agents: summarizePanelAgents(agents),

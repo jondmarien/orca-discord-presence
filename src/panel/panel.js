@@ -26,7 +26,7 @@ var DETAIL_LEVELS = [
   ['full', 'Full']
 ]
 var VIEW_KEY = 'panelView'
-var FULL_ONLY_IDS = ['full-a', 'full-b', 'full-c']
+var FULL_ONLY_IDS = ['full-a', 'full-b', 'full-c', 'full-d']
 var SWITCH_FIELDS = ['showAgentState', 'showAgentCount', 'showElapsed', 'showBranch', 'showTerminals', 'showMachine']
 
 function $(id) {
@@ -81,7 +81,7 @@ function indicatorLabel(snapshot) {
 function sinkTile(snapshot) {
   var status = snapshot.status
   if (snapshot.fields && snapshot.fields.enabled === false) return ['Off', 'Disabled']
-  if (status.connected) return ['Local', 'Discord IPC']
+  if (status.connected) return ['Local', status.client && status.client.label ? status.client.label + ' \u00b7 IPC' : 'Discord IPC']
   if (status.sink === 'bridge') return ['Bridge', 'Companion app']
   return ['Off', 'Not connected']
 }
@@ -338,10 +338,57 @@ function renderControls(snapshot) {
     setClass(detailEls[i], 'on', level === snapshot.status.detailLevel)
     setAttr(detailEls[i], 'aria-pressed', level === snapshot.status.detailLevel ? 'true' : 'false')
   }
+  renderClients(snapshot)
   SWITCH_FIELDS.forEach(function (name) {
     var el = $('sw-' + name)
     if (el && !pending[name] && el.checked !== !!fields[name]) el.checked = !!fields[name]
   })
+}
+
+// Why: the card only helps with a real choice, so it needs two detected apps.
+// Buttons are rebuilt only when the list changes; the chosen one is re-read
+// from the snapshot, so a rejected write reverts by itself.
+var clientsSignature = null
+function renderClients(snapshot) {
+  var clients = Array.isArray(snapshot.status.clients) ? snapshot.status.clients : []
+  var fields = snapshot.fields || {}
+  setClass($('client-card'), 'hidden', clients.length < 2)
+  var signature = clients
+    .map(function (c) {
+      return c.id + '|' + c.label
+    })
+    .join(';')
+  var seg = $('client-seg')
+  if (signature !== clientsSignature) {
+    clientsSignature = signature
+    clearChildren(seg)
+    ;[{ id: 'auto', label: 'Auto' }].concat(clients).forEach(function (entry) {
+      var button = document.createElement('button')
+      button.setAttribute('type', 'button')
+      button.setAttribute('data-client', entry.id)
+      button.textContent = entry.label
+      button.addEventListener('click', function () {
+        writeSetting('discordClient', entry.id, Array.prototype.slice.call(seg.children))
+      })
+      seg.appendChild(button)
+    })
+  }
+  var chosen = fields.discordClient || 'auto'
+  for (var i = 0; i < seg.children.length; i += 1) {
+    var on = seg.children[i].getAttribute('data-client') === chosen
+    setClass(seg.children[i], 'on', on)
+    setAttr(seg.children[i], 'aria-pressed', on ? 'true' : 'false')
+  }
+  var fallback = !!snapshot.status.clientFallback
+  setClass($('client-note'), 'hidden', !fallback)
+  setText(
+    'client-note',
+    fallback
+      ? 'Chosen client not running \u2014 using ' +
+          (snapshot.status.client ? snapshot.status.client.label : 'the first one found') +
+          '.'
+      : ''
+  )
 }
 
 function setBusy(el, busy) {

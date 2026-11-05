@@ -50,9 +50,9 @@ function assertPlausibleApplicationId(clientId) {
 // src/discord/client.ts
 import { randomUUID } from "node:crypto";
 import net from "node:net";
-import os from "node:os";
 
 // src/discord/ipc.ts
+import os from "node:os";
 import path from "node:path";
 var SOCKET_INDEX_LIMIT = 10;
 var SANDBOX_SUBDIRS = [
@@ -105,6 +105,13 @@ function discordIpcCandidates({ platform, env, uid }) {
     }
   }
   return candidates;
+}
+function defaultDiscordIpcCandidates() {
+  return discordIpcCandidates({
+    platform: process.platform,
+    env: process.env,
+    uid: typeof os.userInfo === "function" ? os.userInfo().uid : undefined
+  });
 }
 function encodeFrame(opcode, payload) {
   const body = Buffer.from(JSON.stringify(payload), "utf8");
@@ -209,22 +216,15 @@ function connectToFirstAvailable(candidates) {
       socket.once("error", onError);
       socket.once("connect", () => {
         socket.removeListener("error", onError);
-        resolve(socket);
+        resolve({ socket, path: candidate });
       });
     };
     attempt();
   });
 }
-function defaultCandidates() {
-  return discordIpcCandidates({
-    platform: process.platform,
-    env: process.env,
-    uid: typeof os.userInfo === "function" ? os.userInfo().uid : undefined
-  });
-}
 function createDiscordClient({
   clientId,
-  candidates = defaultCandidates,
+  candidates = defaultDiscordIpcCandidates,
   onClose = () => {},
   log = () => {},
   handshakeTimeoutMs = HANDSHAKE_TIMEOUT_MS,
@@ -235,12 +235,14 @@ function createDiscordClient({
 }) {
   let socket = null;
   let connected = false;
+  let socketPath = null;
   let closeNotified = false;
   let closed = false;
   const pending = new Map;
   let handshakeWait = null;
   function teardown() {
     connected = false;
+    socketPath = null;
     for (const entry of pending.values()) {
       clearTimeout(entry.timer);
       entry.reject(new Error("discord connection closed"));
@@ -318,7 +320,9 @@ function createDiscordClient({
   async function connectOnce() {
     closeNotified = false;
     closed = false;
-    socket = await connectToFirstAvailable(candidates());
+    const answered = await connectToFirstAvailable(candidates());
+    socket = answered.socket;
+    socketPath = answered.path;
     const decoder = createFrameDecoder(handleFrame, (error) => {
       const message = error instanceof Error ? error.message : String(error);
       log(`discord frame error: ${message}`);
@@ -399,6 +403,7 @@ function createDiscordClient({
   return {
     connect,
     isConnected: () => connected,
+    connectedPath: () => connected ? socketPath : null,
     setActivity: (activity) => command("SET_ACTIVITY", { pid: process.pid, activity }),
     clearActivity: () => command("SET_ACTIVITY", { pid: process.pid, activity: null }),
     async close() {
@@ -414,6 +419,113 @@ function createDiscordClient({
       teardown();
     },
     destroySocketForTest: () => socket?.destroy()
+  };
+}
+
+// src/discord/detect.ts
+import net2 from "node:net";
+var AUTO_CLIENT = "auto";
+var PROBE_TIMEOUT_MS = 300;
+var PROBE_CONCURRENCY = 10;
+var FAMILY_LABEL = {
+  vesktop: "Vesktop",
+  "discord-flatpak": "Discord (Flatpak)",
+  "discord-snap": "Discord (Snap)",
+  discord: "Discord"
+};
+function familyOf(path) {
+  if (/^\\\\[?.]\\pipe\\/i.test(path)) {
+    return "pipe";
+  }
+  if (path.includes("dev.vencord.Vesktop")) {
+    return "vesktop";
+  }
+  if (path.includes("app/com.discordapp.Discord")) {
+    return "discord-flatpak";
+  }
+  if (path.includes("snap.discord")) {
+    return "discord-snap";
+  }
+  return "discord";
+}
+function classifyClientPath(path) {
+  const family = familyOf(path);
+  const index = Number(/discord-ipc-(\d+)$/.exec(path)?.[1] ?? 0);
+  return {
+    id: `${family}:${index}`,
+    label: family === "pipe" ? `Discord client #${index + 1}` : FAMILY_LABEL[family]
+  };
+}
+function probeSocket(path, timeoutMs) {
+  return new Promise((resolve) => {
+    const socket = net2.createConnection(path);
+    const finish = (present) => {
+      clearTimeout(timer);
+      socket.removeAllListeners();
+      socket.on("error", () => {});
+      socket.destroy();
+      resolve(present);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+async function detectDiscordClients(opts = {}) {
+  try {
+    const { connect = probeSocket, timeoutMs = PROBE_TIMEOUT_MS } = opts;
+    const candidates = [...new Set(opts.candidates ?? defaultDiscordIpcCandidates())];
+    const present = new Array(candidates.length).fill(false);
+    let next = 0;
+    const worker = async () => {
+      while (next < candidates.length) {
+        const slot = next++;
+        present[slot] = await connect(candidates[slot], timeoutMs).catch(() => false);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, candidates.length) }, worker));
+    const seen = new Set;
+    const found = [];
+    candidates.forEach((path, slot) => {
+      if (!present[slot]) {
+        return;
+      }
+      const { id, label } = classifyClientPath(path);
+      if (!seen.has(id)) {
+        seen.add(id);
+        found.push({ id, label, path });
+      }
+    });
+    const perFamily = new Map;
+    for (const client of found) {
+      perFamily.set(client.label, (perFamily.get(client.label) ?? 0) + 1);
+    }
+    return found.map((client) => {
+      if (client.id.startsWith("pipe:") || (perFamily.get(client.label) ?? 0) < 2) {
+        return client;
+      }
+      const index = Number(client.id.split(":")[1]);
+      return { ...client, label: `${client.label} (${index + 1})` };
+    });
+  } catch {
+    return [];
+  }
+}
+function resolveClientCandidates(choice, detected, auto) {
+  if (choice === AUTO_CLIENT) {
+    return { candidates: auto, fallback: false };
+  }
+  const match = detected.find((client) => client.id === choice);
+  return match ? { candidates: [match.path], fallback: false } : { candidates: auto, fallback: true };
+}
+function summarizeClients(input) {
+  const { connectedPath, choice, detected } = input;
+  const known = connectedPath ? detected.find((client) => client.path === connectedPath) : undefined;
+  const client = connectedPath ? known ? { id: known.id, label: known.label } : classifyClientPath(connectedPath) : null;
+  return {
+    client,
+    clients: detected.map(({ id, label }) => ({ id, label })),
+    clientFallback: choice !== AUTO_CLIENT && !detected.some((entry) => entry.id === choice)
   };
 }
 
@@ -910,7 +1022,8 @@ var DEFAULT_SETTINGS = Object.freeze({
   openUrl: "",
   showOpenButton: false,
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
-  showAgentCount: false
+  showAgentCount: false,
+  discordClient: "auto"
 });
 var SETTING_KEYS_DECLARED = Object.keys(DEFAULT_SETTINGS).filter((key) => key !== "bridgeToken");
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
@@ -969,6 +1082,7 @@ function normalizeSettings(raw) {
   settings.bridgeToken = normalizeBridgeToken(source.bridgeToken);
   settings.openUrl = normalizeOpenUrl(source.openUrl);
   settings.openButtonLabel = normalizeOpenButtonLabel(source.openButtonLabel === undefined ? DEFAULT_SETTINGS.openButtonLabel : source.openButtonLabel);
+  settings.discordClient = typeof source.discordClient === "string" && source.discordClient.trim().length > 0 ? source.discordClient.trim().slice(0, 64) : DEFAULT_SETTINGS.discordClient;
   return settings;
 }
 function nextDetailLevel(current) {
@@ -1078,15 +1192,19 @@ function applyConfigure(current, args) {
 // src/presence/activity.ts
 var DISCORD_TEXT_MAX = 128;
 var DISCORD_ASSET_SUFFIX = "-v2";
+var SMALL_STATE_KEYS = new Set(["working", "blocked", "waiting", "completed", "idle"]);
 function localAssetName(key) {
+  if (SMALL_STATE_KEYS.has(key)) {
+    return `state-${key}`;
+  }
   return key.endsWith(DISCORD_ASSET_SUFFIX) ? key.slice(0, -DISCORD_ASSET_SUFFIX.length) : key;
 }
 var AGENT_STATE_LABELS = {
-  working: { label: "working", asset: `state-working${DISCORD_ASSET_SUFFIX}` },
-  blocked: { label: "blocked", asset: `state-blocked${DISCORD_ASSET_SUFFIX}` },
-  waiting: { label: "waiting for input", asset: `state-waiting${DISCORD_ASSET_SUFFIX}` },
-  done: { label: "completed", asset: `state-completed${DISCORD_ASSET_SUFFIX}` },
-  idle: { label: "idle", asset: `state-idle${DISCORD_ASSET_SUFFIX}` }
+  working: { label: "working", asset: "working" },
+  blocked: { label: "blocked", asset: "blocked" },
+  waiting: { label: "waiting for input", asset: "waiting" },
+  done: { label: "completed", asset: "completed" },
+  idle: { label: "idle", asset: "idle" }
 };
 function clamp(text) {
   return text.length > DISCORD_TEXT_MAX ? `${text.slice(0, DISCORD_TEXT_MAX - 1)}…` : text;
@@ -1248,6 +1366,7 @@ function createPresenceController({
   client,
   settings,
   bridge,
+  describeClient = () => ({ client: null, clients: [], clientFallback: false }),
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer),
@@ -1512,6 +1631,7 @@ function createPresenceController({
     status: () => ({
       enabled: currentSettings.enabled && currentSettings.detailLevel !== "off",
       connected: client.isConnected(),
+      ...describeClient(),
       bridgeEnabled: currentSettings.bridgeEnabled,
       sink: lastSink,
       detailLevel: currentSettings.detailLevel,
@@ -1614,6 +1734,9 @@ function buildPresencePanelSnapshot(input) {
     status: {
       enabled: status.enabled,
       connected: status.connected,
+      client: status.client ? { id: status.client.id, label: status.client.label } : null,
+      clients: status.clients.map(({ id, label }) => ({ id, label })),
+      clientFallback: status.clientFallback,
       sink: status.sink,
       detailLevel: status.detailLevel,
       bridgeEnabled: status.bridgeEnabled,
@@ -1631,7 +1754,8 @@ function buildPresencePanelSnapshot(input) {
       bridgeEnabled: settings.bridgeEnabled,
       debugLogging: settings.debugLogging,
       showOpenButton: settings.showOpenButton,
-      showAgentCount: settings.showAgentCount
+      showAgentCount: settings.showAgentCount,
+      discordClient: settings.discordClient
     },
     timeline: [...timeline],
     agents: summarizePanelAgents(agents),
@@ -1743,6 +1867,7 @@ var PLUGIN_VERSION = "1.0.0";
 
 // src/main.ts
 var HEARTBEAT_MS = 90000;
+var DETECT_MIN_INTERVAL_MS = 60000;
 var PANEL_POST_DEBOUNCE_MS = 2000;
 var SETTINGS_CHANGE_DEBOUNCE_MS = 250;
 var TRANSMITTING_TOAST_MAX = 180;
@@ -1897,11 +2022,30 @@ async function activate(orca) {
       body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ""}. Using shipped id. ${appId.reason ?? ""}`
     });
   }
+  let detected = [];
+  let lastDetectAt = 0;
+  async function redetect(force = false) {
+    if (!force && Date.now() - lastDetectAt < DETECT_MIN_INTERVAL_MS) {
+      return;
+    }
+    lastDetectAt = Date.now();
+    const found = await detectDiscordClients();
+    if (!deactivated) {
+      detected = found;
+    }
+  }
   function createController(nextSettings) {
+    const discord = createDiscordClient({
+      clientId: nextSettings.applicationId,
+      candidates: () => resolveClientCandidates(nextSettings.discordClient, detected, defaultDiscordIpcCandidates()).candidates,
+      log: (message, level = "error") => diagnostics?.line(level, "discord.client", { reason: message })
+    });
     return createPresenceController({
-      client: createDiscordClient({
-        clientId: nextSettings.applicationId,
-        log: (message, level = "error") => diagnostics?.line(level, "discord.client", { reason: message })
+      client: discord,
+      describeClient: () => summarizeClients({
+        connectedPath: discord.connectedPath(),
+        choice: nextSettings.discordClient,
+        detected
       }),
       bridge: createBridgeTransport({
         log: (message) => diagnostics?.line("error", "bridge.transport", { reason: message })
@@ -1929,10 +2073,11 @@ async function activate(orca) {
   controller = createController(settings);
   async function applySettings(nextSettings) {
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId;
+    const clientChanged = nextSettings.discordClient !== settings.discordClient;
     settings = nextSettings;
     diagnostics?.setDebugEnabled(nextSettings.debugLogging);
-    if (applicationIdChanged) {
-      diagnostics?.line("info", "discord.app_id_rebind", { applicationId: nextSettings.applicationId });
+    if (applicationIdChanged || clientChanged) {
+      diagnostics?.line("info", applicationIdChanged ? "discord.app_id_rebind" : "discord.client_rebind", applicationIdChanged ? { applicationId: nextSettings.applicationId } : { client: nextSettings.discordClient });
       await controller?.stop();
       controller = createController(nextSettings);
     } else {
@@ -2033,10 +2178,11 @@ async function activate(orca) {
     const file = status?.logFile ?? diagnostics?.filePath ?? "";
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
     const warned = tokenWarnings.length > 0 ? ` warnings=${tokenWarnings.join("; ")}` : "";
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} sink=${status?.sink} bridge=${status?.bridgeEnabled} tokenStore=${tokenStore} detail=${status?.detailLevel} debug=${settings.debugLogging}${warned}`;
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} client=${status?.client?.id ?? "none"} sink=${status?.sink} bridge=${status?.bridgeEnabled} tokenStore=${tokenStore} detail=${status?.detailLevel} debug=${settings.debugLogging}${warned}`;
     diagnostics?.line("info", "status", {
       enabled: status?.enabled,
       connected: status?.connected,
+      client: status?.client?.id ?? "none",
       sink: status?.sink,
       bridge: status?.bridgeEnabled,
       tokenStore,
@@ -2054,12 +2200,13 @@ async function activate(orca) {
     return status;
   });
   registerPalette("presence.reload", async () => {
+    await redetect(true);
     await refresh();
     diagnostics?.line("info", "discord.reload_command");
     await controller?.reload();
     const status = controller?.status();
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null);
-    const summary = `reloaded connected=${status?.connected} sink=${status?.sink} ${transmitting}`;
+    const summary = `reloaded connected=${status?.connected} client=${status?.client?.id ?? "none"} sink=${status?.sink} ${transmitting}`;
     diagnostics?.line("info", "discord.reload_done", {
       connected: status?.connected,
       sink: status?.sink,
@@ -2199,10 +2346,10 @@ async function activate(orca) {
     });
   }
   heartbeat = setInterval(() => {
-    refresh(undefined, { force: true });
+    redetect().then(() => refresh(undefined, { force: true }));
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
-  refresh().then(() => {
+  redetect(true).then(() => refresh()).then(() => {
     publishPanelSnapshot("immediate");
   });
 }

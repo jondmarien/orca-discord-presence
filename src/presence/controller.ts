@@ -16,6 +16,7 @@
 import { buildActivity, type DiscordActivity, type PresenceSnapshot } from './activity'
 import { resolveBridgeTarget, type PresenceBridge } from './bridge'
 import type { TokenStore } from './bridge-token'
+import type { ClientStatus } from '../discord/detect'
 import { formatLogLine, type DiagnosticSink } from './log'
 import type { PresenceSettings } from './settings'
 
@@ -66,6 +67,14 @@ export type PresenceControllerOptions = {
   setTimer?: (fn: () => void, ms: number) => unknown
   /** Cancel a timer returned by `setTimer`. Defaults to `clearTimeout`. */
   clearTimer?: (timer: unknown) => void
+  /**
+   * Which Discord app is connected, which were detected, and whether the
+   * chosen one was missing. Path-free. Defaults to nothing detected.
+   *
+   * Why: the controller owns no detection; the worker does, and a client
+   * recreate must not lose it.
+   */
+  describeClient?: () => ClientStatus
   /** Diagnostic logger for connect / set / clear failures. */
   log?: (message: string) => void
   /**
@@ -86,6 +95,12 @@ export type PresenceStatus = {
   enabled: boolean
   /** Local Discord IPC handshake is up (not the HTTP companion). */
   connected: boolean
+  /** The Discord app actually connected over IPC, or `null`. Never a path. */
+  client: ClientStatus['client']
+  /** Every detected Discord app (`id`, `label` only). */
+  clients: ClientStatus['clients']
+  /** True when the chosen `discordClient` is not running and auto order was used. */
+  clientFallback: boolean
   /** Whether the operator enabled the companion bridge (not "reachable"). */
   bridgeEnabled: boolean
   /** Last successful publish path, or `null` if cleared / never sent. */
@@ -168,6 +183,7 @@ export function createPresenceController({
   client,
   settings,
   bridge,
+  describeClient = () => ({ client: null, clients: [], clientFallback: false }),
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
@@ -457,6 +473,7 @@ export function createPresenceController({
     status: () => ({
       enabled: currentSettings.enabled && currentSettings.detailLevel !== 'off',
       connected: client.isConnected(),
+      ...describeClient(),
       bridgeEnabled: currentSettings.bridgeEnabled,
       sink: lastSink,
       detailLevel: currentSettings.detailLevel,
