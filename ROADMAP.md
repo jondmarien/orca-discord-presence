@@ -71,5 +71,5 @@ Once [stablyai/orca#38406](https://github.com/stablyai/orca/pull/38406) merges a
 - [ ] Focus (needs [stablyai/orca#38415](https://github.com/stablyai/orca/pull/38415)) — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7)
 - [ ] Paired panels (needs [stablyai/orca#38342](https://github.com/stablyai/orca/issues/38342))
 - [ ] Client relay (needs [stablyai/orca#38343](https://github.com/stablyai/orca/issues/38343))
-- [ ] Session elapsed timer and status bar item (spec: `docs/superpowers/specs/2026-11-06-session-timer-and-status-bar-design.md`)
+- [x] Session elapsed timer and status bar item (v1.0.2) (spec: `docs/superpowers/specs/2026-11-06-session-timer-and-status-bar-design.md`)
 - [ ] Editor gutter icon with hover (needs a new Orca editor decoration API; no upstream issue yet)

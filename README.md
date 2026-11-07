@@ -6,7 +6,7 @@
 
 **Workspace, branch, and agent state on your Discord profile. Every identifying field is opt-in.**
 
-[![Version](https://img.shields.io/badge/v1.0.1-blue.svg)](orca-plugin.json)
+[![Version](https://img.shields.io/badge/v1.0.2-blue.svg)](orca-plugin.json)
 [![Bun](https://img.shields.io/badge/Bun-1.4+-000000?logo=bun&logoColor=white)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -89,6 +89,7 @@ Settings are in **Orca Settings** under this plugin. Defaults:
 | Show machine name (`showMachine`) | off | Needs detail above `generic` |
 | Machine name (`machineLabel`) | empty | Empty uses the hostname |
 | Show elapsed timer (`showElapsed`) | on | |
+| Elapsed timer counts (`elapsedMode`) | `session` | `session` counts time in Orca and resets after 30 minutes with no activity; `state` counts time in the current agent state |
 | Discord Application ID (`applicationId`) | `1545653843239374848` | Invalid value falls back to the shipped one |
 | Use HTTP bridge (`bridgeEnabled`) | off | Companion path |
 | Bridge URL (`bridgeUrl`) | empty | `http` or `https` |
@@ -97,6 +98,9 @@ Settings are in **Orca Settings** under this plugin. Defaults:
 | Show button (`showOpenButton`) | off | Needs a Button URL |
 | Button label (`openButtonLabel`) | `Open Orca` | 1 to 32 characters |
 | Show agent count (`showAgentCount`) | off | |
+| Show status bar item (`showStatusBar`) | on | Orca desktop app only |
+
+The status bar item shows the current state at a glance (`Working`, `Blocked`, `Waiting`, `Done`, or `Discord`). Clicking it shows or hides the Rich Presence panel. It follows the same privacy settings as the Discord card.
 
 Workspace, branch, and machine names, when you enable them, go to Discord's servers and appear on your profile. See [docs/privacy.md](docs/privacy.md).
 
