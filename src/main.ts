@@ -40,7 +40,12 @@ import { applyConfigure } from './presence/configure'
 import { createPresenceController, type PresenceController } from './presence/controller'
 import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
+import { elapsedStartMs } from './presence/activity'
+import type { CanonicalAgentState } from './presence/agent-state'
+import { SESSION_GAP_MS } from './presence/expiry'
 import { buildPresencePanelSnapshot } from './presence/panel-snapshot'
+import { createSessionClock, type SessionClock } from './presence/session'
+import { renderStatusBar } from './presence/status-bar'
 import { createTimeline, timelineStateFor } from './presence/timeline'
 import {
   normalizeSettings,
@@ -233,26 +238,60 @@ let agentTable: ReturnType<typeof createAgentTable> | null = null
 let timeline: ReturnType<typeof createTimeline> | null = null
 let timelineSaveTimer: ReturnType<typeof setTimeout> | null = null
 let timelineHost: OrcaHost['host'] | null = null
+let session: SessionClock | null = null
+let lastStatusBar: string | null = null
+let latestSummary: { agentState: CanonicalAgentState | undefined; agentCount: number; stateStartedAtMs?: number } = {
+  agentState: undefined,
+  agentCount: 0
+}
 
 /** Plugin storage key for the persisted 30-minute strip. */
 const TIMELINE_STORAGE_KEY = 'timeline'
 
+/** Plugin storage key for the persisted session clock. */
+const SESSION_STORAGE_KEY = 'session'
+
 /**
- * Save the timeline at most every 15 s. Why: refreshes arrive on every agent
- * event; one coalesced write keeps storage churn low. Failures are ignored.
+ * Write the timeline and session clock to plugin storage. Failures are ignored.
  */
-function persistTimeline() {
+function flushState(host: OrcaHost['host']) {
+  if (timeline) {
+    void host.call('storage.set', { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {})
+  }
+  const sessionState = session?.toJSON()
+  if (sessionState) {
+    void host.call('storage.set', { key: SESSION_STORAGE_KEY, value: sessionState }).catch(() => {})
+  }
+}
+
+/**
+ * Save the timeline and session at most every 15 s. Why: refreshes arrive on
+ * every agent event; one coalesced write keeps storage churn low.
+ */
+function persistState() {
   if (timelineSaveTimer || !timelineHost?.has('storage.set')) {
     return
   }
   timelineSaveTimer = setTimeout(() => {
     timelineSaveTimer = null
-    if (timeline && timelineHost) {
-      void timelineHost.call('storage.set', { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {})
+    if (timelineHost) {
+      flushState(timelineHost)
     }
   }, 15_000)
   timelineSaveTimer.unref?.()
 }
+/**
+ * Touch the session clock from a panel request and schedule a save.
+ *
+ * @returns True when the touch started a new session (the start moved).
+ */
+function touchSession(): boolean {
+  const before = session?.startMs()
+  session?.touch()
+  persistState()
+  return session?.startMs() !== before
+}
+
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
 let logRing: LogRing | null = null
@@ -472,6 +511,13 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     ? ((await orca.host.call('storage.get', { key: TIMELINE_STORAGE_KEY }).catch(() => null)) as { value?: unknown } | null)
     : null
   timeline = createTimeline({ restore: storedTimeline?.value })
+  // Why: restoring keeps the session start across worker and Orca restarts inside the gap.
+  const storedSession = orca.host.has('storage.get')
+    ? ((await orca.host.call('storage.get', { key: SESSION_STORAGE_KEY }).catch(() => null)) as { value?: unknown } | null)
+    : null
+  session = createSessionClock({ gapMs: SESSION_GAP_MS })
+  session.restore(storedSession?.value)
+  lastStatusBar = null
   controller = createController(settings)
 
   /**
@@ -516,7 +562,42 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     } else {
       await controller?.setSettings(nextSettings)
     }
+    publishStatusBar()
     publishPanelSnapshot('immediate')
+  }
+
+  /**
+   * Send the status bar item to the host when its rendered fields changed.
+   *
+   * Why: the item mirrors the same privacy-gated status as the Discord card,
+   * and skipping unchanged patches keeps host calls off the hot path.
+   */
+  function publishStatusBar() {
+    if (!orca.host.has('statusBar.update') || !controller) {
+      return
+    }
+    const currentSettings = controller.settings()
+    const patch = renderStatusBar({
+      status: controller.status(),
+      settings: currentSettings,
+      agentState: latestSummary.agentState,
+      agentCount: latestSummary.agentCount,
+      elapsedStartMs: elapsedStartMs(
+        { sessionStartMs: session?.startMs(), stateStartedAtMs: latestSummary.stateStartedAtMs },
+        currentSettings
+      ),
+      nowMs: Date.now()
+    })
+    const serialized = JSON.stringify(patch)
+    if (serialized !== lastStatusBar) {
+      lastStatusBar = serialized
+      // Why: forget a rejected patch so the next identical one retries.
+      void orca.host.call('statusBar.update', patch).catch(() => {
+        if (lastStatusBar === serialized) {
+          lastStatusBar = null
+        }
+      })
+    }
   }
 
   /**
@@ -568,7 +649,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
    */
   async function refresh(
     agentEvent?: AgentStatusPayload | null,
-    options: { force?: boolean; resume?: boolean; context?: WorkspaceContext | null } = {}
+    options: { force?: boolean; resume?: boolean; context?: WorkspaceContext | null; startup?: boolean } = {}
   ) {
     if (agentEvent) {
       const parsed = parseAgentStatusPayload(agentEvent, Date.now())
@@ -581,6 +662,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       agentState: undefined,
       stateStartedAtMs: undefined
     }
+    latestSummary = summary
     // Why: `workspace.changed` already carries the context (possibly null for
     // "nothing focused"), so use it instead of a second host round trip.
     const context =
@@ -599,6 +681,11 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
         agents: summary.agentCount
       })
     }
+    // Why: only real activity extends a session; the bare heartbeat must not, or an
+    // idle Orca would never end its session. Startup with an open workspace counts.
+    if (agentEvent || options.context !== undefined || summary.agentCount > 0 || (options.startup && context)) {
+      session?.touch()
+    }
     const resume = Boolean(options.resume || agentEvent)
     await controller?.update(
       {
@@ -614,6 +701,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
             { displayName: undefined, branch: undefined, terminalCount: undefined }),
         agentState: summary.agentState,
         stateStartedAtMs: summary.stateStartedAtMs,
+        sessionStartMs: session?.startMs(),
         agentCount: summary.agentCount
       },
       resume ? { resume: true } : undefined
@@ -625,7 +713,8 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     // two completed agents shows both. `done` is recorded as `completed`; no
     // agents at all records `[]`, which is `idle`.
     timeline?.record((agentTable?.slots() ?? []).map((slot) => timelineStateFor(slot.canonicalState)))
-    persistTimeline()
+    persistState()
+    publishStatusBar()
     publishPanelSnapshot('debounced')
   }
 
@@ -642,6 +731,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   registerPalette('presence.toggle', async () => {
     await persist({ ...settings, enabled: !settings.enabled })
     await refresh()
+    publishStatusBar()
     return { enabled: settings.enabled }
   })
 
@@ -661,6 +751,9 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       return { [field]: settings[field] }
     })
   }
+
+  // Why: `presence.open-panel` is declarative (manifest `action`), so it needs no
+  // worker handler and no `workspace:write`, which `commands.run` would require.
 
   registerPalette('presence.status', async () => {
     await refresh(undefined, { force: true, resume: true })
@@ -717,6 +810,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   registerPalette('presence.clear', async () => {
     diagnostics?.line('info', 'discord.clear_command')
     await controller?.clear()
+    publishStatusBar()
     const status = controller?.status()
     const summary = `cleared enabled=${status?.enabled} heldClear=${status?.heldClear} sink=${status?.sink}`
     diagnostics?.line('info', 'discord.clear_done', {
@@ -777,7 +871,13 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   // Why: the panel talks to the worker through `plugin.request`. Guarded:
   // older hosts and browser clients have no `orca.panels`, and the panel shows
   // its static "needs Orca desktop" note there.
-  panels?.handle('presence.snapshot', () => currentPanelSnapshot())
+  panels?.handle('presence.snapshot', () => {
+    // Why: opening the panel can start a new session; refresh so Discord and storage get it.
+    if (touchSession()) {
+      void refresh()
+    }
+    return currentPanelSnapshot()
+  })
 
   // Why: the panel's Refresh button forces a full resync (agents, focused
   // workspace, Discord clients). The rate limit keeps a mashed button from
@@ -791,6 +891,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       return currentPanelSnapshot()
     }
     lastPanelRefreshAt = clock
+    touchSession()
     await syncAgentsFromList()
     await redetect(true)
     // `refresh` re-reads `workspace.readContext` and force-transmits.
@@ -915,7 +1016,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   // PLUGIN_WORKER_READY_TIMEOUT_MS (10s) or the host SIGKILLs the worker, and
   // the first refresh chains into a socket scan plus a 5s handshake timeout.
   void redetect(true)
-    .then(() => refresh())
+    .then(() => refresh(undefined, { startup: true }))
     .then(() => {
       publishPanelSnapshot('immediate')
     })
@@ -943,9 +1044,17 @@ export async function deactivate() {
     clearTimeout(timelineSaveTimer)
     timelineSaveTimer = null
   }
-  // Why: flush the strip on a clean stop so the next start restores it.
-  if (timeline && timelineHost?.has('storage.set')) {
-    await timelineHost.call('storage.set', { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {})
+  // Why: flush the strip and session on a clean stop so the next start restores them.
+  if (timelineHost?.has('storage.set')) {
+    const sessionState = session?.toJSON()
+    await Promise.all([
+      timeline
+        ? timelineHost.call('storage.set', { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {})
+        : undefined,
+      sessionState
+        ? timelineHost.call('storage.set', { key: SESSION_STORAGE_KEY, value: sessionState }).catch(() => {})
+        : undefined
+    ])
   }
   panels = null
   if (settingsChangeTimer) {

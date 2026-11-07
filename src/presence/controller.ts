@@ -114,6 +114,8 @@ export type PresenceStatus = {
    * (agent event, Show Status, Reload RPC, or a settings write).
    */
   heldClear: boolean
+  /** True when the latest companion publish failed, so a `bridge` sink is not live. */
+  bridgeFailing: boolean
   /**
    * Where the bridge token lives. Filled in by the worker, which owns token
    * storage; the controller itself never sees where it came from. Never the token.
@@ -202,6 +204,7 @@ export function createPresenceController({
   let lastBridgeToken: string | null = null
   let stopped = false
   let holdClear = false
+  let bridgeFailing = false
 
   function emit(
     level: 'debug' | 'info' | 'warn' | 'error',
@@ -292,6 +295,7 @@ export function createPresenceController({
         lastActivity = activity
         lastSentAt = now()
         lastSink = 'local'
+        bridgeFailing = false
         cleared = false
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -319,12 +323,14 @@ export function createPresenceController({
       lastActivity = activity
       lastSentAt = now()
       lastSink = 'bridge'
+      bridgeFailing = false
       lastBridgeUrl = target.url
       lastBridgeToken = target.token
       cleared = false
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       emit('error', 'bridge.publish_failed', { url: bridgeOrigin(target.url), reason: message })
+      bridgeFailing = true
       lastSentSerialized = null
     }
   }
@@ -479,7 +485,8 @@ export function createPresenceController({
       detailLevel: currentSettings.detailLevel,
       lastActivity,
       logFile: diagnostics?.filePath ?? null,
-      heldClear: holdClear
+      heldClear: holdClear,
+      bridgeFailing
     }),
     async stop() {
       if (stopped) {

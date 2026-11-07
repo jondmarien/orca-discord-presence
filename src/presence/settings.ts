@@ -33,6 +33,17 @@ export const DETAIL_LEVELS = ['off', 'generic', 'workspace', 'full'] as const
 export type DetailLevel = (typeof DETAIL_LEVELS)[number]
 
 /**
+ * What the Discord elapsed timer counts: time in Orca this `session`, or time
+ * in the current agent `state`.
+ */
+export const ELAPSED_MODES = ['session', 'state'] as const
+
+/**
+ * One of {@link ELAPSED_MODES}.
+ */
+export type ElapsedMode = (typeof ELAPSED_MODES)[number]
+
+/**
  * Persisted plugin settings. Every identifying field is opt-in except the
  * non-identifying defaults (`enabled`, `generic` detail, agent state, elapsed).
  */
@@ -62,6 +73,10 @@ export type PresenceSettings = {
   showMachine: boolean
   /** Include a Discord elapsed-timer start timestamp. */
   showElapsed: boolean
+  /** What the elapsed timer counts. See {@link ELAPSED_MODES}. */
+  elapsedMode: ElapsedMode
+  /** Show presence state in Orca's status bar. */
+  showStatusBar: boolean
   /**
    * Opt-in HTTP bridge to a Discord-IPC companion on any OS. Default **off**.
    * When on, the controller may POST the privacy-gated activity if local
@@ -153,6 +168,8 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   showTerminals: false,
   showMachine: false,
   showElapsed: true,
+  elapsedMode: 'session',
+  showStatusBar: true,
   // Cross-machine HTTP is off until the operator opts in.
   bridgeEnabled: false,
   bridgeUrl: '',
@@ -184,6 +201,10 @@ export const SETTING_KEYS_DECLARED = (Object.keys(DEFAULT_SETTINGS) as (keyof Pr
 const BOOLEAN_FIELDS = (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).filter(
   (key): key is BooleanSetting => typeof DEFAULT_SETTINGS[key] === 'boolean'
 )
+
+function isElapsedMode(value: unknown): value is ElapsedMode {
+  return typeof value === 'string' && (ELAPSED_MODES as readonly string[]).includes(value)
+}
 
 function isDetailLevel(value: unknown): value is DetailLevel {
   return typeof value === 'string' && (DETAIL_LEVELS as readonly string[]).includes(value)
@@ -267,6 +288,9 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
   }
   if (isDetailLevel(source.detailLevel)) {
     settings.detailLevel = source.detailLevel
+  }
+  if (isElapsedMode(source.elapsedMode)) {
+    settings.elapsedMode = source.elapsedMode
   }
   // Why: absent or malformed overrides fall back to the shipped id — never to
   // null, which would leave the plugin permanently unable to connect.

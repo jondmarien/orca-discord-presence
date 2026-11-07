@@ -126,6 +126,10 @@ The panel uses the stock plugin frame API:
 
 The worker registers the handlers with `panels.handle` only when the host has it. Outside the Orca desktop app (for example a browser client without `plugin.request`) the panel hides its UI and shows a static note, "Open this panel in the Orca desktop app to see live status." The snapshot never contains the Application ID, bridge URL, bridge token, or button URL. The panel does not rewrite its own HTML.
 
+## Session clock and status bar
+
+[`src/presence/session.ts`](../src/presence/session.ts) tracks when the current session began. Real activity (agent events, workspace changes, panel requests, or agents still listed) calls `touch()`; the 90 s heartbeat alone does not, so an idle Orca left open still ends its session. After a 30-minute gap (`SESSION_GAP_MS`) the next touch starts a new session. The clock is saved under storage key `session` and restored on worker start only when it is still inside the gap. With `elapsedMode: session` the Discord timer uses it. [`src/presence/status-bar.ts`](../src/presence/status-bar.ts) renders the status bar item from the same privacy-gated status, and the worker sends it with `statusBar.update` only when the rendered patch changed. Orca keeps a plugin with a `main` entry and `statusBarItems` resident, so the status bar item also keeps the worker from being idle-reaped.
+
 ## Activity expiry (future providers)
 
 [`src/presence/expiry.ts`](../src/presence/expiry.ts) exports `AGENT_RETENTION_MS` (`stale` 30 minutes, `done` 60 seconds) for the live agent table, plus `ACTIVITY_EXPIRY_MS` (`short` 30s, `long` 60s) and `isActivityFresh()` for a future focus/tool path. This plugin does **not** rotate providers yet. When [#7](https://github.com/jondmarien/orca-discord-presence/issues/7) (focused window/tab) lands, providers should reuse `isActivityFresh` instead of inventing a new clock.

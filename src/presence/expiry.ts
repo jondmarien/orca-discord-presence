@@ -40,6 +40,13 @@ export const AGENT_RETENTION_MS = {
 } as const
 
 /**
+ * Idle gap (30 minutes) after which the next activity starts a new session.
+ * Why: a long quiet stretch means the person left, so the session timer
+ * should not keep counting across it.
+ */
+export const SESSION_GAP_MS = 1_800_000
+
+/**
  * One of {@link ACTIVITY_EXPIRY_MS}.
  */
 export type ActivityExpiryMs = (typeof ACTIVITY_EXPIRY_MS)[keyof typeof ACTIVITY_EXPIRY_MS]

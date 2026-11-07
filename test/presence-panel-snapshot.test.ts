@@ -26,6 +26,7 @@ function statusWith(overrides: Partial<PresenceStatus> = {}): PresenceStatus {
     lastActivity: { details: 'Working in Orca', assets: { large_image: 'orca', large_text: 'Orca', small_image: 'state-idle', small_text: 'idle' } },
     logFile: '/tmp/plugin.log',
     heldClear: false,
+    bridgeFailing: false,
     ...overrides
   }
 }
