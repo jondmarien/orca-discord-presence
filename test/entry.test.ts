@@ -86,7 +86,7 @@ test('manifest identity is jondmarien.discord-presence on manifest v2', () => {
   expect(manifest.contributes.panels).toEqual([
     { id: 'presence', title: 'Rich Presence', icon: 'activity', entry: 'panel/index.html' }
   ])
-  expect(manifest.contributes.commands).toHaveLength(15)
+  expect(manifest.contributes.commands).toHaveLength(16)
   expect(manifest.contributes.commands.every((command) => command.title.startsWith('Rich Presence: '))).toBe(
     true
   )

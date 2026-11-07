@@ -50,6 +50,10 @@
         "title": "Rich Presence: Enable/Disable"
       },
       {
+        "id": "presence.open-panel",
+        "title": "Rich Presence: Show or Hide Panel"
+      },
+      {
         "id": "presence.status",
         "title": "Rich Presence: Show Status"
       },
@@ -104,6 +108,15 @@
       {
         "id": "presence.configure",
         "title": "Rich Presence: Configure"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "presence",
+        "text": "Discord",
+        "icon": "activity",
+        "tooltip": "Rich Presence for Discord",
+        "command": "presence.open-panel"
       }
     ],
     "settings": [
@@ -179,7 +192,29 @@
       {
         "key": "showElapsed",
         "title": "Show elapsed timer",
-        "description": "Show how long the current agent state has lasted.",
+        "description": "Show an elapsed timer on Discord.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "elapsedMode",
+        "title": "Elapsed timer counts",
+        "description": "Session counts while you work in Orca and resets after 30 minutes with no activity.",
+        "type": "string",
+        "default": "session",
+        "enum": [
+          "session",
+          "state"
+        ],
+        "enumLabels": [
+          "Time in Orca this session",
+          "Time in the current agent state"
+        ]
+      },
+      {
+        "key": "showStatusBar",
+        "title": "Show status bar item",
+        "description": "Show presence state in Orca's status bar.",
         "type": "boolean",
         "default": true
       },

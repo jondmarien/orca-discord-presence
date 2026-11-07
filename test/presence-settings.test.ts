@@ -6,6 +6,7 @@ import {
   DEFAULT_OPEN_BUTTON_LABEL,
   DEFAULT_SETTINGS,
   DETAIL_LEVELS,
+  ELAPSED_MODES,
   SETTING_KEYS_DECLARED,
   SHIPPED_APPLICATION_ID,
   normalizeOpenButtonLabel,
@@ -181,9 +182,29 @@ test('declared settings match DEFAULT_SETTINGS', () => {
   const byKey = (key: string) => entries.find((entry) => entry.key === key)
   expect(byKey('detailLevel')?.enum).toEqual(['off', 'generic', 'workspace', 'full'])
   expect(byKey('detailLevel')?.enumLabels).toEqual(['Off', 'Generic', 'Workspace', 'Full'])
+  expect(byKey('elapsedMode')?.enum).toEqual([...ELAPSED_MODES])
+  expect(byKey('elapsedMode')?.enumLabels).toEqual([
+    'Time in Orca this session',
+    'Time in the current agent state'
+  ])
   expect(byKey('applicationId')?.maxLength).toBe(20)
   expect(byKey('openButtonLabel')?.maxLength).toBe(32)
   expect(byKey('openUrl')?.maxLength).toBe(512)
   expect(byKey('bridgeUrl')?.maxLength).toBe(512)
   expect(byKey('bridgeUrl')?.description?.toLowerCase()).toContain('companion')
+})
+
+test('elapsedMode defaults to session', () => {
+  expect(normalizeSettings({}).elapsedMode).toBe('session')
+})
+
+test('elapsedMode accepts state, rejects unknown', () => {
+  expect(normalizeSettings({ elapsedMode: 'state' }).elapsedMode).toBe('state')
+  expect(normalizeSettings({ elapsedMode: 'bogus' }).elapsedMode).toBe('session')
+  expect(normalizeSettings({ elapsedMode: 3 }).elapsedMode).toBe('session')
+})
+
+test('showStatusBar defaults true and is a toggle field', () => {
+  expect(DEFAULT_SETTINGS.showStatusBar).toBe(true)
+  expect(toggleField(DEFAULT_SETTINGS, 'showStatusBar').showStatusBar).toBe(false)
 })
