@@ -51,6 +51,7 @@ Until these land, presence is workspace and agent status only.
 - File-level presence. Orca exposes no active file.
 - Machine name of an SSH remote. `os.hostname()` is the machine running the worker.
 - Provider priority and rotation. This waits on focus; `src/presence/expiry.ts` already has `isActivityFresh` for it.
+- Gutter icon with a hover message in the source editor (a clickable mark on a line that shows a hover-style message). Orca's editor is Monaco, which supports this (glyph-margin decorations with a hover message and `onMouseDown`), but the plugin host API has no editor decoration or hover API; plugins only get `editor.open` and custom editors. Needs a new upstream Orca API, which has no issue filed yet. Community request, 2026-11-06.
 
 ---
 
@@ -70,3 +71,5 @@ Once [stablyai/orca#38406](https://github.com/stablyai/orca/pull/38406) merges a
 - [ ] Focus (needs [stablyai/orca#38415](https://github.com/stablyai/orca/pull/38415)) — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7)
 - [ ] Paired panels (needs [stablyai/orca#38342](https://github.com/stablyai/orca/issues/38342))
 - [ ] Client relay (needs [stablyai/orca#38343](https://github.com/stablyai/orca/issues/38343))
+- [ ] Session elapsed timer and status bar item (spec: `docs/superpowers/specs/2026-11-06-session-timer-and-status-bar-design.md`)
+- [ ] Editor gutter icon with hover (needs a new Orca editor decoration API; no upstream issue yet)
