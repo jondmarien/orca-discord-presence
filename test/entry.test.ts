@@ -168,6 +168,7 @@ test('activate registers commands and events; deactivate is safe to call', async
     'presence.debug-logging',
     'presence.toggle-open-button',
     'presence.toggle-agent-count',
+    'presence.open-panel',
     'presence.status',
     'presence.reload',
     'presence.clear',

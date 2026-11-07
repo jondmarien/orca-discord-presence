@@ -596,6 +596,7 @@ var AGENT_RETENTION_MS = {
   done: 600000,
   idle: 60000
 };
+var SESSION_GAP_MS = 1800000;
 function isActivityFresh(lastSeenAtMs, nowMs, windowMs) {
   if (!Number.isFinite(lastSeenAtMs) || !Number.isFinite(nowMs) || !Number.isFinite(windowMs)) {
     return false;
@@ -1032,6 +1033,7 @@ async function migrateSettingsToken(host, settingsToken) {
 
 // src/presence/settings.ts
 var DETAIL_LEVELS = ["off", "generic", "workspace", "full"];
+var ELAPSED_MODES = ["session", "state"];
 var SHIPPED_APPLICATION_ID = "1545653843239374848";
 var DEFAULT_OPEN_BUTTON_LABEL = "Open Orca";
 var DISCORD_BUTTON_URL_MAX = 512;
@@ -1046,6 +1048,8 @@ var DEFAULT_SETTINGS = Object.freeze({
   showTerminals: false,
   showMachine: false,
   showElapsed: true,
+  elapsedMode: "session",
+  showStatusBar: true,
   bridgeEnabled: false,
   bridgeUrl: "",
   bridgeToken: "",
@@ -1058,6 +1062,9 @@ var DEFAULT_SETTINGS = Object.freeze({
 });
 var SETTING_KEYS_DECLARED = Object.keys(DEFAULT_SETTINGS).filter((key) => key !== "bridgeToken" && key !== "discordClient");
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
+function isElapsedMode(value) {
+  return typeof value === "string" && ELAPSED_MODES.includes(value);
+}
 function isDetailLevel(value) {
   return typeof value === "string" && DETAIL_LEVELS.includes(value);
 }
@@ -1106,6 +1113,9 @@ function normalizeSettings(raw) {
   }
   if (isDetailLevel(source.detailLevel)) {
     settings.detailLevel = source.detailLevel;
+  }
+  if (isElapsedMode(source.elapsedMode)) {
+    settings.elapsedMode = source.elapsedMode;
   }
   settings.applicationId = inspectApplicationId(source.applicationId, SHIPPED_APPLICATION_ID).applicationId;
   settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel;
@@ -1273,6 +1283,9 @@ function buildState(snapshot, settings) {
   }
   return parts.join(" · ");
 }
+function elapsedStartMs(snapshot, settings) {
+  return settings.elapsedMode === "session" ? snapshot.sessionStartMs : snapshot.stateStartedAtMs;
+}
 function buildActivity(snapshot, settings, nowMs) {
   if (!settings.enabled || settings.detailLevel === "off") {
     return null;
@@ -1291,8 +1304,9 @@ function buildActivity(snapshot, settings, nowMs) {
   if (state) {
     activity.state = clamp(state);
   }
-  if (settings.showElapsed && typeof snapshot.stateStartedAtMs === "number") {
-    activity.timestamps = { start: Math.floor(Math.min(snapshot.stateStartedAtMs, nowMs) / 1000) };
+  const startMs = elapsedStartMs(snapshot, settings);
+  if (settings.showElapsed && typeof startMs === "number") {
+    activity.timestamps = { start: Math.floor(Math.min(startMs, nowMs) / 1000) };
   }
   if (settings.showOpenButton && settings.openUrl) {
     activity.buttons = [{ label: settings.openButtonLabel, url: settings.openUrl }];
@@ -1796,6 +1810,90 @@ function buildPresencePanelSnapshot(input) {
   };
 }
 
+// src/presence/session.ts
+function createSessionClock({ gapMs = SESSION_GAP_MS, now = () => Date.now() } = {}) {
+  let start;
+  let lastActive;
+  return {
+    touch() {
+      const current = now();
+      if (start === undefined || lastActive === undefined || current - lastActive > gapMs) {
+        start = current;
+      }
+      lastActive = current;
+    },
+    startMs: () => start !== undefined && lastActive !== undefined && now() - lastActive > gapMs ? undefined : start,
+    restore(value) {
+      if (!value || typeof value !== "object") {
+        return;
+      }
+      const { startMs, lastActiveMs } = value;
+      if (typeof startMs !== "number" || typeof lastActiveMs !== "number" || !Number.isFinite(startMs) || !Number.isFinite(lastActiveMs)) {
+        return;
+      }
+      const current = now();
+      if (startMs > lastActiveMs || lastActiveMs > current || current - lastActiveMs > gapMs) {
+        return;
+      }
+      start = startMs;
+      lastActive = lastActiveMs;
+    },
+    toJSON: () => start === undefined || lastActive === undefined ? null : { startMs: start, lastActiveMs: lastActive }
+  };
+}
+
+// src/presence/status-bar.ts
+var AGENT_TEXT = {
+  working: { text: "Working", tone: "accent" },
+  blocked: { text: "Blocked", tone: "danger" },
+  waiting: { text: "Waiting", tone: "warning" },
+  done: { text: "Done", tone: "success" }
+};
+function formatDuration(ms) {
+  const minutes = Math.floor(Math.max(0, ms) / 60000);
+  if (minutes < 1) {
+    return "<1m";
+  }
+  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+function renderStatusBar({
+  status,
+  settings,
+  agentState,
+  agentCount,
+  elapsedStartMs,
+  nowMs
+}) {
+  const visible = settings.showStatusBar;
+  const click = "Click to show or hide the panel.";
+  if (!status.enabled || status.heldClear || settings.detailLevel === "off") {
+    return {
+      id: "presence",
+      text: "Discord off",
+      icon: "activity",
+      tone: "neutral",
+      tooltip: `Discord: off. ${click}`,
+      visible
+    };
+  }
+  const notConnected = !status.connected && status.sink !== "bridge";
+  const agent = settings.showAgentState && agentState && agentState !== "idle" ? AGENT_TEXT[agentState] : undefined;
+  const count = settings.showAgentCount && agentCount > 1 ? ` · ${agentCount}` : "";
+  const parts = [status.lastActivity?.details];
+  if (typeof elapsedStartMs === "number" && settings.showElapsed) {
+    parts.push(formatDuration(nowMs - elapsedStartMs));
+  }
+  parts.push(notConnected ? "not connected" : `connected via ${status.sink ?? "local"}`);
+  return {
+    id: "presence",
+    text: notConnected || !agent ? "Discord" : `${agent.text}${count}`,
+    icon: notConnected ? "warning" : "activity",
+    tone: notConnected ? "warning" : agent?.tone ?? "neutral",
+    tooltip: `Discord: ${parts.filter(Boolean).join(" · ")}. ${click}`,
+    visible
+  };
+}
+
 // src/presence/timeline.ts
 var TIMELINE_MINUTES = 30;
 var MINUTE_MS = 60000;
@@ -1950,15 +2048,31 @@ var agentTable = null;
 var timeline = null;
 var timelineSaveTimer = null;
 var timelineHost = null;
+var session = null;
+var lastStatusBar = null;
+var latestSummary = {
+  agentState: undefined,
+  agentCount: 0
+};
 var TIMELINE_STORAGE_KEY = "timeline";
-function persistTimeline() {
+var SESSION_STORAGE_KEY = "session";
+function flushState(host) {
+  if (timeline) {
+    host.call("storage.set", { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {});
+  }
+  const sessionState = session?.toJSON();
+  if (sessionState) {
+    host.call("storage.set", { key: SESSION_STORAGE_KEY, value: sessionState }).catch(() => {});
+  }
+}
+function persistState() {
   if (timelineSaveTimer || !timelineHost?.has("storage.set")) {
     return;
   }
   timelineSaveTimer = setTimeout(() => {
     timelineSaveTimer = null;
-    if (timeline && timelineHost) {
-      timelineHost.call("storage.set", { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {});
+    if (timelineHost) {
+      flushState(timelineHost);
     }
   }, 15000);
   timelineSaveTimer.unref?.();
@@ -2123,6 +2237,10 @@ async function activate(orca, deps = {}) {
   timelineHost = orca.host;
   const storedTimeline = orca.host.has("storage.get") ? await orca.host.call("storage.get", { key: TIMELINE_STORAGE_KEY }).catch(() => null) : null;
   timeline = createTimeline({ restore: storedTimeline?.value });
+  const storedSession = orca.host.has("storage.get") ? await orca.host.call("storage.get", { key: SESSION_STORAGE_KEY }).catch(() => null) : null;
+  session = createSessionClock({ gapMs: SESSION_GAP_MS });
+  session.restore(storedSession?.value);
+  lastStatusBar = null;
   controller = createController(settings);
   async function applySettings(nextSettings, options = {}) {
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId;
@@ -2143,7 +2261,27 @@ async function activate(orca, deps = {}) {
     } else {
       await controller?.setSettings(nextSettings);
     }
+    publishStatusBar();
     publishPanelSnapshot("immediate");
+  }
+  function publishStatusBar() {
+    if (!orca.host.has("statusBar.update") || !controller) {
+      return;
+    }
+    const currentSettings = controller.settings();
+    const patch = renderStatusBar({
+      status: controller.status(),
+      settings: currentSettings,
+      agentState: latestSummary.agentState,
+      agentCount: latestSummary.agentCount,
+      elapsedStartMs: elapsedStartMs({ sessionStartMs: session?.startMs(), stateStartedAtMs: latestSummary.stateStartedAtMs }, currentSettings),
+      nowMs: Date.now()
+    });
+    const serialized = JSON.stringify(patch);
+    if (serialized !== lastStatusBar) {
+      lastStatusBar = serialized;
+      orca.host.call("statusBar.update", patch).catch(() => {});
+    }
   }
   async function persist(nextSettings) {
     const previous = settings;
@@ -2181,6 +2319,10 @@ async function activate(orca, deps = {}) {
       agentState: undefined,
       stateStartedAtMs: undefined
     };
+    if (agentEvent || options.context !== undefined || summary.agentCount > 0) {
+      session?.touch();
+    }
+    latestSummary = summary;
     const context = options.context !== undefined ? options.context : await orca.host.call("workspace.readContext").catch(() => null);
     if (!context) {
       diagnostics?.line("debug", "refresh.minimal", {
@@ -2204,13 +2346,15 @@ async function activate(orca, deps = {}) {
       } : { displayName: undefined, branch: undefined, terminalCount: undefined },
       agentState: summary.agentState,
       stateStartedAtMs: summary.stateStartedAtMs,
+      sessionStartMs: session?.startMs(),
       agentCount: summary.agentCount
     }, resume ? { resume: true } : undefined);
     if (options.force) {
       await controller?.forceTransmit(resume);
     }
     timeline?.record((agentTable?.slots() ?? []).map((slot) => timelineStateFor(slot.canonicalState)));
-    persistTimeline();
+    persistState();
+    publishStatusBar();
     publishPanelSnapshot("debounced");
   }
   pushAgentRefresh = () => {
@@ -2224,6 +2368,7 @@ async function activate(orca, deps = {}) {
   registerPalette("presence.toggle", async () => {
     await persist({ ...settings, enabled: !settings.enabled });
     await refresh();
+    publishStatusBar();
     return { enabled: settings.enabled };
   });
   registerPalette("presence.detail-level", async () => {
@@ -2238,6 +2383,12 @@ async function activate(orca, deps = {}) {
       return { [field]: settings[field] };
     });
   }
+  registerPalette("presence.open-panel", async () => {
+    if (orca.host.has("commands.run")) {
+      return orca.host.call("commands.run", { action: "sidebar.right.toggle" });
+    }
+    return paletteHandlers.get("presence.status")?.();
+  });
   registerPalette("presence.status", async () => {
     await refresh(undefined, { force: true, resume: true });
     const base = controller?.status();
@@ -2289,6 +2440,7 @@ async function activate(orca, deps = {}) {
   registerPalette("presence.clear", async () => {
     diagnostics?.line("info", "discord.clear_command");
     await controller?.clear();
+    publishStatusBar();
     const status = controller?.status();
     const summary = `cleared enabled=${status?.enabled} heldClear=${status?.heldClear} sink=${status?.sink}`;
     diagnostics?.line("info", "discord.clear_done", {
@@ -2343,7 +2495,10 @@ async function activate(orca, deps = {}) {
     });
     return { ok: true, changed: result.changed, ...view };
   });
-  panels?.handle("presence.snapshot", () => currentPanelSnapshot());
+  panels?.handle("presence.snapshot", () => {
+    session?.touch();
+    return currentPanelSnapshot();
+  });
   const PANEL_REFRESH_MIN_MS = 2000;
   let lastPanelRefreshAt = 0;
   panels?.handle("presence.refresh", async () => {
@@ -2352,6 +2507,7 @@ async function activate(orca, deps = {}) {
       return currentPanelSnapshot();
     }
     lastPanelRefreshAt = clock;
+    session?.touch();
     await syncAgentsFromList();
     await redetect(true);
     await refresh(undefined, { force: true });
@@ -2460,8 +2616,12 @@ async function deactivate() {
     clearTimeout(timelineSaveTimer);
     timelineSaveTimer = null;
   }
-  if (timeline && timelineHost?.has("storage.set")) {
-    await timelineHost.call("storage.set", { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {});
+  if (timelineHost?.has("storage.set")) {
+    const sessionState = session?.toJSON();
+    await Promise.all([
+      timeline ? timelineHost.call("storage.set", { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {}) : undefined,
+      sessionState ? timelineHost.call("storage.set", { key: SESSION_STORAGE_KEY, value: sessionState }).catch(() => {}) : undefined
+    ]);
   }
   panels = null;
   if (settingsChangeTimer) {
