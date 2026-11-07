@@ -2,7 +2,7 @@
 
 Author: Jonathan Marien
 Date: 2026-11-06
-Status: draft, awaiting approval
+Status: approved 2026-11-06
 
 ## Why
 
@@ -125,4 +125,4 @@ Upstream `pluginNeedsResidentWorker` keeps any plugin that has `main` and `statu
 
 ## Release
 
-Version is open; see the question in the hand-over message.
+Ships as 1.0.2 (decided 2026-11-06). 1.1.0 stays reserved for the question state.
