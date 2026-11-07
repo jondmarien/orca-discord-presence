@@ -45,7 +45,7 @@ The bridge token is a shared secret between the Orca host and the companion. It 
 | One activity button (`Open Orca` + your HTTPS URL) | `showOpenButton` and a normalized `https:` `openUrl` |
 | `N terminal(s)` | `showTerminals` and `terminalCount` is a number |
 | Machine name or `machineLabel` | `showMachine` **and** `detailLevel !== 'generic'` |
-| Start timestamp (Unix seconds) | `showElapsed` and `stateStartedAtMs` is a number |
+| Start timestamp (Unix seconds) | `showElapsed` and the start for `elapsedMode` is a number: the session start (`session`, default; also kept in plugin storage on this machine) or `stateStartedAtMs` (`state`) |
 | Asset keys `orca`, `state-*` | Any non-null activity |
 
 | Never transmitted |

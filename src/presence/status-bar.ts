@@ -81,7 +81,8 @@ export function renderStatusBar({
       visible
     }
   }
-  const notConnected = !status.connected && status.sink !== 'bridge'
+  // Why: `sink` is the last successful route; a failing companion is not a live connection.
+  const notConnected = !status.connected && (status.sink !== 'bridge' || status.bridgeFailing)
   const agent = settings.showAgentState && agentState && agentState !== 'idle' ? AGENT_TEXT[agentState] : undefined
   const count = settings.showAgentCount && agentCount > 1 ? ` · ${agentCount}` : ''
   const parts = [status.lastActivity?.details]

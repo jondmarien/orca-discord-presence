@@ -1430,6 +1430,7 @@ function createPresenceController({
   let lastBridgeToken = null;
   let stopped = false;
   let holdClear = false;
+  let bridgeFailing = false;
   function emit(level, event, detail) {
     if (diagnostics) {
       diagnostics.line(level, event, detail);
@@ -1504,6 +1505,7 @@ function createPresenceController({
         lastActivity = activity;
         lastSentAt = now();
         lastSink = "local";
+        bridgeFailing = false;
         cleared = false;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1531,12 +1533,14 @@ function createPresenceController({
       lastActivity = activity;
       lastSentAt = now();
       lastSink = "bridge";
+      bridgeFailing = false;
       lastBridgeUrl = target.url;
       lastBridgeToken = target.token;
       cleared = false;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       emit("error", "bridge.publish_failed", { url: bridgeOrigin(target.url), reason: message });
+      bridgeFailing = true;
       lastSentSerialized = null;
     }
   }
@@ -1682,7 +1686,8 @@ function createPresenceController({
       detailLevel: currentSettings.detailLevel,
       lastActivity,
       logFile: diagnostics?.filePath ?? null,
-      heldClear: holdClear
+      heldClear: holdClear,
+      bridgeFailing
     }),
     async stop() {
       if (stopped) {
@@ -1876,7 +1881,7 @@ function renderStatusBar({
       visible
     };
   }
-  const notConnected = !status.connected && status.sink !== "bridge";
+  const notConnected = !status.connected && (status.sink !== "bridge" || status.bridgeFailing);
   const agent = settings.showAgentState && agentState && agentState !== "idle" ? AGENT_TEXT[agentState] : undefined;
   const count = settings.showAgentCount && agentCount > 1 ? ` · ${agentCount}` : "";
   const parts = [status.lastActivity?.details];
@@ -2076,6 +2081,12 @@ function persistState() {
     }
   }, 15000);
   timelineSaveTimer.unref?.();
+}
+function touchSession() {
+  const before = session?.startMs();
+  session?.touch();
+  persistState();
+  return session?.startMs() !== before;
 }
 var heartbeat = null;
 var diagnostics = null;
@@ -2280,7 +2291,11 @@ async function activate(orca, deps = {}) {
     const serialized = JSON.stringify(patch);
     if (serialized !== lastStatusBar) {
       lastStatusBar = serialized;
-      orca.host.call("statusBar.update", patch).catch(() => {});
+      orca.host.call("statusBar.update", patch).catch(() => {
+        if (lastStatusBar === serialized) {
+          lastStatusBar = null;
+        }
+      });
     }
   }
   async function persist(nextSettings) {
@@ -2319,9 +2334,6 @@ async function activate(orca, deps = {}) {
       agentState: undefined,
       stateStartedAtMs: undefined
     };
-    if (agentEvent || options.context !== undefined || summary.agentCount > 0) {
-      session?.touch();
-    }
     latestSummary = summary;
     const context = options.context !== undefined ? options.context : await orca.host.call("workspace.readContext").catch(() => null);
     if (!context) {
@@ -2335,6 +2347,9 @@ async function activate(orca, deps = {}) {
         agentState: summary.agentState ?? "idle",
         agents: summary.agentCount
       });
+    }
+    if (agentEvent || options.context !== undefined || summary.agentCount > 0 || options.startup && context) {
+      session?.touch();
     }
     const resume = Boolean(options.resume || agentEvent);
     await controller?.update({
@@ -2490,7 +2505,9 @@ async function activate(orca, deps = {}) {
     return { ok: true, changed: result.changed, ...view };
   });
   panels?.handle("presence.snapshot", () => {
-    session?.touch();
+    if (touchSession()) {
+      refresh();
+    }
     return currentPanelSnapshot();
   });
   const PANEL_REFRESH_MIN_MS = 2000;
@@ -2501,7 +2518,7 @@ async function activate(orca, deps = {}) {
       return currentPanelSnapshot();
     }
     lastPanelRefreshAt = clock;
-    session?.touch();
+    touchSession();
     await syncAgentsFromList();
     await redetect(true);
     await refresh(undefined, { force: true });
@@ -2589,7 +2606,7 @@ async function activate(orca, deps = {}) {
     redetect().then(() => refresh(undefined, { force: true }));
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
-  redetect(true).then(() => refresh()).then(() => {
+  redetect(true).then(() => refresh(undefined, { startup: true })).then(() => {
     publishPanelSnapshot("immediate");
   });
 }

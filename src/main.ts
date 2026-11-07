@@ -280,6 +280,18 @@ function persistState() {
   }, 15_000)
   timelineSaveTimer.unref?.()
 }
+/**
+ * Touch the session clock from a panel request and schedule a save.
+ *
+ * @returns True when the touch started a new session (the start moved).
+ */
+function touchSession(): boolean {
+  const before = session?.startMs()
+  session?.touch()
+  persistState()
+  return session?.startMs() !== before
+}
+
 let heartbeat: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
 let logRing: LogRing | null = null
@@ -579,7 +591,12 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     const serialized = JSON.stringify(patch)
     if (serialized !== lastStatusBar) {
       lastStatusBar = serialized
-      void orca.host.call('statusBar.update', patch).catch(() => {})
+      // Why: forget a rejected patch so the next identical one retries.
+      void orca.host.call('statusBar.update', patch).catch(() => {
+        if (lastStatusBar === serialized) {
+          lastStatusBar = null
+        }
+      })
     }
   }
 
@@ -632,7 +649,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
    */
   async function refresh(
     agentEvent?: AgentStatusPayload | null,
-    options: { force?: boolean; resume?: boolean; context?: WorkspaceContext | null } = {}
+    options: { force?: boolean; resume?: boolean; context?: WorkspaceContext | null; startup?: boolean } = {}
   ) {
     if (agentEvent) {
       const parsed = parseAgentStatusPayload(agentEvent, Date.now())
@@ -644,11 +661,6 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       agentCount: 0,
       agentState: undefined,
       stateStartedAtMs: undefined
-    }
-    // Why: only real activity extends a session; the bare heartbeat must not,
-    // or an idle Orca left open would never end its session.
-    if (agentEvent || options.context !== undefined || summary.agentCount > 0) {
-      session?.touch()
     }
     latestSummary = summary
     // Why: `workspace.changed` already carries the context (possibly null for
@@ -668,6 +680,11 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
         agentState: summary.agentState ?? 'idle',
         agents: summary.agentCount
       })
+    }
+    // Why: only real activity extends a session; the bare heartbeat must not, or an
+    // idle Orca would never end its session. Startup with an open workspace counts.
+    if (agentEvent || options.context !== undefined || summary.agentCount > 0 || (options.startup && context)) {
+      session?.touch()
     }
     const resume = Boolean(options.resume || agentEvent)
     await controller?.update(
@@ -855,7 +872,10 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   // older hosts and browser clients have no `orca.panels`, and the panel shows
   // its static "needs Orca desktop" note there.
   panels?.handle('presence.snapshot', () => {
-    session?.touch()
+    // Why: opening the panel can start a new session; refresh so Discord and storage get it.
+    if (touchSession()) {
+      void refresh()
+    }
     return currentPanelSnapshot()
   })
 
@@ -871,7 +891,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       return currentPanelSnapshot()
     }
     lastPanelRefreshAt = clock
-    session?.touch()
+    touchSession()
     await syncAgentsFromList()
     await redetect(true)
     // `refresh` re-reads `workspace.readContext` and force-transmits.
@@ -996,7 +1016,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   // PLUGIN_WORKER_READY_TIMEOUT_MS (10s) or the host SIGKILLs the worker, and
   // the first refresh chains into a socket scan plus a 5s handshake timeout.
   void redetect(true)
-    .then(() => refresh())
+    .then(() => refresh(undefined, { startup: true }))
     .then(() => {
       publishPanelSnapshot('immediate')
     })

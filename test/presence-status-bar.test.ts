@@ -82,6 +82,13 @@ test.each<[string, Input, string, string, string]>([
     'Working',
     'accent',
     'activity'
+  ],
+  [
+    'bridge failing',
+    { agentState: 'working', status: { connected: false, sink: 'bridge', bridgeFailing: true } },
+    'Discord',
+    'warning',
+    'warning'
   ]
 ])('%s', (_name, input, text, tone, icon) => {
   const patch = render(input)

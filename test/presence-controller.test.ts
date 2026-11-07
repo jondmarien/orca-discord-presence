@@ -71,7 +71,7 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
       }
     }
   }
-  return { controller, client, activities, bridged, logs, advance, nowRef: () => now }
+  return { controller, client, bridge, activities, bridged, logs, advance, nowRef: () => now }
 }
 
 test('the first update writes through immediately', async () => {
@@ -244,6 +244,29 @@ test('falls back to the companion when local Discord IPC is unavailable', async 
   expect(bridged[0] && bridged[0] !== 'clear' ? bridged[0].details : null).toBe('repo')
   expect(controller.status().connected).toBe(false)
   expect(controller.status().sink).toBe('bridge')
+  expect(controller.status().bridgeFailing).toBe(false)
+})
+
+test('a failed companion publish marks the bridge as failing until the next success', async () => {
+  const { controller, client, bridge } = harness({
+    bridgeEnabled: true,
+    bridgeUrl: 'http://100.64.1.2:3848',
+    bridgeToken: 'tok'
+  })
+  client.connect = async () => {
+    throw new Error('no discord ipc socket accepted a connection')
+  }
+  await controller.update({ displayName: 'repo', agentState: 'working' })
+  const publish = bridge.publish
+  bridge.publish = async () => {
+    throw new Error('companion down')
+  }
+  await controller.forceTransmit()
+  expect(controller.status().sink).toBe('bridge')
+  expect(controller.status().bridgeFailing).toBe(true)
+  bridge.publish = publish
+  await controller.forceTransmit()
+  expect(controller.status().bridgeFailing).toBe(false)
 })
 
 test('stop after a bridge publish clears the remote activity', async () => {
