@@ -194,8 +194,8 @@ function isRetryableConnectError(error) {
 }
 
 // src/discord/client.ts
-var HANDSHAKE_TIMEOUT_MS = 5000;
-var COMMAND_TIMEOUT_MS = 5000;
+var HANDSHAKE_TIMEOUT_MS = 20000;
+var COMMAND_TIMEOUT_MS = 20000;
 function isHandshakeReadyPayload(payload) {
   return payload?.evt === "READY" && payload.data != null && typeof payload.data === "object";
 }
@@ -238,6 +238,8 @@ function createDiscordClient({
   let socketPath = null;
   let closeNotified = false;
   let closed = false;
+  let inFlight = null;
+  let generation = 0;
   const pending = new Map;
   let handshakeWait = null;
   function teardown() {
@@ -320,8 +322,15 @@ function createDiscordClient({
   async function connectOnce() {
     closeNotified = false;
     closed = false;
+    if (socket) {
+      socket.removeAllListeners();
+      socket.on("error", () => {});
+      socket.destroy();
+      socket = null;
+    }
     const answered = await connectToFirstAvailable(candidates());
-    socket = answered.socket;
+    const own = answered.socket;
+    socket = own;
     socketPath = answered.path;
     const decoder = createFrameDecoder(handleFrame, (error) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -332,15 +341,22 @@ function createDiscordClient({
       }
       teardown();
     });
-    socket.on("data", (chunk) => decoder.push(chunk));
-    socket.on("close", () => {
+    own.on("data", (chunk) => {
+      if (socket === own)
+        decoder.push(chunk);
+    });
+    own.on("close", () => {
+      if (socket !== own)
+        return;
       if (handshakeWait) {
         failHandshake(new Error("discord connection closed"));
         return;
       }
       teardown();
     });
-    socket.on("error", (error) => {
+    own.on("error", (error) => {
+      if (socket !== own)
+        return;
       log(`discord socket error: ${error.message}`);
       if (handshakeWait) {
         failHandshake(error);
@@ -359,22 +375,41 @@ function createDiscordClient({
       socket?.write(encodeFrame(OPCODE.HANDSHAKE, { v: 1, client_id: clientId }));
     });
   }
-  async function connect() {
+  function connect() {
     if (connected) {
-      return;
+      return Promise.resolve();
     }
+    if (!inFlight) {
+      inFlight = connectWithRetry().finally(() => {
+        inFlight = null;
+      });
+    }
+    return inFlight;
+  }
+  async function connectWithRetry() {
     assertPlausibleApplicationId(clientId);
+    const gen = generation;
     let lastError;
     const attempts = Math.max(1, connectAttempts);
     for (let attempt = 1;attempt <= attempts; attempt++) {
+      if (gen !== generation) {
+        throw new Error("discord client closed");
+      }
       try {
         await connectOnce();
+        if (gen !== generation) {
+          teardown();
+          throw new Error("discord client closed");
+        }
         if (attempt > 1) {
           log(`connect succeeded on attempt ${attempt}/${attempts}`, "info");
         }
         return;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+        if (gen !== generation) {
+          throw lastError;
+        }
         if (!isRetryableConnectError(lastError) || attempt >= attempts) {
           log(`connect failed: ${lastError.message}`, "error");
           throw lastError;
@@ -411,6 +446,10 @@ function createDiscordClient({
         return;
       }
       closed = true;
+      generation++;
+      if (handshakeWait) {
+        failHandshake(new Error("discord client closed"));
+      }
       if (socket && connected) {
         try {
           await command("SET_ACTIVITY", { pid: process.pid, activity: null });
