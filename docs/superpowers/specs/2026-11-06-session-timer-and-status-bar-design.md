@@ -81,7 +81,7 @@ Manifest:
 ]
 ```
 
-New command `presence.open-panel`, titled "Rich Presence: Show or Hide Panel". It calls `commands.run` with the action that toggles the sidebar holding plugin panels, guarded by `orca.host.has('commands.run')`. Otherwise it falls back to the `presence.status` handler.
+New command `presence.open-panel`, titled "Rich Presence: Show or Hide Panel". It is declarative: the manifest sets `"action": "sidebar.right.toggle"`, so Orca runs it with no worker handler. (Update 2026-11-06: calling `commands.run` from the worker needs `workspace:write`, which this plugin does not request, and the click failed with "could not run plugin command". Confirmed working in a dev run.)
 
 The worker calls `statusBar.update` (guarded by `orca.host.has('statusBar.update')`) from the same place that publishes the panel snapshot, and only when the rendered `{ text, icon, tone, tooltip, visible }` differs from the last one sent.
 

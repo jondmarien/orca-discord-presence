@@ -4,3 +4,6 @@ node_modules/
 companion/orca-presence-companion
 companion/orca-presence-companion.exe
 .superpowers/
+
+# orca plugin shot output
+.orca/

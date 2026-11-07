@@ -51,7 +51,8 @@
       },
       {
         "id": "presence.open-panel",
-        "title": "Rich Presence: Show or Hide Panel"
+        "title": "Rich Presence: Show or Hide Panel",
+        "action": "sidebar.right.toggle"
       },
       {
         "id": "presence.status",

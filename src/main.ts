@@ -735,13 +735,8 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     })
   }
 
-  registerPalette('presence.open-panel', async () => {
-    // Why: older hosts have no `commands.run`; Show Status is the closest click target.
-    if (orca.host.has('commands.run')) {
-      return orca.host.call('commands.run', { action: 'sidebar.right.toggle' })
-    }
-    return paletteHandlers.get('presence.status')?.()
-  })
+  // Why: `presence.open-panel` is declarative (manifest `action`), so it needs no
+  // worker handler and no `workspace:write`, which `commands.run` would require.
 
   registerPalette('presence.status', async () => {
     await refresh(undefined, { force: true, resume: true })

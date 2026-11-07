@@ -2383,12 +2383,6 @@ async function activate(orca, deps = {}) {
       return { [field]: settings[field] };
     });
   }
-  registerPalette("presence.open-panel", async () => {
-    if (orca.host.has("commands.run")) {
-      return orca.host.call("commands.run", { action: "sidebar.right.toggle" });
-    }
-    return paletteHandlers.get("presence.status")?.();
-  });
   registerPalette("presence.status", async () => {
     await refresh(undefined, { force: true, resume: true });
     const base = controller?.status();
