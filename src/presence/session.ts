@@ -48,7 +48,8 @@ export function createSessionClock({ gapMs = SESSION_GAP_MS, now = () => Date.no
       }
       lastActive = current
     },
-    startMs: () => start,
+    // Why: a lapsed session must not keep counting idle time on Discord.
+    startMs: () => (start !== undefined && lastActive !== undefined && now() - lastActive > gapMs ? undefined : start),
     restore(value) {
       if (!value || typeof value !== 'object') {
         return

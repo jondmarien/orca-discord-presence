@@ -43,11 +43,15 @@ test('touch after gap restarts', () => {
   expect(clock.startMs()).toBe(T + 31 * MINUTE)
 })
 
-test('time without touch does not extend', () => {
+test('session lapses after gap without touch', () => {
   const { clock, advance } = harness()
   clock.touch()
-  advance(31 * MINUTE)
+  advance(30 * MINUTE)
   expect(clock.startMs()).toBe(T)
+  advance(1 * MINUTE)
+  expect(clock.startMs()).toBeUndefined()
+  clock.touch()
+  expect(clock.startMs()).toBe(T + 31 * MINUTE)
 })
 
 test('restore inside gap keeps start', () => {
