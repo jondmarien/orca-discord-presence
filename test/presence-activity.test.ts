@@ -156,7 +156,7 @@ test('an unrecognized agent state reads idle rather than leaking or claiming com
 })
 
 test('showElapsed emits unix seconds, not milliseconds', () => {
-  const activity = buildActivity(SNAPSHOT, settingsWith({ detailLevel: 'full' }), NOW_MS)
+  const activity = buildActivity(SNAPSHOT, settingsWith({ detailLevel: 'full', elapsedMode: 'state' }), NOW_MS)
   expect(activity?.timestamps?.start).toBe(Math.floor(SNAPSHOT.stateStartedAtMs / 1000))
 })
 
@@ -172,7 +172,7 @@ test('showElapsed disabled omits timestamps entirely', () => {
 test('a future start timestamp is clamped to now', () => {
   const activity = buildActivity(
     { ...SNAPSHOT, stateStartedAtMs: NOW_MS + 60_000 },
-    settingsWith({ detailLevel: 'full' }),
+    settingsWith({ detailLevel: 'full', elapsedMode: 'state' }),
     NOW_MS
   )
   expect(activity?.timestamps?.start).toBe(Math.floor(NOW_MS / 1000))
@@ -303,4 +303,21 @@ test('a chat title in the agent table never reaches the Discord or bridge payloa
   // The bridge POSTs exactly this activity as JSON.
   expect(JSON.stringify(activity)).not.toContain(title)
   expect(JSON.stringify(summary)).not.toContain(title)
+})
+
+test('session mode uses sessionStartMs', () => {
+  const snapshot = { ...SNAPSHOT, stateStartedAtMs: 1_700_000_050_000, sessionStartMs: 1_699_990_000_000 }
+  const activity = buildActivity(snapshot, settingsWith({ elapsedMode: 'session' }), NOW_MS)
+  expect(activity?.timestamps?.start).toBe(Math.floor(1_699_990_000_000 / 1000))
+})
+
+test('state mode uses stateStartedAtMs', () => {
+  const snapshot = { ...SNAPSHOT, stateStartedAtMs: 1_700_000_050_000, sessionStartMs: 1_699_990_000_000 }
+  const activity = buildActivity(snapshot, settingsWith({ elapsedMode: 'state' }), NOW_MS)
+  expect(activity?.timestamps?.start).toBe(Math.floor(1_700_000_050_000 / 1000))
+})
+
+test('session mode without a session omits timestamps', () => {
+  const activity = buildActivity(SNAPSHOT, settingsWith({ elapsedMode: 'session' }), NOW_MS)
+  expect(activity?.timestamps).toBeUndefined()
 })

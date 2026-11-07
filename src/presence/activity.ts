@@ -38,6 +38,11 @@ export type PresenceSnapshot = {
    * `showElapsed` is true; converted to Unix seconds for Discord.
    */
   stateStartedAtMs?: number
+  /**
+   * Host timestamp (ms) when the current Orca session began. Used instead of
+   * {@link stateStartedAtMs} when `elapsedMode` is `session`.
+   */
+  sessionStartMs?: number
   /** `os.hostname()` of the Orca **client** (not an SSH remote). */
   machineName?: string
   /**
@@ -186,6 +191,18 @@ function buildState(snapshot: PresenceSnapshot, settings: PresenceSettings): str
 }
 
 /**
+ * Timer start (ms) for the configured `elapsedMode`, or `undefined` when that
+ * clock has not started.
+ *
+ * @param snapshot - Merged workspace / agent fields.
+ * @param settings - Normalized {@link PresenceSettings}.
+ * @returns `sessionStartMs` in `session` mode, `stateStartedAtMs` in `state` mode.
+ */
+export function elapsedStartMs(snapshot: PresenceSnapshot, settings: PresenceSettings): number | undefined {
+  return settings.elapsedMode === 'session' ? snapshot.sessionStartMs : snapshot.stateStartedAtMs
+}
+
+/**
  * Render a Discord activity from a snapshot and settings, or `null` when
  * presence must stay clear (`enabled === false` or `detailLevel === 'off'`).
  *
@@ -220,10 +237,11 @@ export function buildActivity(
   if (state) {
     activity.state = clamp(state)
   }
-  if (settings.showElapsed && typeof snapshot.stateStartedAtMs === 'number') {
+  const startMs = elapsedStartMs(snapshot, settings)
+  if (settings.showElapsed && typeof startMs === 'number') {
     // Discord's RPC example uses seconds; a clock skew forward would render a
     // nonsense countdown, so clamp to now.
-    activity.timestamps = { start: Math.floor(Math.min(snapshot.stateStartedAtMs, nowMs) / 1000) }
+    activity.timestamps = { start: Math.floor(Math.min(startMs, nowMs) / 1000) }
   }
   if (settings.showOpenButton && settings.openUrl) {
     activity.buttons = [{ label: settings.openButtonLabel, url: settings.openUrl }]
