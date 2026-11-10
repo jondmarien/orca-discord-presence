@@ -287,6 +287,8 @@ Roadmap and host API work: [ROADMAP.md](ROADMAP.md).
 | [docs/privacy.md](docs/privacy.md) | Gate table and never-transmitted list |
 | [companion/README.md](companion/README.md) | Companion start and HTTP surface |
 | [ROADMAP.md](ROADMAP.md) | Limits and follow-up work |
+| [CHANGELOG.md](CHANGELOG.md) | Changes in each release |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, tests, pull requests, releases |
 | [Issues](https://github.com/jondmarien/orca-discord-presence/issues) | Tracker |
 
 ## License
