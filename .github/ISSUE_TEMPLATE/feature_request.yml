@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest a new feature or a change
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: Check [ROADMAP.md](https://github.com/jondmarien/orca-discord-presence/blob/main/ROADMAP.md) first; some features wait on Orca APIs.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should the plugin do? Mention any privacy impact (what new data would reach Discord).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

@@ -1,0 +1,68 @@
+name: Bug report
+description: Presence is wrong, missing, or the plugin misbehaves
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [Troubleshooting](https://github.com/jondmarien/orca-discord-presence#troubleshooting) table first.
+        Do not paste tokens. Logs can contain workspace and branch names; remove anything private.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Orca with Discord running
+        2. ...
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: Shown in the panel header or **Show Status**.
+      placeholder: 1.0.3
+    validations:
+      required: true
+  - type: input
+    id: orca-version
+    attributes:
+      label: Orca version
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+  - type: dropdown
+    id: discord-client
+    attributes:
+      label: Discord client
+      options: [Discord desktop, Discord PTB / Canary, Vesktop / Vencord (arRPC), Other]
+    validations:
+      required: true
+  - type: dropdown
+    id: sink
+    attributes:
+      label: How presence is sent
+      options: [Local (same machine), Companion bridge]
+  - type: textarea
+    id: panel-status
+    attributes:
+      label: Panel status
+      description: What the panel status line and "Sending to" tile say, or a screenshot.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Plugin log
+      description: |
+        Turn on debug logging, reproduce, then paste the relevant lines from `plugin.log`
+        (Windows: `%TEMP%\jondmarien-discord-presence\plugin.log`; **Show Status** prints the path).
+        For connection problems, the output of `node scripts/discord-probe.mjs` helps too.
+      render: text
