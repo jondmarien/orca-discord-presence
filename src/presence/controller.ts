@@ -82,6 +82,11 @@ export type PresenceControllerOptions = {
    * {@link formatLogLine} strings so existing tests stay a no-op.
    */
   diagnostics?: Pick<DiagnosticSink, 'line'> & { filePath?: string }
+  /**
+   * Called when `localFailing` or `bridgeFailing` changes, including on
+   * timer-driven sends the caller never awaited, so it can republish status.
+   */
+  onHealthChange?: () => void
 }
 
 /**
@@ -116,6 +121,8 @@ export type PresenceStatus = {
   heldClear: boolean
   /** True when the latest companion publish failed, so a `bridge` sink is not live. */
   bridgeFailing: boolean
+  /** True when the latest local SET_ACTIVITY failed, so a handshake alone is not a live connection. */
+  localFailing: boolean
   /**
    * Where the bridge token lives. Filled in by the worker, which owns token
    * storage; the controller itself never sees where it came from. Never the token.
@@ -190,7 +197,8 @@ export function createPresenceController({
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
   log = () => {},
-  diagnostics
+  diagnostics,
+  onHealthChange = () => {}
 }: PresenceControllerOptions): PresenceController {
   let currentSettings = settings
   let snapshot: PresenceSnapshot | null = null
@@ -205,6 +213,7 @@ export function createPresenceController({
   let stopped = false
   let holdClear = false
   let bridgeFailing = false
+  let localFailing = false
 
   function emit(
     level: 'debug' | 'info' | 'warn' | 'error',
@@ -271,6 +280,17 @@ export function createPresenceController({
    * Never dual-publish — if we switch from bridge to local, clear the remote.
    */
   async function transmit(force = false) {
+    const before = `${localFailing}|${bridgeFailing}`
+    try {
+      await transmitOnce(force)
+    } finally {
+      if (`${localFailing}|${bridgeFailing}` !== before) {
+        onHealthChange()
+      }
+    }
+  }
+
+  async function transmitOnce(force: boolean) {
     pendingTimer = null
     if (!snapshot) {
       return
@@ -296,10 +316,12 @@ export function createPresenceController({
         lastSentAt = now()
         lastSink = 'local'
         bridgeFailing = false
+        localFailing = false
         cleared = false
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         emit('error', 'discord.set_activity_failed', { reason: message })
+        localFailing = true
         lastSentSerialized = null
       }
       return
@@ -324,6 +346,7 @@ export function createPresenceController({
       lastSentAt = now()
       lastSink = 'bridge'
       bridgeFailing = false
+      localFailing = false
       lastBridgeUrl = target.url
       lastBridgeToken = target.token
       cleared = false
@@ -348,6 +371,8 @@ export function createPresenceController({
       try {
         await client.clearActivity()
         emit('info', 'discord.clear', { sink: 'local' })
+        // Why: Discord answered a SET_ACTIVITY, so local sends are working again.
+        localFailing = false
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         emit('error', 'discord.clear_failed', { reason: message })
@@ -486,7 +511,8 @@ export function createPresenceController({
       lastActivity,
       logFile: diagnostics?.filePath ?? null,
       heldClear: holdClear,
-      bridgeFailing
+      bridgeFailing,
+      localFailing
     }),
     async stop() {
       if (stopped) {

@@ -488,7 +488,11 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       }),
       settings: nextSettings,
       diagnostics: diagnostics ?? undefined,
-      log: (message) => orca.log(message)
+      log: (message) => orca.log(message),
+      onHealthChange: () => {
+        publishStatusBar()
+        publishPanelSnapshot('debounced')
+      }
     })
   }
 
@@ -893,9 +897,16 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     lastPanelRefreshAt = clock
     touchSession()
     await syncAgentsFromList()
-    await redetect(true)
-    // `refresh` re-reads `workspace.readContext` and force-transmits.
-    await refresh(undefined, { force: true })
+    // Why: a stalled Discord holds SET_ACTIVITY (and a rebind's clear) for 5s,
+    // as long as the panel's request timeout. The panel sees the result on the
+    // next `panels.post`. `refresh` re-reads `workspace.readContext` and force-transmits.
+    void redetect(true)
+      .then(() => refresh(undefined, { force: true }))
+      .catch((error) =>
+        diagnostics?.line('error', 'panel.refresh_failed', {
+          reason: error instanceof Error ? error.message : String(error)
+        })
+      )
     return currentPanelSnapshot()
   })
   panels?.handle('presence.run', async (input) => {

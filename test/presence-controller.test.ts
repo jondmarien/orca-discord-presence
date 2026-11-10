@@ -1,7 +1,12 @@
 import { expect, test } from 'bun:test'
 import type { DiscordActivity } from '../src/presence/activity'
 import type { PresenceBridge } from '../src/presence/bridge'
-import { createPresenceController, MIN_UPDATE_INTERVAL_MS, type PresenceClient } from '../src/presence/controller'
+import {
+  createPresenceController,
+  MIN_UPDATE_INTERVAL_MS,
+  type PresenceClient,
+  type PresenceControllerOptions
+} from '../src/presence/controller'
 import { DEFAULT_SETTINGS, type PresenceSettings } from '../src/presence/settings'
 
 type FakeTimer = {
@@ -10,7 +15,7 @@ type FakeTimer = {
   cancelled: boolean
 }
 
-function harness(overrides: Partial<PresenceSettings> = {}) {
+function harness(overrides: Partial<PresenceSettings> = {}, extra: Partial<PresenceControllerOptions> = {}) {
   let now = 1_000_000
   const activities: Array<DiscordActivity | null> = []
   const bridged: Array<DiscordActivity | 'clear'> = []
@@ -60,7 +65,8 @@ function harness(overrides: Partial<PresenceSettings> = {}) {
     },
     log: (message) => {
       logs.push(message)
-    }
+    },
+    ...extra
   })
   const advance = async (ms: number) => {
     now += ms
@@ -112,6 +118,51 @@ test('forceTransmit re-sends an unchanged activity', async () => {
   await controller.forceTransmit()
   expect(activities.length).toBe(2)
   expect(activities[1] && 'details' in activities[1] ? activities[1].details : null).toBe('repo')
+})
+
+test('a failed local send sets localFailing until the next success', async () => {
+  const { controller, client } = harness()
+  const snapshot = { displayName: 'repo', agentState: 'working', terminalCount: 1 }
+  await controller.update(snapshot)
+  expect(controller.status().localFailing).toBe(false)
+  const send = client.setActivity
+  client.setActivity = async () => {
+    throw new Error('discord SET_ACTIVITY timed out')
+  }
+  await controller.forceTransmit()
+  expect(controller.status().connected).toBe(true)
+  expect(controller.status().localFailing).toBe(true)
+  client.setActivity = send
+  await controller.forceTransmit()
+  expect(controller.status().localFailing).toBe(false)
+})
+
+test('a timer-driven send failure reports the health change', async () => {
+  let changes = 0
+  const { controller, client, advance } = harness({}, { onHealthChange: () => changes++ })
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  client.setActivity = async () => {
+    throw new Error('discord SET_ACTIVITY timed out')
+  }
+  await controller.update({ displayName: 'repo', agentState: 'blocked', terminalCount: 1 })
+  expect(changes).toBe(0)
+  await advance(MIN_UPDATE_INTERVAL_MS)
+  // The timer fires `void transmit()`, so let it settle.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(controller.status().localFailing).toBe(true)
+  expect(changes).toBe(1)
+})
+
+test('a successful Clear lifts localFailing', async () => {
+  const { controller, client } = harness()
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  client.setActivity = async () => {
+    throw new Error('discord SET_ACTIVITY timed out')
+  }
+  await controller.forceTransmit()
+  expect(controller.status().localFailing).toBe(true)
+  await controller.clear()
+  expect(controller.status().localFailing).toBe(false)
 })
 
 test('skip-identical cannot strand Discord after another client overwrote activity', async () => {

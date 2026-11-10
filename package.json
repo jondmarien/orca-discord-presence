@@ -1,6 +1,6 @@
 {
   "name": "orca-discord-presence",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "author": "Jonathan Marien",
   "type": "module",

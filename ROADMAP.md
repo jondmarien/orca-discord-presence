@@ -72,4 +72,5 @@ Once [stablyai/orca#38406](https://github.com/stablyai/orca/pull/38406) merges a
 - [ ] Paired panels (needs [stablyai/orca#38342](https://github.com/stablyai/orca/issues/38342))
 - [ ] Client relay (needs [stablyai/orca#38343](https://github.com/stablyai/orca/issues/38343))
 - [x] Session elapsed timer and status bar item (v1.0.2) (spec: `docs/superpowers/specs/2026-11-06-session-timer-and-status-bar-design.md`)
+- [x] Fix overlapping Discord connects that stalled SET_ACTIVITY; non-blocking panel Refresh; "updates failing" state (v1.0.3)
 - [ ] Editor gutter icon with hover (needs a new Orca editor decoration API; no upstream issue yet)

@@ -11,7 +11,7 @@
  */
 
 import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import path, { dirname } from 'node:path'
 
 /**
  * Qualified plugin id — also the log line prefix.
@@ -82,6 +82,8 @@ export function resolveLogFilePath(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
   { homedir, tmpdir, platform }: LogPathInput
 ): string {
+  // Why: join with the injected platform's separator, not the host's.
+  const { join } = platform === 'win32' ? path.win32 : path.posix
   const override = env[LOG_FILE_ENV]
   if (typeof override === 'string' && override.trim()) {
     return override.trim()

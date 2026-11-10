@@ -34,7 +34,7 @@ test('resolveLogFilePath uses LOCALAPPDATA on Windows', () => {
       { LOCALAPPDATA: 'C:\\Users\\jon\\AppData\\Local' },
       { homedir: 'C:\\Users\\jon', tmpdir: 'C:\\Temp', platform: 'win32' }
     )
-  ).toBe(path.join('C:\\Users\\jon\\AppData\\Local', 'jondmarien-discord-presence', 'plugin.log'))
+  ).toBe('C:\\Users\\jon\\AppData\\Local\\jondmarien-discord-presence\\plugin.log')
 })
 
 test('formatLogLine prefixes the plugin id and quotes spaced values', () => {

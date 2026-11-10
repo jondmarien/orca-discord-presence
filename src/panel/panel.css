@@ -106,6 +106,9 @@ body {
 #status-bar.is-connected .dot {
   background: var(--c-live);
 }
+#status-bar.is-failing .dot {
+  background: var(--c-waiting);
+}
 #status-bar.is-bridge .dot {
   background: var(--c-working);
 }

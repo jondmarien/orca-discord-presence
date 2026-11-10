@@ -188,6 +188,9 @@ export function createDiscordClient({
   let socketPath: string | null = null
   let closeNotified = false
   let closed = false
+  // Bumped by close() so a connect loop still retrying stops instead of
+  // opening a socket nobody owns.
+  let generation = 0
   const pending = new Map<string, PendingCommand>()
   let handshakeWait: {
     resolve: () => void
@@ -275,11 +278,23 @@ export function createDiscordClient({
     }
   }
 
-  async function connectOnce() {
+  async function connectOnce(gen: number) {
     closeNotified = false
     closed = false
+    if (socket) {
+      socket.removeAllListeners()
+      socket.on('error', () => {})
+      socket.destroy()
+      socket = null
+    }
     const answered = await connectToFirstAvailable(candidates())
-    socket = answered.socket
+    if (gen !== generation) {
+      // Closed while the pipe was opening; a newer attempt may own the client.
+      answered.socket.destroy()
+      throw new Error('discord client closed')
+    }
+    const own = answered.socket
+    socket = own
     socketPath = answered.path
     const decoder = createFrameDecoder(handleFrame, (error) => {
       const message = error instanceof Error ? error.message : String(error)
@@ -290,15 +305,20 @@ export function createDiscordClient({
       }
       teardown()
     })
-    socket.on('data', (chunk) => decoder.push(chunk))
-    socket.on('close', () => {
+    // Why: only the current socket may drive shared state; a replaced one is ignored.
+    own.on('data', (chunk) => {
+      if (socket === own) decoder.push(chunk)
+    })
+    own.on('close', () => {
+      if (socket !== own) return
       if (handshakeWait) {
         failHandshake(new Error('discord connection closed'))
         return
       }
       teardown()
     })
-    socket.on('error', (error) => {
+    own.on('error', (error) => {
+      if (socket !== own) return
       log(`discord socket error: ${error.message}`)
       if (handshakeWait) {
         failHandshake(error)
@@ -319,22 +339,55 @@ export function createDiscordClient({
     })
   }
 
-  async function connect() {
+  // connectOnce() owns the shared socket/handshake state, so overlapping
+  // connects would clobber each other's sockets. Callers share one attempt.
+  // Tagged with its generation: after close() (e.g. Reload RPC during retry
+  // backoff) a new connect starts fresh instead of joining a doomed attempt.
+  let connecting: { gen: number; promise: Promise<void> } | null = null
+
+  function connect() {
     if (connected) {
-      return
+      return Promise.resolve()
     }
+    if (connecting?.gen !== generation) {
+      const entry = {
+        gen: generation,
+        promise: connectWithRetry().finally(() => {
+          if (connecting === entry) {
+            connecting = null
+          }
+        })
+      }
+      connecting = entry
+    }
+    return connecting.promise
+  }
+
+  async function connectWithRetry() {
     assertPlausibleApplicationId(clientId)
+    const gen = generation
     let lastError: Error | undefined
     const attempts = Math.max(1, connectAttempts)
     for (let attempt = 1; attempt <= attempts; attempt++) {
+      if (gen !== generation) {
+        throw new Error('discord client closed')
+      }
       try {
-        await connectOnce()
+        await connectOnce(gen)
+        if (gen !== generation) {
+          // Closed mid-handshake: drop this socket.
+          teardown()
+          throw new Error('discord client closed')
+        }
         if (attempt > 1) {
           log(`connect succeeded on attempt ${attempt}/${attempts}`, 'info')
         }
         return
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error))
+        if (gen !== generation) {
+          throw lastError
+        }
         if (!isRetryableConnectError(lastError) || attempt >= attempts) {
           log(`connect failed: ${lastError.message}`, 'error')
           throw lastError
@@ -376,6 +429,10 @@ export function createDiscordClient({
         return
       }
       closed = true
+      generation++
+      if (handshakeWait) {
+        failHandshake(new Error('discord client closed'))
+      }
       if (socket && connected) {
         try {
           await command('SET_ACTIVITY', { pid: process.pid, activity: null })

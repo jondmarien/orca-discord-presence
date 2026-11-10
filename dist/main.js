@@ -238,6 +238,7 @@ function createDiscordClient({
   let socketPath = null;
   let closeNotified = false;
   let closed = false;
+  let generation = 0;
   const pending = new Map;
   let handshakeWait = null;
   function teardown() {
@@ -317,11 +318,22 @@ function createDiscordClient({
       entry.resolve(payload.data ?? null);
     }
   }
-  async function connectOnce() {
+  async function connectOnce(gen) {
     closeNotified = false;
     closed = false;
+    if (socket) {
+      socket.removeAllListeners();
+      socket.on("error", () => {});
+      socket.destroy();
+      socket = null;
+    }
     const answered = await connectToFirstAvailable(candidates());
-    socket = answered.socket;
+    if (gen !== generation) {
+      answered.socket.destroy();
+      throw new Error("discord client closed");
+    }
+    const own = answered.socket;
+    socket = own;
     socketPath = answered.path;
     const decoder = createFrameDecoder(handleFrame, (error) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -332,15 +344,22 @@ function createDiscordClient({
       }
       teardown();
     });
-    socket.on("data", (chunk) => decoder.push(chunk));
-    socket.on("close", () => {
+    own.on("data", (chunk) => {
+      if (socket === own)
+        decoder.push(chunk);
+    });
+    own.on("close", () => {
+      if (socket !== own)
+        return;
       if (handshakeWait) {
         failHandshake(new Error("discord connection closed"));
         return;
       }
       teardown();
     });
-    socket.on("error", (error) => {
+    own.on("error", (error) => {
+      if (socket !== own)
+        return;
       log(`discord socket error: ${error.message}`);
       if (handshakeWait) {
         failHandshake(error);
@@ -359,22 +378,48 @@ function createDiscordClient({
       socket?.write(encodeFrame(OPCODE.HANDSHAKE, { v: 1, client_id: clientId }));
     });
   }
-  async function connect() {
+  let connecting = null;
+  function connect() {
     if (connected) {
-      return;
+      return Promise.resolve();
     }
+    if (connecting?.gen !== generation) {
+      const entry = {
+        gen: generation,
+        promise: connectWithRetry().finally(() => {
+          if (connecting === entry) {
+            connecting = null;
+          }
+        })
+      };
+      connecting = entry;
+    }
+    return connecting.promise;
+  }
+  async function connectWithRetry() {
     assertPlausibleApplicationId(clientId);
+    const gen = generation;
     let lastError;
     const attempts = Math.max(1, connectAttempts);
     for (let attempt = 1;attempt <= attempts; attempt++) {
+      if (gen !== generation) {
+        throw new Error("discord client closed");
+      }
       try {
-        await connectOnce();
+        await connectOnce(gen);
+        if (gen !== generation) {
+          teardown();
+          throw new Error("discord client closed");
+        }
         if (attempt > 1) {
           log(`connect succeeded on attempt ${attempt}/${attempts}`, "info");
         }
         return;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+        if (gen !== generation) {
+          throw lastError;
+        }
         if (!isRetryableConnectError(lastError) || attempt >= attempts) {
           log(`connect failed: ${lastError.message}`, "error");
           throw lastError;
@@ -411,6 +456,10 @@ function createDiscordClient({
         return;
       }
       closed = true;
+      generation++;
+      if (handshakeWait) {
+        failHandshake(new Error("discord client closed"));
+      }
       if (socket && connected) {
         try {
           await command("SET_ACTIVITY", { pid: process.pid, activity: null });
@@ -1316,7 +1365,7 @@ function buildActivity(snapshot, settings, nowMs) {
 
 // src/presence/log.ts
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import path2, { dirname } from "node:path";
 var LOG_PLUGIN_ID = "jondmarien.discord-presence";
 var LOG_DIR_NAME = "jondmarien-discord-presence";
 var LOG_FILE_NAME = "plugin.log";
@@ -1324,6 +1373,7 @@ var MAX_LOG_BYTES = 256 * 1024;
 var LOG_FILE_ENV = "ORCA_PRESENCE_LOG_FILE";
 var REDACTED_KEYS = new Set(["token", "bridgetoken", "authorization", "password", "secret"]);
 function resolveLogFilePath(env, { homedir, tmpdir, platform }) {
+  const { join } = platform === "win32" ? path2.win32 : path2.posix;
   const override = env[LOG_FILE_ENV];
   if (typeof override === "string" && override.trim()) {
     return override.trim();
@@ -1416,7 +1466,8 @@ function createPresenceController({
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer),
   log = () => {},
-  diagnostics
+  diagnostics,
+  onHealthChange = () => {}
 }) {
   let currentSettings = settings;
   let snapshot = null;
@@ -1431,6 +1482,7 @@ function createPresenceController({
   let stopped = false;
   let holdClear = false;
   let bridgeFailing = false;
+  let localFailing = false;
   function emit(level, event, detail) {
     if (diagnostics) {
       diagnostics.line(level, event, detail);
@@ -1481,6 +1533,16 @@ function createPresenceController({
     }
   }
   async function transmit(force = false) {
+    const before = `${localFailing}|${bridgeFailing}`;
+    try {
+      await transmitOnce(force);
+    } finally {
+      if (`${localFailing}|${bridgeFailing}` !== before) {
+        onHealthChange();
+      }
+    }
+  }
+  async function transmitOnce(force) {
     pendingTimer = null;
     if (!snapshot) {
       return;
@@ -1506,10 +1568,12 @@ function createPresenceController({
         lastSentAt = now();
         lastSink = "local";
         bridgeFailing = false;
+        localFailing = false;
         cleared = false;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         emit("error", "discord.set_activity_failed", { reason: message });
+        localFailing = true;
         lastSentSerialized = null;
       }
       return;
@@ -1534,6 +1598,7 @@ function createPresenceController({
       lastSentAt = now();
       lastSink = "bridge";
       bridgeFailing = false;
+      localFailing = false;
       lastBridgeUrl = target.url;
       lastBridgeToken = target.token;
       cleared = false;
@@ -1557,6 +1622,7 @@ function createPresenceController({
       try {
         await client.clearActivity();
         emit("info", "discord.clear", { sink: "local" });
+        localFailing = false;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         emit("error", "discord.clear_failed", { reason: message });
@@ -1687,7 +1753,8 @@ function createPresenceController({
       lastActivity,
       logFile: diagnostics?.filePath ?? null,
       heldClear: holdClear,
-      bridgeFailing
+      bridgeFailing,
+      localFailing
     }),
     async stop() {
       if (stopped) {
@@ -1784,6 +1851,7 @@ function buildPresencePanelSnapshot(input) {
     status: {
       enabled: status.enabled,
       connected: status.connected,
+      localFailing: status.localFailing,
       client: status.client ? { id: status.client.id, label: status.client.label } : null,
       clients: status.clients.map(({ id, label }) => ({ id, label })),
       clientFallback: status.clientFallback,
@@ -1881,7 +1949,7 @@ function renderStatusBar({
       visible
     };
   }
-  const notConnected = !status.connected && (status.sink !== "bridge" || status.bridgeFailing);
+  const notConnected = status.localFailing || !status.connected && (status.sink !== "bridge" || status.bridgeFailing);
   const agent = settings.showAgentState && agentState && agentState !== "idle" ? AGENT_TEXT[agentState] : undefined;
   const count = settings.showAgentCount && agentCount > 1 ? ` · ${agentCount}` : "";
   const parts = [status.lastActivity?.details];
@@ -2009,7 +2077,7 @@ function isState(value) {
 }
 
 // src/version.ts
-var PLUGIN_VERSION = "1.0.2";
+var PLUGIN_VERSION = "1.0.3";
 
 // src/main.ts
 var HEARTBEAT_MS = 90000;
@@ -2230,7 +2298,11 @@ async function activate(orca, deps = {}) {
       }),
       settings: nextSettings,
       diagnostics: diagnostics ?? undefined,
-      log: (message) => orca.log(message)
+      log: (message) => orca.log(message),
+      onHealthChange: () => {
+        publishStatusBar();
+        publishPanelSnapshot("debounced");
+      }
     });
   }
   let pushAgentRefresh = () => {};
@@ -2520,8 +2592,9 @@ async function activate(orca, deps = {}) {
     lastPanelRefreshAt = clock;
     touchSession();
     await syncAgentsFromList();
-    await redetect(true);
-    await refresh(undefined, { force: true });
+    redetect(true).then(() => refresh(undefined, { force: true })).catch((error) => diagnostics?.line("error", "panel.refresh_failed", {
+      reason: error instanceof Error ? error.message : String(error)
+    }));
     return currentPanelSnapshot();
   });
   panels?.handle("presence.run", async (input) => {

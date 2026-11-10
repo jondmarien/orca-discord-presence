@@ -8,9 +8,11 @@ import { createFrameDecoder, encodeFrame, OPCODE } from '../src/discord/ipc'
 
 type FakeTarget = string | { path: string; dir: string }
 
+let pipeCounter = 0
+
 function fakeSocketPath(): FakeTarget {
   if (process.platform === 'win32') {
-    return `\\\\?\\pipe\\orca-presence-test-${process.pid}-${Math.floor(performance.now())}`
+    return `\\\\?\\pipe\\orca-presence-test-${process.pid}-${++pipeCounter}`
   }
   const dir = mkdtempSync(path.join(os.tmpdir(), 'orca-presence-'))
   return { path: path.join(dir, 'sock'), dir }
@@ -287,5 +289,120 @@ test('a dropped socket marks the client disconnected and fires onClose once', as
   await new Promise((resolve) => setTimeout(resolve, 50))
   expect(client.isConnected()).toBe(false)
   expect(closes).toBe(1)
+  cleanupTarget(target)
+})
+
+// Fake Discord that counts sockets and answers slowly <3
+function startSlowDiscord(socketPath: string, delayMs: number) {
+  const state = { connections: 0, open: 0 }
+  const server = net.createServer((socket) => {
+    state.connections++
+    state.open++
+    socket.on('close', () => state.open--)
+    socket.on('error', () => {})
+    const decoder = createFrameDecoder((opcode, data) => {
+      const payload = data as Record<string, unknown>
+      if (opcode === OPCODE.HANDSHAKE) {
+        const timer = setTimeout(() => {
+          if (!socket.destroyed) {
+            socket.write(encodeFrame(OPCODE.FRAME, { cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } }))
+          }
+        }, delayMs)
+        socket.on('close', () => clearTimeout(timer))
+        return
+      }
+      if (opcode === OPCODE.FRAME) {
+        socket.write(encodeFrame(OPCODE.FRAME, { cmd: payload.cmd, nonce: payload.nonce, data: {} }))
+      }
+    })
+    socket.on('data', (chunk) => decoder.push(chunk))
+  })
+  return new Promise<{ server: net.Server; state: typeof state }>((resolve) =>
+    server.listen(socketPath, () => resolve({ server, state }))
+  )
+}
+
+test('overlapping connect() calls share one socket and one handshake', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  const { server, state } = await startSlowDiscord(socketPath, 100)
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath]
+  })
+
+  await Promise.all([client.connect(), client.connect(), client.connect()])
+
+  expect(client.isConnected()).toBe(true)
+  expect(state.connections).toBe(1)
+  await client.setActivity({ details: 'orca' })
+
+  await client.close()
+  server.close()
+  cleanupTarget(target)
+})
+
+test('close() during a pending handshake stops the connect loop from retrying', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  // Never answers in time, so every attempt retries
+  const { server, state } = await startSlowDiscord(socketPath, 10_000)
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath],
+    handshakeTimeoutMs: 50,
+    connectAttempts: 5,
+    sleep: () => Promise.resolve()
+  })
+
+  const pendingConnect = client.connect()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  await client.close()
+  await expect(pendingConnect).rejects.toThrow()
+  await new Promise((resolve) => setTimeout(resolve, 300))
+
+  expect(state.connections).toBe(1)
+  expect(state.open).toBe(0)
+  expect(client.isConnected()).toBe(false)
+
+  server.close()
+  cleanupTarget(target)
+})
+
+test('connect after close during retry backoff starts a fresh attempt', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  const server = await startFakeDiscord(socketPath, {
+    onCommand: () => {},
+    // First handshake is not ready (retryable); later ones succeed.
+    handshake: (connection) =>
+      connection === 1 ? { cmd: 'DISPATCH', evt: 'READY', data: null } : { cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } }
+  })
+  let wake: () => void = () => {}
+  let sleeping: () => void = () => {}
+  const asleep = new Promise<void>((resolve) => (sleeping = resolve))
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath],
+    sleep: () =>
+      new Promise<void>((resolve) => {
+        wake = resolve
+        sleeping()
+      })
+  })
+  const first = client.connect()
+  await asleep
+  // Reload RPC: close, then connect again while the old loop is in backoff.
+  await client.close()
+  const second = client.connect()
+  expect(second).not.toBe(first)
+  await second
+  expect(client.isConnected()).toBe(true)
+  wake()
+  await expect(first).rejects.toThrow('discord client closed')
+  expect(client.isConnected()).toBe(true)
+  await client.setActivity({ details: 'orca' })
+  await client.close()
+  server.close()
   cleanupTarget(target)
 })

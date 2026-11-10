@@ -83,6 +83,8 @@ export type PresencePanelSnapshot = {
   status: {
     enabled: boolean
     connected: boolean
+    /** Handshake is up but the latest local send failed. */
+    localFailing: boolean
     /** The Discord app connected over IPC, or `null`. */
     client: PresenceStatus['client']
     /** Detected Discord apps; `id` and `label` only, never a path. */
@@ -227,6 +229,7 @@ export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): P
     status: {
       enabled: status.enabled,
       connected: status.connected,
+      localFailing: status.localFailing,
       // Why: rebuilt field by field so a path can never ride along.
       client: status.client ? { id: status.client.id, label: status.client.label } : null,
       clients: status.clients.map(({ id, label }) => ({ id, label })),
