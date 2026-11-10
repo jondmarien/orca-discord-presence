@@ -278,7 +278,7 @@ export function createDiscordClient({
     }
   }
 
-  async function connectOnce() {
+  async function connectOnce(gen: number) {
     closeNotified = false
     closed = false
     if (socket) {
@@ -288,6 +288,11 @@ export function createDiscordClient({
       socket = null
     }
     const answered = await connectToFirstAvailable(candidates())
+    if (gen !== generation) {
+      // Closed while the pipe was opening; a newer attempt may own the client.
+      answered.socket.destroy()
+      throw new Error('discord client closed')
+    }
     const own = answered.socket
     socket = own
     socketPath = answered.path
@@ -336,16 +341,26 @@ export function createDiscordClient({
 
   // connectOnce() owns the shared socket/handshake state, so overlapping
   // connects would clobber each other's sockets. Callers share one attempt.
-  let connecting: Promise<void> | null = null
+  // Tagged with its generation: after close() (e.g. Reload RPC during retry
+  // backoff) a new connect starts fresh instead of joining a doomed attempt.
+  let connecting: { gen: number; promise: Promise<void> } | null = null
 
   function connect() {
     if (connected) {
       return Promise.resolve()
     }
-    connecting ??= connectWithRetry().finally(() => {
-      connecting = null
-    })
-    return connecting
+    if (connecting?.gen !== generation) {
+      const entry = {
+        gen: generation,
+        promise: connectWithRetry().finally(() => {
+          if (connecting === entry) {
+            connecting = null
+          }
+        })
+      }
+      connecting = entry
+    }
+    return connecting.promise
   }
 
   async function connectWithRetry() {
@@ -358,7 +373,7 @@ export function createDiscordClient({
         throw new Error('discord client closed')
       }
       try {
-        await connectOnce()
+        await connectOnce(gen)
         if (gen !== generation) {
           // Closed mid-handshake: drop this socket.
           teardown()

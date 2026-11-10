@@ -277,7 +277,7 @@ Roadmap and host API work: [ROADMAP.md](ROADMAP.md).
 | Show Status warns `secrets unavailable` | No OS keyring | The token is kept in plugin settings. Install a keyring (for example a secret service) to move it to secrets |
 | Panel shows "Open this panel in the Orca desktop app" | Panel opened outside the desktop app | Use the Orca desktop app |
 | Lags during agent activity | Discord rate limit | Expected: at most one update per 15 s |
-| Panel shows "Connected · updates failing" | Discord accepted the connection but does not answer updates | Fully quit Discord from the tray and restart it. To check each IPC pipe, run `node scripts/discord-probe.mjs` from a clone of this repo (Node 18+) |
+| Panel shows "Connected · updates failing" | Discord accepted the connection but does not answer updates | Fully quit Discord from the tray and restart it. To check each IPC pipe, run `bun scripts/discord-probe.mjs` from a clone of this repo |
 
 ## Docs
 

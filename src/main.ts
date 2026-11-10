@@ -488,7 +488,11 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       }),
       settings: nextSettings,
       diagnostics: diagnostics ?? undefined,
-      log: (message) => orca.log(message)
+      log: (message) => orca.log(message),
+      onHealthChange: () => {
+        publishStatusBar()
+        publishPanelSnapshot('debounced')
+      }
     })
   }
 

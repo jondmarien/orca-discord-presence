@@ -1,19 +1,15 @@
 // Discord IPC probe: checks every discord-ipc pipe/socket outside Orca.
-// Usage: node scripts/discord-probe.mjs   (Node 18+, any OS; Discord must be running)
+// Usage: bun scripts/discord-probe.mjs   (any OS; Discord must be running)
 // Prints per pipe: connect, READY time, SET_ACTIVITY reply time. Clears the test activity after.
 import net from 'node:net'
 import os from 'node:os'
-import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+// Same candidate list the plugin uses: Linux runtime dirs, Flatpak/Snap sandboxes, ORCA_PRESENCE_DISCORD_IPC.
+import { defaultDiscordIpcCandidates } from '../src/discord/ipc.ts'
 
 const CLIENT_ID = '1545653843239374848'
 const TIMEOUT_MS = 10_000
 
-function pipes() {
-  if (process.platform === 'win32') return [...Array(10)].map((_, i) => `\\\\?\\pipe\\discord-ipc-${i}`)
-  const base = process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || process.env.TMP || process.env.TEMP || '/tmp'
-  return [...Array(10)].map((_, i) => path.join(base, `discord-ipc-${i}`))
-}
 
 function frame(op, body) {
   const json = Buffer.from(JSON.stringify(body))
@@ -76,7 +72,7 @@ function probe(pipe) {
   })
 }
 
-for (const pipe of pipes()) {
+for (const pipe of defaultDiscordIpcCandidates()) {
   const result = await probe(pipe)
   if (!result.result.startsWith('no pipe')) console.log(JSON.stringify(result))
 }

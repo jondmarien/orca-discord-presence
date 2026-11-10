@@ -64,5 +64,5 @@ body:
       description: |
         Turn on debug logging, reproduce, then paste the relevant lines from `plugin.log`
         (Windows: `%TEMP%\jondmarien-discord-presence\plugin.log`; **Show Status** prints the path).
-        For connection problems, the output of `node scripts/discord-probe.mjs` helps too.
+        For connection problems, the output of `bun scripts/discord-probe.mjs` helps too.
       render: text

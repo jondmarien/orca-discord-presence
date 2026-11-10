@@ -82,6 +82,11 @@ export type PresenceControllerOptions = {
    * {@link formatLogLine} strings so existing tests stay a no-op.
    */
   diagnostics?: Pick<DiagnosticSink, 'line'> & { filePath?: string }
+  /**
+   * Called when `localFailing` or `bridgeFailing` changes, including on
+   * timer-driven sends the caller never awaited, so it can republish status.
+   */
+  onHealthChange?: () => void
 }
 
 /**
@@ -192,7 +197,8 @@ export function createPresenceController({
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
   log = () => {},
-  diagnostics
+  diagnostics,
+  onHealthChange = () => {}
 }: PresenceControllerOptions): PresenceController {
   let currentSettings = settings
   let snapshot: PresenceSnapshot | null = null
@@ -274,6 +280,17 @@ export function createPresenceController({
    * Never dual-publish — if we switch from bridge to local, clear the remote.
    */
   async function transmit(force = false) {
+    const before = `${localFailing}|${bridgeFailing}`
+    try {
+      await transmitOnce(force)
+    } finally {
+      if (`${localFailing}|${bridgeFailing}` !== before) {
+        onHealthChange()
+      }
+    }
+  }
+
+  async function transmitOnce(force: boolean) {
     pendingTimer = null
     if (!snapshot) {
       return
@@ -354,6 +371,8 @@ export function createPresenceController({
       try {
         await client.clearActivity()
         emit('info', 'discord.clear', { sink: 'local' })
+        // Why: Discord answered a SET_ACTIVITY, so local sends are working again.
+        localFailing = false
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         emit('error', 'discord.clear_failed', { reason: message })

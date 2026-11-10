@@ -318,7 +318,7 @@ function createDiscordClient({
       entry.resolve(payload.data ?? null);
     }
   }
-  async function connectOnce() {
+  async function connectOnce(gen) {
     closeNotified = false;
     closed = false;
     if (socket) {
@@ -328,6 +328,10 @@ function createDiscordClient({
       socket = null;
     }
     const answered = await connectToFirstAvailable(candidates());
+    if (gen !== generation) {
+      answered.socket.destroy();
+      throw new Error("discord client closed");
+    }
     const own = answered.socket;
     socket = own;
     socketPath = answered.path;
@@ -379,10 +383,18 @@ function createDiscordClient({
     if (connected) {
       return Promise.resolve();
     }
-    connecting ??= connectWithRetry().finally(() => {
-      connecting = null;
-    });
-    return connecting;
+    if (connecting?.gen !== generation) {
+      const entry = {
+        gen: generation,
+        promise: connectWithRetry().finally(() => {
+          if (connecting === entry) {
+            connecting = null;
+          }
+        })
+      };
+      connecting = entry;
+    }
+    return connecting.promise;
   }
   async function connectWithRetry() {
     assertPlausibleApplicationId(clientId);
@@ -394,7 +406,7 @@ function createDiscordClient({
         throw new Error("discord client closed");
       }
       try {
-        await connectOnce();
+        await connectOnce(gen);
         if (gen !== generation) {
           teardown();
           throw new Error("discord client closed");
@@ -1453,7 +1465,8 @@ function createPresenceController({
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (timer) => clearTimeout(timer),
   log = () => {},
-  diagnostics
+  diagnostics,
+  onHealthChange = () => {}
 }) {
   let currentSettings = settings;
   let snapshot = null;
@@ -1519,6 +1532,16 @@ function createPresenceController({
     }
   }
   async function transmit(force = false) {
+    const before = `${localFailing}|${bridgeFailing}`;
+    try {
+      await transmitOnce(force);
+    } finally {
+      if (`${localFailing}|${bridgeFailing}` !== before) {
+        onHealthChange();
+      }
+    }
+  }
+  async function transmitOnce(force) {
     pendingTimer = null;
     if (!snapshot) {
       return;
@@ -1598,6 +1621,7 @@ function createPresenceController({
       try {
         await client.clearActivity();
         emit("info", "discord.clear", { sink: "local" });
+        localFailing = false;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         emit("error", "discord.clear_failed", { reason: message });
@@ -2273,7 +2297,11 @@ async function activate(orca, deps = {}) {
       }),
       settings: nextSettings,
       diagnostics: diagnostics ?? undefined,
-      log: (message) => orca.log(message)
+      log: (message) => orca.log(message),
+      onHealthChange: () => {
+        publishStatusBar();
+        publishPanelSnapshot("debounced");
+      }
     });
   }
   let pushAgentRefresh = () => {};
