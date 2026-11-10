@@ -1365,7 +1365,7 @@ function buildActivity(snapshot, settings, nowMs) {
 
 // src/presence/log.ts
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import path2, { dirname } from "node:path";
 var LOG_PLUGIN_ID = "jondmarien.discord-presence";
 var LOG_DIR_NAME = "jondmarien-discord-presence";
 var LOG_FILE_NAME = "plugin.log";
@@ -1373,6 +1373,7 @@ var MAX_LOG_BYTES = 256 * 1024;
 var LOG_FILE_ENV = "ORCA_PRESENCE_LOG_FILE";
 var REDACTED_KEYS = new Set(["token", "bridgetoken", "authorization", "password", "secret"]);
 function resolveLogFilePath(env, { homedir, tmpdir, platform }) {
+  const { join } = platform === "win32" ? path2.win32 : path2.posix;
   const override = env[LOG_FILE_ENV];
   if (typeof override === "string" && override.trim()) {
     return override.trim();
