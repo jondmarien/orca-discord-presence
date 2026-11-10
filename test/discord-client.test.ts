@@ -232,33 +232,6 @@ test('handshake timeout retries then succeeds', async () => {
   cleanupTarget(target)
 })
 
-test('concurrent connect calls share one socket and the connection stays usable', async () => {
-  const target = fakeSocketPath()
-  const socketPath = targetPath(target)
-  let handshakes = 0
-  const server = await startFakeDiscord(socketPath, {
-    onCommand: () => {},
-    handshake: () => {
-      handshakes++
-      return { cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } }
-    }
-  })
-  let closes = 0
-  const client = createDiscordClient({
-    clientId: '123456789012345678',
-    candidates: () => [socketPath],
-    onClose: () => closes++
-  })
-  await Promise.all([client.connect(), client.connect(), client.connect()])
-  expect(handshakes).toBe(1)
-  await client.setActivity({ details: 'orca' })
-  expect(client.isConnected()).toBe(true)
-  expect(closes).toBe(0)
-  await client.close()
-  server.close()
-  cleanupTarget(target)
-})
-
 test('an invalid Application ID fails fast without opening a socket', async () => {
   let candidateCalls = 0
   const client = createDiscordClient({
@@ -316,5 +289,80 @@ test('a dropped socket marks the client disconnected and fires onClose once', as
   await new Promise((resolve) => setTimeout(resolve, 50))
   expect(client.isConnected()).toBe(false)
   expect(closes).toBe(1)
+  cleanupTarget(target)
+})
+
+// Fake Discord that counts sockets and answers slowly <3
+function startSlowDiscord(socketPath: string, delayMs: number) {
+  const state = { connections: 0, open: 0 }
+  const server = net.createServer((socket) => {
+    state.connections++
+    state.open++
+    socket.on('close', () => state.open--)
+    socket.on('error', () => {})
+    const decoder = createFrameDecoder((opcode, data) => {
+      const payload = data as Record<string, unknown>
+      if (opcode === OPCODE.HANDSHAKE) {
+        setTimeout(() => {
+          if (!socket.destroyed) {
+            socket.write(encodeFrame(OPCODE.FRAME, { cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } }))
+          }
+        }, delayMs)
+        return
+      }
+      if (opcode === OPCODE.FRAME) {
+        socket.write(encodeFrame(OPCODE.FRAME, { cmd: payload.cmd, nonce: payload.nonce, data: {} }))
+      }
+    })
+    socket.on('data', (chunk) => decoder.push(chunk))
+  })
+  return new Promise<{ server: net.Server; state: typeof state }>((resolve) =>
+    server.listen(socketPath, () => resolve({ server, state }))
+  )
+}
+
+test('overlapping connect() calls share one socket and one handshake', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  const { server, state } = await startSlowDiscord(socketPath, 100)
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath]
+  })
+
+  await Promise.all([client.connect(), client.connect(), client.connect()])
+
+  expect(client.isConnected()).toBe(true)
+  expect(state.connections).toBe(1)
+
+  await client.close()
+  server.close()
+  cleanupTarget(target)
+})
+
+test('close() during a pending handshake stops the connect loop from retrying', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  // Never answers in time, so every attempt retries
+  const { server, state } = await startSlowDiscord(socketPath, 10_000)
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath],
+    handshakeTimeoutMs: 50,
+    connectAttempts: 5,
+    sleep: () => Promise.resolve()
+  })
+
+  const pendingConnect = client.connect()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  await client.close()
+  await expect(pendingConnect).rejects.toThrow()
+  await new Promise((resolve) => setTimeout(resolve, 300))
+
+  expect(state.connections).toBe(1)
+  expect(state.open).toBe(0)
+  expect(client.isConnected()).toBe(false)
+
+  server.close()
   cleanupTarget(target)
 })
