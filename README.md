@@ -6,7 +6,7 @@
 
 **Workspace, branch, and agent state on your Discord profile. Every identifying field is opt-in.**
 
-[![Version](https://img.shields.io/badge/v1.0.2-blue.svg)](orca-plugin.json)
+[![Version](https://img.shields.io/badge/v1.0.3-blue.svg)](orca-plugin.json)
 [![Bun](https://img.shields.io/badge/Bun-1.4+-000000?logo=bun&logoColor=white)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -277,6 +277,7 @@ Roadmap and host API work: [ROADMAP.md](ROADMAP.md).
 | Show Status warns `secrets unavailable` | No OS keyring | The token is kept in plugin settings. Install a keyring (for example a secret service) to move it to secrets |
 | Panel shows "Open this panel in the Orca desktop app" | Panel opened outside the desktop app | Use the Orca desktop app |
 | Lags during agent activity | Discord rate limit | Expected: at most one update per 15 s |
+| Panel shows "Connected · updates failing" | Discord accepted the connection but does not answer updates | Fully quit Discord from the tray and restart it. To check each IPC pipe, run `node scripts/discord-probe.mjs` from a clone of this repo (Node 18+) |
 
 ## Docs
 
