@@ -8,9 +8,11 @@ import { createFrameDecoder, encodeFrame, OPCODE } from '../src/discord/ipc'
 
 type FakeTarget = string | { path: string; dir: string }
 
+let pipeCounter = 0
+
 function fakeSocketPath(): FakeTarget {
   if (process.platform === 'win32') {
-    return `\\\\?\\pipe\\orca-presence-test-${process.pid}-${Math.floor(performance.now())}`
+    return `\\\\?\\pipe\\orca-presence-test-${process.pid}-${++pipeCounter}`
   }
   const dir = mkdtempSync(path.join(os.tmpdir(), 'orca-presence-'))
   return { path: path.join(dir, 'sock'), dir }
@@ -225,6 +227,33 @@ test('handshake timeout retries then succeeds', async () => {
   await client.connect()
   expect(client.isConnected()).toBe(true)
   expect(sleeps).toEqual([3_000])
+  await client.close()
+  server.close()
+  cleanupTarget(target)
+})
+
+test('concurrent connect calls share one socket and the connection stays usable', async () => {
+  const target = fakeSocketPath()
+  const socketPath = targetPath(target)
+  let handshakes = 0
+  const server = await startFakeDiscord(socketPath, {
+    onCommand: () => {},
+    handshake: () => {
+      handshakes++
+      return { cmd: 'DISPATCH', evt: 'READY', data: { v: 1 } }
+    }
+  })
+  let closes = 0
+  const client = createDiscordClient({
+    clientId: '123456789012345678',
+    candidates: () => [socketPath],
+    onClose: () => closes++
+  })
+  await Promise.all([client.connect(), client.connect(), client.connect()])
+  expect(handshakes).toBe(1)
+  await client.setActivity({ details: 'orca' })
+  expect(client.isConnected()).toBe(true)
+  expect(closes).toBe(0)
   await client.close()
   server.close()
   cleanupTarget(target)

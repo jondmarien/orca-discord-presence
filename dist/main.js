@@ -359,10 +359,17 @@ function createDiscordClient({
       socket?.write(encodeFrame(OPCODE.HANDSHAKE, { v: 1, client_id: clientId }));
     });
   }
-  async function connect() {
+  let connecting = null;
+  function connect() {
     if (connected) {
-      return;
+      return Promise.resolve();
     }
+    connecting ??= connectWithRetry().finally(() => {
+      connecting = null;
+    });
+    return connecting;
+  }
+  async function connectWithRetry() {
     assertPlausibleApplicationId(clientId);
     let lastError;
     const attempts = Math.max(1, connectAttempts);
@@ -1431,6 +1438,7 @@ function createPresenceController({
   let stopped = false;
   let holdClear = false;
   let bridgeFailing = false;
+  let localFailing = false;
   function emit(level, event, detail) {
     if (diagnostics) {
       diagnostics.line(level, event, detail);
@@ -1506,10 +1514,12 @@ function createPresenceController({
         lastSentAt = now();
         lastSink = "local";
         bridgeFailing = false;
+        localFailing = false;
         cleared = false;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         emit("error", "discord.set_activity_failed", { reason: message });
+        localFailing = true;
         lastSentSerialized = null;
       }
       return;
@@ -1534,6 +1544,7 @@ function createPresenceController({
       lastSentAt = now();
       lastSink = "bridge";
       bridgeFailing = false;
+      localFailing = false;
       lastBridgeUrl = target.url;
       lastBridgeToken = target.token;
       cleared = false;
@@ -1687,7 +1698,8 @@ function createPresenceController({
       lastActivity,
       logFile: diagnostics?.filePath ?? null,
       heldClear: holdClear,
-      bridgeFailing
+      bridgeFailing,
+      localFailing
     }),
     async stop() {
       if (stopped) {
@@ -1784,6 +1796,7 @@ function buildPresencePanelSnapshot(input) {
     status: {
       enabled: status.enabled,
       connected: status.connected,
+      localFailing: status.localFailing,
       client: status.client ? { id: status.client.id, label: status.client.label } : null,
       clients: status.clients.map(({ id, label }) => ({ id, label })),
       clientFallback: status.clientFallback,
@@ -1881,7 +1894,7 @@ function renderStatusBar({
       visible
     };
   }
-  const notConnected = !status.connected && (status.sink !== "bridge" || status.bridgeFailing);
+  const notConnected = status.localFailing || !status.connected && (status.sink !== "bridge" || status.bridgeFailing);
   const agent = settings.showAgentState && agentState && agentState !== "idle" ? AGENT_TEXT[agentState] : undefined;
   const count = settings.showAgentCount && agentCount > 1 ? ` · ${agentCount}` : "";
   const parts = [status.lastActivity?.details];
@@ -2009,7 +2022,7 @@ function isState(value) {
 }
 
 // src/version.ts
-var PLUGIN_VERSION = "1.0.2";
+var PLUGIN_VERSION = "1.0.3";
 
 // src/main.ts
 var HEARTBEAT_MS = 90000;
@@ -2520,8 +2533,9 @@ async function activate(orca, deps = {}) {
     lastPanelRefreshAt = clock;
     touchSession();
     await syncAgentsFromList();
-    await redetect(true);
-    await refresh(undefined, { force: true });
+    redetect(true).then(() => refresh(undefined, { force: true })).catch((error) => diagnostics?.line("error", "panel.refresh_failed", {
+      reason: error instanceof Error ? error.message : String(error)
+    }));
     return currentPanelSnapshot();
   });
   panels?.handle("presence.run", async (input) => {

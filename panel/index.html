@@ -121,6 +121,9 @@ body {
 #status-bar.is-connected .dot {
   background: var(--c-live);
 }
+#status-bar.is-failing .dot {
+  background: var(--c-waiting);
+}
 #status-bar.is-bridge .dot {
   background: var(--c-working);
 }
@@ -797,7 +800,7 @@ function barClass(snapshot) {
   var kind = 'is-waiting'
   if (snapshot && snapshot.status) {
     if (!snapshot.fields || snapshot.fields.enabled === false) kind = 'is-disabled'
-    else if (snapshot.status.connected) kind = 'is-connected'
+    else if (snapshot.status.connected) kind = snapshot.status.localFailing ? 'is-failing' : 'is-connected'
     else if (snapshot.status.sink === 'bridge') kind = 'is-bridge'
     else if (snapshot.status.enabled) kind = 'is-down'
     else kind = 'is-disabled'
@@ -808,7 +811,7 @@ function barClass(snapshot) {
 function indicatorLabel(snapshot) {
   if (!snapshot || !snapshot.status) return 'Waiting for worker snapshot'
   if (snapshot.fields && snapshot.fields.enabled === false) return 'Disabled'
-  if (snapshot.status.connected) return 'Connected · local'
+  if (snapshot.status.connected) return snapshot.status.localFailing ? 'Connected · updates failing' : 'Connected · local'
   if (snapshot.status.sink === 'bridge') return 'Publishing · bridge'
   if (snapshot.status.enabled) return 'Disconnected'
   return 'Disabled'

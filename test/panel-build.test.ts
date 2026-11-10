@@ -241,6 +241,11 @@ test('full view renders card, tiles and agent rows', () => {
   expect(byId.get('tile-sink')?.textContent).toBe('Local')
   expect(byId.get('agents-list')?.children.length).toBe(3)
   expect(byId.get('indicator-label')?.textContent).toBe('Connected · local')
+  const failing = fullSnapshot([])
+  ;(failing.status as Record<string, unknown>).localFailing = true
+  hook?.render(failing)
+  expect(byId.get('indicator-label')?.textContent).toBe('Connected · updates failing')
+  expect(byId.get('status-bar')?.getAttribute('class')).toContain('is-failing')
   // Unknown asset keys never become an image path.
   const odd = fullSnapshot([])
   odd.activityCard.smallImageKey = '../../etc/passwd'

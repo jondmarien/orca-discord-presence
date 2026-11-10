@@ -27,6 +27,7 @@ function statusWith(overrides: Partial<PresenceStatus> = {}): PresenceStatus {
     logFile: '/tmp/plugin.log',
     heldClear: false,
     bridgeFailing: false,
+    localFailing: false,
     ...overrides
   }
 }

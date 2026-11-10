@@ -748,6 +748,7 @@ test('a Clear hold survives a redetect rebuild; the next agent event releases it
     scans.push([discord, vesktop])
     // Panel refresh re-detects, then runs the same forced refresh as the heartbeat.
     await run.panelHandlers.get('presence.refresh')?.({})
+    await wait(100)
     expect(fake.created.length).toBe(clientsBefore + 1)
     expect(fake.sets).toEqual([])
     await run.eventHandlers.get('agent.status.changed')?.({
@@ -823,7 +824,10 @@ test('a settings re-read does not wipe a secrets-held token', async () => {
  * Activate against a fake host that offers `panels`. Captures the registered
  * panel handlers, `panels.post` calls, and `settings.set` writes.
  */
-async function activateWithPanels(settings: Record<string, unknown> = {}) {
+async function activateWithPanels(
+  settings: Record<string, unknown> = {},
+  deps?: Parameters<typeof import('../src/main').default>[1]
+) {
   const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-panel-'))
   const previous = process.env.ORCA_PRESENCE_LOG_FILE
   process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
@@ -863,7 +867,7 @@ async function activateWithPanels(settings: Record<string, unknown> = {}) {
       post: (name, payload) => void posts.push({ name, payload })
     }
   }
-  await activate(orca)
+  await activate(orca, deps)
   const snapshot = async () => (await panelHandlers.get('presence.snapshot')?.(undefined)) as PresencePanelSnapshot
   const run = async (command: unknown) =>
     (await panelHandlers.get('presence.run')?.({ command })) as { ok: boolean; message?: string }
@@ -1135,12 +1139,52 @@ test('presence.refresh re-syncs agents and returns a snapshot; a second call wit
     run.calls.length = 0
     const first = (await refresh?.({})) as PresencePanelSnapshot
     expect(run.calls.filter((m) => m === 'agents.list')).toHaveLength(1)
-    expect(run.calls).toContain('workspace.readContext')
     expect(first.agents).toHaveLength(1)
+    // The pipe scan and forced transmit run after the handler returns.
+    for (let i = 0; i < 200 && !run.calls.includes('workspace.readContext'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(run.calls).toContain('workspace.readContext')
     run.calls.length = 0
     const second = (await refresh?.({})) as PresencePanelSnapshot
     expect(run.calls).toEqual([])
     expect(second.agents).toHaveLength(1)
+  } finally {
+    await run.finish()
+  }
+})
+
+test('presence.refresh returns before a stalled Discord answers SET_ACTIVITY', async () => {
+  let sends = 0
+  const run = await activateWithPanels(
+    {},
+    {
+      detect: async () => [],
+      createClient: () => ({
+        connect: async () => {},
+        isConnected: () => true,
+        connectedPath: () => null,
+        setActivity: () => {
+          sends++
+          return new Promise(() => {})
+        },
+        clearActivity: async () => null,
+        close: async () => {},
+        destroySocketForTest: () => {}
+      })
+    }
+  )
+  try {
+    const before = sends
+    const result = await Promise.race([
+      run.panelHandlers.get('presence.refresh')?.({}),
+      new Promise((resolve) => setTimeout(() => resolve('stalled'), 1_000))
+    ])
+    expect(result).not.toBe('stalled')
+    for (let i = 0; i < 200 && sends === before; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(sends).toBeGreaterThan(before)
   } finally {
     await run.finish()
   }

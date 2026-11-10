@@ -116,6 +116,8 @@ export type PresenceStatus = {
   heldClear: boolean
   /** True when the latest companion publish failed, so a `bridge` sink is not live. */
   bridgeFailing: boolean
+  /** True when the latest local SET_ACTIVITY failed, so a handshake alone is not a live connection. */
+  localFailing: boolean
   /**
    * Where the bridge token lives. Filled in by the worker, which owns token
    * storage; the controller itself never sees where it came from. Never the token.
@@ -205,6 +207,7 @@ export function createPresenceController({
   let stopped = false
   let holdClear = false
   let bridgeFailing = false
+  let localFailing = false
 
   function emit(
     level: 'debug' | 'info' | 'warn' | 'error',
@@ -296,10 +299,12 @@ export function createPresenceController({
         lastSentAt = now()
         lastSink = 'local'
         bridgeFailing = false
+        localFailing = false
         cleared = false
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         emit('error', 'discord.set_activity_failed', { reason: message })
+        localFailing = true
         lastSentSerialized = null
       }
       return
@@ -324,6 +329,7 @@ export function createPresenceController({
       lastSentAt = now()
       lastSink = 'bridge'
       bridgeFailing = false
+      localFailing = false
       lastBridgeUrl = target.url
       lastBridgeToken = target.token
       cleared = false
@@ -486,7 +492,8 @@ export function createPresenceController({
       lastActivity,
       logFile: diagnostics?.filePath ?? null,
       heldClear: holdClear,
-      bridgeFailing
+      bridgeFailing,
+      localFailing
     }),
     async stop() {
       if (stopped) {

@@ -89,6 +89,13 @@ test.each<[string, Input, string, string, string]>([
     'Discord',
     'warning',
     'warning'
+  ],
+  [
+    'local sends failing',
+    { agentState: 'working', status: { connected: true, sink: 'local', localFailing: true } },
+    'Discord',
+    'warning',
+    'warning'
   ]
 ])('%s', (_name, input, text, tone, icon) => {
   const patch = render(input)

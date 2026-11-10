@@ -319,10 +319,21 @@ export function createDiscordClient({
     })
   }
 
-  async function connect() {
+  // connectOnce() owns the shared socket/handshake state, so overlapping
+  // connects would clobber each other's sockets. Callers share one attempt.
+  let connecting: Promise<void> | null = null
+
+  function connect() {
     if (connected) {
-      return
+      return Promise.resolve()
     }
+    connecting ??= connectWithRetry().finally(() => {
+      connecting = null
+    })
+    return connecting
+  }
+
+  async function connectWithRetry() {
     assertPlausibleApplicationId(clientId)
     let lastError: Error | undefined
     const attempts = Math.max(1, connectAttempts)

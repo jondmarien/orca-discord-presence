@@ -114,6 +114,23 @@ test('forceTransmit re-sends an unchanged activity', async () => {
   expect(activities[1] && 'details' in activities[1] ? activities[1].details : null).toBe('repo')
 })
 
+test('a failed local send sets localFailing until the next success', async () => {
+  const { controller, client } = harness()
+  const snapshot = { displayName: 'repo', agentState: 'working', terminalCount: 1 }
+  await controller.update(snapshot)
+  expect(controller.status().localFailing).toBe(false)
+  const send = client.setActivity
+  client.setActivity = async () => {
+    throw new Error('discord SET_ACTIVITY timed out')
+  }
+  await controller.forceTransmit()
+  expect(controller.status().connected).toBe(true)
+  expect(controller.status().localFailing).toBe(true)
+  client.setActivity = send
+  await controller.forceTransmit()
+  expect(controller.status().localFailing).toBe(false)
+})
+
 test('skip-identical cannot strand Discord after another client overwrote activity', async () => {
   const { controller, activities, advance } = harness()
   const snapshot = { displayName: 'repo', agentState: 'working', terminalCount: 1 }
