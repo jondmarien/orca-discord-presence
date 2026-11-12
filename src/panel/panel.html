@@ -134,14 +134,17 @@
         <button type="button" class="eye-btn" id="eye-actions" data-hide="actions" aria-pressed="false" aria-label="Hide actions" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
 
-      <details class="logs" id="logs-box">
-        <summary><span id="logs-summary">Logs</span> <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></summary>
+      <div class="logs-box" id="logs-box">
+        <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <details class="logs">
+        <summary id="logs-summary">Logs</summary>
         <div class="log-toolbar">
           <button type="button" class="btn" id="btn-log-clear">Clear view</button>
           <button type="button" class="btn" id="btn-log-copy">Copy</button>
         </div>
         <pre class="log" id="log-view">No log lines yet. Click Status to generate some.</pre>
       </details>
+      </div>
       </div>
     </div>
 

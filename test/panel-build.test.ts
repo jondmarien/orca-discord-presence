@@ -241,7 +241,8 @@ function fullSnapshot(timeline: Array<string[] | null>) {
  */
 function mountPanel(
   hostCall?: (name: string, input: Record<string, unknown>) => Promise<unknown>,
-  pluginRequest?: (name: string, input: unknown, opts: unknown) => Promise<unknown>
+  pluginRequest?: (name: string, input: unknown, opts: unknown) => Promise<unknown>,
+  options: { timers?: boolean } = {}
 ) {
   const html = buildPanelHtml()
   const { byId, document } = makeDom(html)
@@ -251,7 +252,8 @@ function mountPanel(
     host: { has: () => false, ...(hostCall ? { call: hostCall } : {}) },
     on: (name: string, fn: (payload: unknown) => void) => void hostEvents.set(name, fn)
   }
-  const sandbox = vm.createContext({ document, navigator: {}, orca, setInterval: () => 0 })
+  const timers = options.timers ? { setTimeout, clearTimeout } : {}
+  const sandbox = vm.createContext({ document, navigator: {}, orca, setInterval: () => 0, ...timers })
   vm.runInContext('globalThis.window = globalThis', sandbox)
   vm.runInContext(scriptOf(html), sandbox)
   const hook = (sandbox as { __presencePanel?: { render(s: unknown): void } }).__presencePanel
@@ -829,4 +831,71 @@ test('theme event sets data-theme and is remembered for the next load', async ()
   late.hostEvents.get('theme')?.('light')
   await settle()
   expect(late.root.getAttribute('data-theme')).toBe('light')
+})
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('the echo of our own settings write never undoes a newer click', async () => {
+  const calls: string[] = []
+  const { byId, hook } = mountPanel(hiddenHost(undefined, calls), undefined, { timers: true })
+  await settle()
+  hook?.render({ ...fullSnapshot([]), hidden: [] })
+  byId.get('eye-strip')?.dispatch('click')
+  await wait(450)
+  expect(calls).toContain(JSON.stringify(['settings.set', { key: 'hiddenPanels', value: 'strip' }]))
+  // A snapshot from before the write landed still says nothing is hidden.
+  hook?.render({ ...fullSnapshot([]), hidden: [] })
+  expect(userHidden(byId, 'strip')).toBe(true)
+  byId.get('eye-tiles')?.dispatch('click')
+  // The echo of the first write arrives while the second is pending.
+  hook?.render({ ...fullSnapshot([]), hidden: ['strip'] })
+  expect(userHidden(byId, 'tiles')).toBe(true)
+  await wait(450)
+  expect(calls.at(-1)).toBe(JSON.stringify(['settings.set', { key: 'hiddenPanels', value: 'strip,tiles' }]))
+  const stores = calls.filter((c) => c.startsWith('["storage.set",{"key":"panelHidden"'))
+  expect(stores.at(-1)).toBe(JSON.stringify(['storage.set', { key: 'panelHidden', value: ['strip', 'tiles'] }]))
+  hook?.render({ ...fullSnapshot([]), hidden: ['strip', 'tiles'] })
+  expect(userHidden(byId, 'tiles')).toBe(true)
+  // Once the echo is in, a Settings page edit is adopted again.
+  hook?.render({ ...fullSnapshot([]), hidden: ['logs'] })
+  expect(userHidden(byId, 'logs')).toBe(true)
+  expect(userHidden(byId, 'strip')).toBe(false)
+})
+
+test('a rejected settings mirror does not block later Settings page edits', async () => {
+  const { byId, hook } = mountPanel(
+    async (name) => {
+      if (name === 'settings.set') throw new Error('nope')
+      return undefined
+    },
+    undefined,
+    { timers: true }
+  )
+  await settle()
+  hook?.render({ ...fullSnapshot([]), hidden: [] })
+  byId.get('eye-strip')?.dispatch('click')
+  await wait(450)
+  hook?.render({ ...fullSnapshot([]), hidden: ['logs'] })
+  expect(userHidden(byId, 'logs')).toBe(true)
+})
+
+test('logs eye sits outside <summary>', () => {
+  const html = buildPanelHtml()
+  const summary = html.match(/<summary[\s\S]*?<\/summary>/)?.[0] ?? ''
+  expect(summary).not.toContain('<button')
+  expect(html).toContain('id="eye-logs"')
+})
+
+test('neutral fills follow the active theme; light text mixes stay readable', () => {
+  const css = stylesOf(buildPanelHtml())
+  expect(hasRule(css, ':root', '--c-none: color-mix(in srgb, var(--fg) 14%, var(--card))')).toBe(true)
+  expect(hasRule(css, ':root', '--track: color-mix(in srgb, var(--fg) 30%, var(--card))')).toBe(true)
+  // The light blocks (the ones setting --ink) leave the neutral fills derived.
+  const lightBodies = [...css.matchAll(/\{([^{}]*--ink:\s*40%[^{}]*)\}/g)].map((m) => m[1])
+  expect(lightBodies.length).toBe(2)
+  for (const body of lightBodies) expect(body).not.toContain('--c-none')
+  expect(hasRule(css, '.chip', 'color: color-mix(in srgb, var(--chip, var(--c-idle)) var(--ink), var(--fg))')).toBe(true)
+  expect(hasRule(css, '.hero .tim', 'color: color-mix(in srgb, rgb(var(--glow)) var(--ink), var(--fg))')).toBe(true)
+  // Narrow minimal view: the state word fits.
+  expect(hasRule(css, '.hero .big', 'font-size: 22px')).toBe(true)
 })

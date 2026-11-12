@@ -5,7 +5,7 @@
   --c-blocked: #e81010;
   --c-completed: #23a55a;
   --c-idle: #9aa3ad;
-  --c-none: #262626;
+  --c-none: color-mix(in srgb, var(--fg) 14%, var(--card));
   --c-live: #23a55a;
   --bg: var(--orca-background, #111214);
   --card: var(--orca-card, #18191b);
@@ -13,34 +13,34 @@
   --muted-fg: var(--orca-muted-foreground, #9a9a9a);
   --fg: var(--orca-foreground, #ececec);
   --muted: var(--orca-muted, #1d1e21);
-  --track: #45464b;
+  --track: color-mix(in srgb, var(--fg) 30%, var(--card));
+  /* How much state hue coloured text keeps; the rest is foreground. */
+  --ink: 65%;
 }
 /* Light fallbacks for hosts that do not inject Orca variables. The theme
    event sets data-theme; without it the OS preference decides. */
 :root[data-theme='light'] {
   color-scheme: light;
-  --c-none: #e4e4e7;
   --bg: var(--orca-background, #f5f5f5);
   --card: var(--orca-card, #ffffff);
   --border: var(--orca-border, #e0e0e0);
   --fg: var(--orca-foreground, #1a1a1a);
   --muted-fg: var(--orca-muted-foreground, #666);
   --muted: var(--orca-muted, #efeff1);
-  --track: #c9c9ce;
+  --ink: 40%;
 }
 :root[data-theme='dark'] {
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) {
-    --c-none: #e4e4e7;
     --bg: var(--orca-background, #f5f5f5);
     --card: var(--orca-card, #ffffff);
     --border: var(--orca-border, #e0e0e0);
     --fg: var(--orca-foreground, #1a1a1a);
     --muted-fg: var(--orca-muted-foreground, #666);
     --muted: var(--orca-muted, #efeff1);
-    --track: #c9c9ce;
+    --ink: 40%;
   }
 }
 * {
@@ -451,7 +451,7 @@ body {
 }
 .chip {
   background: color-mix(in srgb, var(--chip, var(--c-idle)) 15%, transparent);
-  color: color-mix(in srgb, var(--chip, var(--c-idle)) 70%, var(--fg));
+  color: color-mix(in srgb, var(--chip, var(--c-idle)) var(--ink), var(--fg));
 }
 .chip[data-state='working'] {
   --chip: var(--c-working);
@@ -536,7 +536,7 @@ body {
 }
 .hero .live {
   font-size: 12px;
-  color: color-mix(in srgb, rgb(var(--glow)) 60%, var(--fg));
+  color: color-mix(in srgb, rgb(var(--glow)) var(--ink), var(--fg));
 }
 .hero .big {
   margin-top: 14px;
@@ -546,7 +546,7 @@ body {
 .hero .tim {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  color: color-mix(in srgb, rgb(var(--glow)) 60%, var(--fg));
+  color: color-mix(in srgb, rgb(var(--glow)) var(--ink), var(--fg));
 }
 .hero .quote {
   max-width: 170px;
@@ -649,6 +649,14 @@ body {
   display: none;
 }
 
+.logs-box {
+  position: relative;
+}
+.logs-box > .eye-btn {
+  position: absolute;
+  top: -3px;
+  right: 0;
+}
 details.logs summary {
   cursor: pointer;
   color: var(--muted-fg);
@@ -731,6 +739,10 @@ pre.log {
   .hero {
     padding-bottom: 80px;
   }
+  .hero .big {
+    font-size: 22px;
+    overflow-wrap: anywhere;
+  }
   .hero .quote {
     max-width: 100%;
   }
@@ -767,6 +779,10 @@ pre.log {
     .hero {
       padding-bottom: 80px;
     }
+    .hero .big {
+      font-size: 22px;
+      overflow-wrap: anywhere;
+    }
     .hero .quote {
       max-width: 100%;
     }
@@ -789,6 +805,14 @@ pre.log {
   }
 }
 @supports not (color: color-mix(in srgb, red 50%, blue)) {
+  :root {
+    --c-none: #262626;
+    --track: #45464b;
+  }
+  :root[data-theme='light'] {
+    --c-none: #e4e4e7;
+    --track: #c9c9ce;
+  }
   .hero {
     background:
       radial-gradient(120% 90% at 85% 15%, rgba(var(--glow), 0.45), rgba(var(--glow), 0) 60%),

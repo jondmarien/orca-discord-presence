@@ -554,13 +554,16 @@ function chooseView(next) {
 // Hidden sections: storage `panelHidden` is the runtime source; the
 // `hiddenPanels` setting mirrors it for the Settings page and arrives in the
 // snapshot as `hidden`. Storage wins on load whichever answer lands first; a
-// later change to the setting (a Settings page edit) is adopted. Junk in
-// either source is ignored. A separate class keeps this apart from the
+// later change to the setting (a Settings page edit) is adopted. Our own
+// mirror write echoes back a few snapshots later; until it does, snapshots
+// carry an older value and must not undo newer clicks. Junk in either source
+// is ignored. A separate class keeps this apart from the
 // `hidden` class that views and the client card toggle.
 var hiddenIds = []
 var hiddenFromStorage = false
 var settingsHiddenSig = null
 var settingsTimer = null
+var awaitingEcho = null
 
 function normalizeHidden(list) {
   if (!Array.isArray(list)) return null
@@ -571,7 +574,7 @@ function normalizeHidden(list) {
   })
 }
 
-function callHost(name, input) {
+function callHost(name, input, onError) {
   var host = orca && orca.host
   if (!host || typeof host.call !== 'function') return
   Promise.resolve()
@@ -580,6 +583,7 @@ function callHost(name, input) {
     })
     .catch(function () {
       // Why: hiding still applies for this session when it cannot be saved.
+      if (onError) onError()
     })
 }
 
@@ -629,7 +633,11 @@ function setHidden(list) {
   callHost('storage.set', { key: HIDDEN_KEY, value: hiddenIds.slice() })
   var mirror = function () {
     settingsTimer = null
-    callHost('settings.set', { key: HIDDEN_SETTING, value: hiddenIds.join(',') })
+    var value = hiddenIds.join(',')
+    awaitingEcho = value
+    callHost('settings.set', { key: HIDDEN_SETTING, value: value }, function () {
+      if (awaitingEcho === value) awaitingEcho = null
+    })
   }
   if (typeof setTimeout !== 'function') return mirror()
   if (settingsTimer) clearTimeout(settingsTimer)
@@ -659,6 +667,13 @@ function syncHiddenSetting(snapshot) {
   var list = normalizeHidden(snapshot.hidden)
   if (!list) return
   var signature = list.join(',')
+  if (settingsTimer || awaitingEcho !== null) {
+    if (signature === awaitingEcho) {
+      awaitingEcho = null
+      settingsHiddenSig = signature
+    }
+    return
+  }
   if (signature === settingsHiddenSig) return
   var first = settingsHiddenSig === null
   settingsHiddenSig = signature
@@ -672,9 +687,7 @@ function syncHiddenSetting(snapshot) {
 
 function wireHidden() {
   PANEL_SECTIONS.forEach(function (s) {
-    $('eye-' + s[0]).addEventListener('click', function (event) {
-      // Why: the logs eye sits in <summary>; a click must not fold the logs.
-      if (event && event.preventDefault) event.preventDefault()
+    $('eye-' + s[0]).addEventListener('click', function () {
       setHidden(hiddenIds.concat(s[0]))
     })
   })

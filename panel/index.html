@@ -20,7 +20,7 @@
   --c-blocked: #e81010;
   --c-completed: #23a55a;
   --c-idle: #9aa3ad;
-  --c-none: #262626;
+  --c-none: color-mix(in srgb, var(--fg) 14%, var(--card));
   --c-live: #23a55a;
   --bg: var(--orca-background, #111214);
   --card: var(--orca-card, #18191b);
@@ -28,34 +28,34 @@
   --muted-fg: var(--orca-muted-foreground, #9a9a9a);
   --fg: var(--orca-foreground, #ececec);
   --muted: var(--orca-muted, #1d1e21);
-  --track: #45464b;
+  --track: color-mix(in srgb, var(--fg) 30%, var(--card));
+  /* How much state hue coloured text keeps; the rest is foreground. */
+  --ink: 65%;
 }
 /* Light fallbacks for hosts that do not inject Orca variables. The theme
    event sets data-theme; without it the OS preference decides. */
 :root[data-theme='light'] {
   color-scheme: light;
-  --c-none: #e4e4e7;
   --bg: var(--orca-background, #f5f5f5);
   --card: var(--orca-card, #ffffff);
   --border: var(--orca-border, #e0e0e0);
   --fg: var(--orca-foreground, #1a1a1a);
   --muted-fg: var(--orca-muted-foreground, #666);
   --muted: var(--orca-muted, #efeff1);
-  --track: #c9c9ce;
+  --ink: 40%;
 }
 :root[data-theme='dark'] {
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme='dark']) {
-    --c-none: #e4e4e7;
     --bg: var(--orca-background, #f5f5f5);
     --card: var(--orca-card, #ffffff);
     --border: var(--orca-border, #e0e0e0);
     --fg: var(--orca-foreground, #1a1a1a);
     --muted-fg: var(--orca-muted-foreground, #666);
     --muted: var(--orca-muted, #efeff1);
-    --track: #c9c9ce;
+    --ink: 40%;
   }
 }
 * {
@@ -466,7 +466,7 @@ body {
 }
 .chip {
   background: color-mix(in srgb, var(--chip, var(--c-idle)) 15%, transparent);
-  color: color-mix(in srgb, var(--chip, var(--c-idle)) 70%, var(--fg));
+  color: color-mix(in srgb, var(--chip, var(--c-idle)) var(--ink), var(--fg));
 }
 .chip[data-state='working'] {
   --chip: var(--c-working);
@@ -551,7 +551,7 @@ body {
 }
 .hero .live {
   font-size: 12px;
-  color: color-mix(in srgb, rgb(var(--glow)) 60%, var(--fg));
+  color: color-mix(in srgb, rgb(var(--glow)) var(--ink), var(--fg));
 }
 .hero .big {
   margin-top: 14px;
@@ -561,7 +561,7 @@ body {
 .hero .tim {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  color: color-mix(in srgb, rgb(var(--glow)) 60%, var(--fg));
+  color: color-mix(in srgb, rgb(var(--glow)) var(--ink), var(--fg));
 }
 .hero .quote {
   max-width: 170px;
@@ -664,6 +664,14 @@ body {
   display: none;
 }
 
+.logs-box {
+  position: relative;
+}
+.logs-box > .eye-btn {
+  position: absolute;
+  top: -3px;
+  right: 0;
+}
 details.logs summary {
   cursor: pointer;
   color: var(--muted-fg);
@@ -746,6 +754,10 @@ pre.log {
   .hero {
     padding-bottom: 80px;
   }
+  .hero .big {
+    font-size: 22px;
+    overflow-wrap: anywhere;
+  }
   .hero .quote {
     max-width: 100%;
   }
@@ -782,6 +794,10 @@ pre.log {
     .hero {
       padding-bottom: 80px;
     }
+    .hero .big {
+      font-size: 22px;
+      overflow-wrap: anywhere;
+    }
     .hero .quote {
       max-width: 100%;
     }
@@ -804,6 +820,14 @@ pre.log {
   }
 }
 @supports not (color: color-mix(in srgb, red 50%, blue)) {
+  :root {
+    --c-none: #262626;
+    --track: #45464b;
+  }
+  :root[data-theme='light'] {
+    --c-none: #e4e4e7;
+    --track: #c9c9ce;
+  }
   .hero {
     background:
       radial-gradient(120% 90% at 85% 15%, rgba(var(--glow), 0.45), rgba(var(--glow), 0) 60%),
@@ -938,14 +962,17 @@ pre.log {
         <button type="button" class="eye-btn" id="eye-actions" data-hide="actions" aria-pressed="false" aria-label="Hide actions" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
 
-      <details class="logs" id="logs-box">
-        <summary><span id="logs-summary">Logs</span> <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></summary>
+      <div class="logs-box" id="logs-box">
+        <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <details class="logs">
+        <summary id="logs-summary">Logs</summary>
         <div class="log-toolbar">
           <button type="button" class="btn" id="btn-log-clear">Clear view</button>
           <button type="button" class="btn" id="btn-log-copy">Copy</button>
         </div>
         <pre class="log" id="log-view">No log lines yet. Click Status to generate some.</pre>
       </details>
+      </div>
       </div>
     </div>
 
@@ -1508,13 +1535,16 @@ function chooseView(next) {
 // Hidden sections: storage `panelHidden` is the runtime source; the
 // `hiddenPanels` setting mirrors it for the Settings page and arrives in the
 // snapshot as `hidden`. Storage wins on load whichever answer lands first; a
-// later change to the setting (a Settings page edit) is adopted. Junk in
-// either source is ignored. A separate class keeps this apart from the
+// later change to the setting (a Settings page edit) is adopted. Our own
+// mirror write echoes back a few snapshots later; until it does, snapshots
+// carry an older value and must not undo newer clicks. Junk in either source
+// is ignored. A separate class keeps this apart from the
 // `hidden` class that views and the client card toggle.
 var hiddenIds = []
 var hiddenFromStorage = false
 var settingsHiddenSig = null
 var settingsTimer = null
+var awaitingEcho = null
 
 function normalizeHidden(list) {
   if (!Array.isArray(list)) return null
@@ -1525,7 +1555,7 @@ function normalizeHidden(list) {
   })
 }
 
-function callHost(name, input) {
+function callHost(name, input, onError) {
   var host = orca && orca.host
   if (!host || typeof host.call !== 'function') return
   Promise.resolve()
@@ -1534,6 +1564,7 @@ function callHost(name, input) {
     })
     .catch(function () {
       // Why: hiding still applies for this session when it cannot be saved.
+      if (onError) onError()
     })
 }
 
@@ -1583,7 +1614,11 @@ function setHidden(list) {
   callHost('storage.set', { key: HIDDEN_KEY, value: hiddenIds.slice() })
   var mirror = function () {
     settingsTimer = null
-    callHost('settings.set', { key: HIDDEN_SETTING, value: hiddenIds.join(',') })
+    var value = hiddenIds.join(',')
+    awaitingEcho = value
+    callHost('settings.set', { key: HIDDEN_SETTING, value: value }, function () {
+      if (awaitingEcho === value) awaitingEcho = null
+    })
   }
   if (typeof setTimeout !== 'function') return mirror()
   if (settingsTimer) clearTimeout(settingsTimer)
@@ -1613,6 +1648,13 @@ function syncHiddenSetting(snapshot) {
   var list = normalizeHidden(snapshot.hidden)
   if (!list) return
   var signature = list.join(',')
+  if (settingsTimer || awaitingEcho !== null) {
+    if (signature === awaitingEcho) {
+      awaitingEcho = null
+      settingsHiddenSig = signature
+    }
+    return
+  }
   if (signature === settingsHiddenSig) return
   var first = settingsHiddenSig === null
   settingsHiddenSig = signature
@@ -1626,9 +1668,7 @@ function syncHiddenSetting(snapshot) {
 
 function wireHidden() {
   PANEL_SECTIONS.forEach(function (s) {
-    $('eye-' + s[0]).addEventListener('click', function (event) {
-      // Why: the logs eye sits in <summary>; a click must not fold the logs.
-      if (event && event.preventDefault) event.preventDefault()
+    $('eye-' + s[0]).addEventListener('click', function () {
       setHidden(hiddenIds.concat(s[0]))
     })
   })
