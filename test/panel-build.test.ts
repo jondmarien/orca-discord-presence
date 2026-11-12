@@ -137,6 +137,48 @@ test('built panel script runs against a frozen window.orca', () => {
   expect(byId.get('app')?.className.includes('hidden')).toBe(true)
 })
 
+function stylesOf(html: string): string {
+  return (html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? '').replace(/\/\*[\s\S]*?\*\//g, '')
+}
+
+/** True when some rule whose selector list contains `selector` declares `decl`. */
+function hasRule(css: string, selector: string, decl: string): boolean {
+  const norm = (s: string) => s.replace(/\s+/g, '')
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].some(
+    ([, selectors, body]) =>
+      selectors.split(',').some((s) => norm(s) === norm(selector)) && norm(body).includes(norm(decl))
+  )
+}
+
+test('narrow layout: header, legend and action rows wrap; flex children may shrink', () => {
+  const css = stylesOf(buildPanelHtml())
+  expect(hasRule(css, '#status-bar', 'flex-wrap: wrap')).toBe(true)
+  expect(hasRule(css, '.leg', 'flex-wrap: wrap')).toBe(true)
+  expect(hasRule(css, '.dtext', 'min-width: 0')).toBe(true)
+  expect(hasRule(css, '.agent-label', 'min-width: 0')).toBe(true)
+  expect(hasRule(css, '.row > *', 'min-width: 0')).toBe(true)
+  // Only the detail control scrolls, inside itself.
+  expect(hasRule(css, '.seg', 'overflow-x: auto')).toBe(true)
+  expect(hasRule(css, '.seg', 'max-width: 100%')).toBe(true)
+  expect(hasRule(css, '.chip', 'max-width: 40%')).toBe(true)
+})
+
+test('narrow breakpoints use container queries with a media fallback', () => {
+  const css = stylesOf(buildPanelHtml())
+  expect(hasRule(css, '.frame', 'container-type: inline-size')).toBe(true)
+  for (const width of [260, 240, 180]) expect(css).toContain(`@container (max-width: ${width - 1}px)`)
+  expect(css).toContain('@supports not (container-type: inline-size)')
+  expect(css).toContain('@supports not (color: color-mix(in srgb, red 50%, blue))')
+})
+
+test('agent chip carries its age as a tooltip', () => {
+  const { byId, hook } = mountPanel()
+  const snap = fullSnapshot([])
+  snap.agents = [{ kind: 'claude', state: 'working', sinceMs: Date.now() - 125_000 }]
+  hook?.render(snap)
+  expect(byId.get('agents-list')?.children[0]?.children[1]?.getAttribute('title')).toBe('working · 2m')
+})
+
 function fullSnapshot(timeline: Array<string[] | null>) {
   return {
     version: '1.0.0',

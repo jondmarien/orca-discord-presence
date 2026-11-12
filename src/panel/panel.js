@@ -192,6 +192,8 @@ function tickAgents() {
   agentChips.forEach(function (entry) {
     var next = chipText(entry.agent)
     if (entry.chip.textContent !== next) entry.chip.textContent = next
+    // Why: a narrow chip ellipsizes, so the full age stays on hover.
+    setAttr(entry.chip, 'title', next)
   })
 }
 
@@ -240,6 +242,7 @@ function renderAgents(agents) {
     var state = normalizeState(displayState(agent.state))
     chip.setAttribute('data-state', state)
     chip.textContent = chipText(agent)
+    chip.setAttribute('title', chip.textContent)
     agentChips.push({ agent: agent, chip: chip })
     row.appendChild(label)
     row.appendChild(chip)

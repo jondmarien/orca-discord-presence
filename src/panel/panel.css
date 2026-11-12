@@ -28,6 +28,7 @@ body {
   background: var(--bg);
 }
 .frame {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -47,9 +48,29 @@ body {
   align-items: center;
   gap: 8px;
 }
+.row > *,
+.col > * {
+  min-width: 0;
+}
 .row.top {
   align-items: flex-start;
   gap: 12px;
+}
+#status-bar {
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+#status-bar > .row:first-child {
+  flex: 1 1 auto;
+}
+#indicator-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#status-bar > .row:last-child,
+.row.g6 {
+  flex-wrap: wrap;
 }
 .col {
   display: flex;
@@ -134,6 +155,8 @@ body {
 /* Segmented controls */
 .seg {
   display: inline-flex;
+  max-width: 100%;
+  overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 2px;
@@ -141,7 +164,9 @@ body {
 }
 .seg span,
 .seg button {
+  flex: none;
   padding: 3px 9px;
+  white-space: nowrap;
   border: 0;
   border-radius: 6px;
   background: none;
@@ -204,6 +229,7 @@ body {
   flex: 0 0 auto;
 }
 .dtext {
+  flex: 1 1 auto;
   min-width: 0;
 }
 .dcard .t1 {
@@ -276,7 +302,8 @@ body {
 }
 .leg {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   margin-top: 7px;
   font-size: 11px;
   color: var(--muted-fg);
@@ -333,9 +360,14 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
+.agent-row {
+  min-width: 0;
+}
 .agent-label {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   white-space: pre;
 }
 .agent-label .kind,
@@ -375,7 +407,10 @@ body {
   .agent-label .title.marquee .title-inner { animation: none; padding-right: 0; }
 }
 .chip {
-  flex: none;
+  flex: 0 1 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 11px;
   padding: 1px 8px;
   border-radius: 999px;
@@ -499,6 +534,7 @@ body {
   filter: drop-shadow(0 10px 30px rgba(var(--glow), 0.35));
 }
 .pulse {
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -562,6 +598,7 @@ pre.log {
 
 /* Refresh button: a compact icon button sized to the view switch; the icon spins while pending. */
 .icon-btn {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -595,6 +632,87 @@ pre.log {
 @media (prefers-reduced-motion: reduce) {
   .icon-btn.spin .glyph {
     animation: none;
+  }
+}
+
+/* Narrow sidebars: shed text before colour. The frame is the query
+   container; hosts without container queries get the same steps from the
+   viewport, which is the frame plus the 8px body padding on each side. */
+@container (max-width: 259px) {
+  .tiles {
+    grid-template-columns: 1fr;
+  }
+  .dcard img {
+    width: 48px;
+    height: 48px;
+  }
+  .hero img {
+    width: 88px;
+    height: 88px;
+  }
+  .hero .quote {
+    max-width: 100%;
+  }
+}
+@container (max-width: 239px) {
+  .leg span {
+    font-size: 0;
+  }
+}
+@container (max-width: 179px) {
+  .tile .v,
+  .tile .l,
+  .tile + .tile {
+    display: none;
+  }
+  .mix {
+    height: 10px;
+    margin-top: 0;
+  }
+}
+@supports not (container-type: inline-size) {
+  @media (max-width: 275px) {
+    .tiles {
+      grid-template-columns: 1fr;
+    }
+    .dcard img {
+      width: 48px;
+      height: 48px;
+    }
+    .hero img {
+      width: 88px;
+      height: 88px;
+    }
+    .hero .quote {
+      max-width: 100%;
+    }
+  }
+  @media (max-width: 255px) {
+    .leg span {
+      font-size: 0;
+    }
+  }
+  @media (max-width: 195px) {
+    .tile .v,
+    .tile .l,
+    .tile + .tile {
+      display: none;
+    }
+    .mix {
+      height: 10px;
+      margin-top: 0;
+    }
+  }
+}
+@supports not (color: color-mix(in srgb, red 50%, blue)) {
+  .hero {
+    background:
+      radial-gradient(120% 90% at 85% 15%, rgba(var(--glow), 0.45), rgba(var(--glow), 0) 60%),
+      #0d0e10;
+  }
+  .hero .live,
+  .hero .tim {
+    color: rgb(var(--glow));
   }
 }
 
