@@ -1582,8 +1582,6 @@ function applyHidden(list) {
     setClass($(s[1]), 'user-hidden', off)
     setAttr($('eye-' + s[0]), 'aria-pressed', off ? 'true' : 'false')
   })
-  // Why: tiles hide as one unit but each tile carries its own eye.
-  setAttr($('eye-tiles-sink'), 'aria-pressed', hiddenIds.indexOf('tiles') !== -1 ? 'true' : 'false')
   collapseWrappers()
   renderTray()
 }

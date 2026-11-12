@@ -88,7 +88,7 @@ Expected: FAIL missing eyes
 
 - [ ] **Step 3: Implement `src/panel/panel.html` eyes**
 
-Add `btn-show-all` eye btn between `#view-switch` + `#btn-refresh` (badge span), per-card eye btn in each section header (`data-hide` IDs: preview/strip/tiles/client/detail/agents/toggles/actions/logs), `#hidden-tray` row.
+Add `btn-show-all` eye btn between `#view-switch` + `#btn-refresh` (badge span), per-card eye btn in each section header (`data-hide` IDs: preview/strip/tiles/sink/client/detail/agents/toggles/actions/logs), `#hidden-tray` row.
 
 - [ ] **Step 4: Implement `src/panel/panel.js` hidden-set**
 
@@ -133,7 +133,7 @@ Expected: FAIL no hiddenPanels
 
 - [ ] **Step 3: Implement `hiddenPanels` in `src/presence/settings.ts`**
 
-Add `hiddenPanels: string` to type + DEFAULT `''`, normalize: split comma, trim, keep known IDs only (preview/strip/tiles/client/detail/agents/toggles/actions/logs), join. Add to `SETTING_KEYS_DECLARED` via DEFAULT (auto). Add manifest entry in `orca-plugin.json` (`key:hiddenPanels`, title `Hidden panels`, type string, default `''`).
+Add `hiddenPanels: string` to type + DEFAULT `''`, normalize: split comma, trim, keep known IDs only (preview/strip/tiles/sink/client/detail/agents/toggles/actions/logs), join. Add to `SETTING_KEYS_DECLARED` via DEFAULT (auto). Add manifest entry in `orca-plugin.json` (`key:hiddenPanels`, title `Hidden panels`, type string, default `''`).
 
 - [ ] **Step 4: Include `hidden` in `src/presence/panel-snapshot.ts`**
 

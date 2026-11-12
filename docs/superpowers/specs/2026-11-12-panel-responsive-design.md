@@ -24,7 +24,7 @@ Verify: resize 320px → 180px, no overflow, screenshots.
 ## 2. Eyes + hidden tray (persisted + settings)
 
 - Each hideable section gets header eye btn: eye open / eye-off SVG, `aria-pressed`, `title` Hide/Show.
-- IDs → DOM: `preview=#full-a .dcard, strip=#strip-card, tiles=#full-b, client=#client-card, detail=#detail-card, agents=#full-c section[aria-label=Agents], toggles=section[aria-label=Show on Discord], actions=.row.g6, logs=#logs-box`.
+- IDs → DOM: `preview=#full-a .dcard, strip=#strip-card, tiles=#tile-agents-card, sink=#tile-sink-card, client=#client-card, detail=#detail-card, agents=#full-c section[aria-label=Agents], toggles=section[aria-label=Show on Discord], actions=.row.g6, logs=#logs-box`.
 - State: `storage` key `panelHidden: string[]` + new `settings` entry `hiddenPanels` (comma list, single key, declared in `orca-plugin.json contributes.settings`) mirrored for Settings page. Load merge: read `settings.hiddenPanels` first, then `storage.panelHidden` overwrites if present; writes go to both (storage immediate, settings debounced). Storage wins at runtime.
 - Top bar: `btn-show-all` eye btn between `#view-switch` + `#btn-refresh`, badge count, disabled when 0 hidden.
 - Hidden tray: row `#hidden-tray` when >0 hidden: `Hidden (n) [Show all]` + per-item restore chips.
