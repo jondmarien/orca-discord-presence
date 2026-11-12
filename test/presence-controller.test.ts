@@ -411,6 +411,17 @@ test('setSettings lifts a clear hold and republishes', async () => {
   expect(activities.at(-1)).not.toBeNull()
 })
 
+test('a panel-layout-only settings change keeps a clear hold and sends nothing', async () => {
+  const { controller, activities } = harness()
+  await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
+  await controller.clear()
+  const sent = activities.length
+  await controller.setSettings({ ...controller.settings(), hiddenPanels: 'strip,logs' })
+  expect(controller.status().heldClear).toBe(true)
+  expect(activities.length).toBe(sent)
+  expect(controller.settings().hiddenPanels).toBe('strip,logs')
+})
+
 test('disabling the bridge after a remote publish clears the companion', async () => {
   const { controller, client, bridged } = harness({
     bridgeEnabled: true,

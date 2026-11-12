@@ -103,6 +103,8 @@ export type PresencePanelSnapshot = {
   activityCard: PresencePanelActivityCard | null
   logs: string[]
   logHint: string
+  /** Hidden panel section ids from the `hiddenPanels` setting. */
+  hidden: string[]
 }
 
 /**
@@ -258,7 +260,8 @@ export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): P
     agents: summarizePanelAgents(agents),
     activityCard: summarizePanelActivityCard(status.lastActivity),
     logs: logs.map(redactPanelLogLine),
-    logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT
+    logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT,
+    hidden: settings.hiddenPanels ? settings.hiddenPanels.split(',') : []
   }
 }
 

@@ -272,6 +272,13 @@
         "description": "Include how many agents are running.",
         "type": "boolean",
         "default": false
+      },
+      {
+        "key": "hiddenPanels",
+        "title": "Hidden panels",
+        "description": "Panel sections to hide, comma separated: preview, strip, tiles, client, detail, agents, toggles, actions, logs. The eye buttons in the panel edit this.",
+        "type": "string",
+        "default": ""
       }
     ],
     "events": [
