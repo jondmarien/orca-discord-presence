@@ -8,4 +8,4 @@
  * @date 2026-09-05
  */
 
-export const PLUGIN_VERSION = '1.0.3'
+export const PLUGIN_VERSION = '1.1.0'

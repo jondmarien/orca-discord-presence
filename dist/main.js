@@ -2107,7 +2107,7 @@ function isState(value) {
 }
 
 // src/version.ts
-var PLUGIN_VERSION = "1.0.3";
+var PLUGIN_VERSION = "1.1.0";
 
 // src/main.ts
 var HEARTBEAT_MS = 90000;

@@ -2,11 +2,14 @@
 
 All notable changes to this plugin. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.0] - 2026-11-12
 
 ### Added
 
 - Each panel section has an eye button that hides it. Hidden sections are listed in a tray under the header, where you can bring back one section or all of them, and the eye button in the header shows how many are hidden. Your choice is kept across reloads and mirrored to a new **Hidden panels** setting (`hiddenPanels`). Hiding a section never changes what Discord shows and does not undo **Clear**.
+- The **Agents** and **Sending to** tiles hide independently, each with its own eye. Hiding one lets the other fill the row.
+- The Reload / Clear / Pause / Status row sits under the header tray, above the Discord preview, so it stays reachable.
+- In Minimal view the hidden tray only offers the sections Minimal shows (Last 30 min, Detail level); full-only sections stay hidden until you return to Full view.
 
 ### Changed
 
