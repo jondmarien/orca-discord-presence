@@ -1083,6 +1083,18 @@ async function migrateSettingsToken(host, settingsToken) {
 // src/presence/settings.ts
 var DETAIL_LEVELS = ["off", "generic", "workspace", "full"];
 var ELAPSED_MODES = ["session", "state"];
+var HIDDEN_PANEL_IDS = [
+  "preview",
+  "strip",
+  "tiles",
+  "sink",
+  "client",
+  "detail",
+  "agents",
+  "toggles",
+  "actions",
+  "logs"
+];
 var SHIPPED_APPLICATION_ID = "1545653843239374848";
 var DEFAULT_OPEN_BUTTON_LABEL = "Open Orca";
 var DISCORD_BUTTON_URL_MAX = 512;
@@ -1107,7 +1119,8 @@ var DEFAULT_SETTINGS = Object.freeze({
   showOpenButton: false,
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
   showAgentCount: false,
-  discordClient: "auto"
+  discordClient: "auto",
+  hiddenPanels: ""
 });
 var SETTING_KEYS_DECLARED = Object.keys(DEFAULT_SETTINGS).filter((key) => key !== "bridgeToken" && key !== "discordClient");
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
@@ -1142,6 +1155,13 @@ function normalizeOpenUrl(value) {
   }
   return trimmed;
 }
+function normalizeHiddenPanels(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const requested = new Set(value.split(",").map((id) => id.trim()));
+  return HIDDEN_PANEL_IDS.filter((id) => requested.has(id)).join(",");
+}
 function normalizeOpenButtonLabel(value) {
   if (typeof value !== "string") {
     return DEFAULT_OPEN_BUTTON_LABEL;
@@ -1173,7 +1193,12 @@ function normalizeSettings(raw) {
   settings.openUrl = normalizeOpenUrl(source.openUrl);
   settings.openButtonLabel = normalizeOpenButtonLabel(source.openButtonLabel === undefined ? DEFAULT_SETTINGS.openButtonLabel : source.openButtonLabel);
   settings.discordClient = typeof source.discordClient === "string" && source.discordClient.trim().length > 0 ? source.discordClient.trim().slice(0, 64) : DEFAULT_SETTINGS.discordClient;
+  settings.hiddenPanels = normalizeHiddenPanels(source.hiddenPanels);
   return settings;
+}
+var PANEL_ONLY_KEYS = new Set(["hiddenPanels"]);
+function affectsPresence(a, b) {
+  return Object.keys(DEFAULT_SETTINGS).some((key) => !PANEL_ONLY_KEYS.has(key) && a[key] !== b[key]);
 }
 function nextDetailLevel(current) {
   const index = DETAIL_LEVELS.indexOf(current);
@@ -1672,6 +1697,10 @@ function createPresenceController({
       await schedule();
     },
     async setSettings(nextSettings) {
+      if (!affectsPresence(currentSettings, nextSettings)) {
+        currentSettings = nextSettings;
+        return;
+      }
       holdClear = false;
       const previousBridge = lastSink === "bridge" && lastBridgeUrl != null ? { url: lastBridgeUrl, token: lastBridgeToken ?? "" } : null;
       currentSettings = nextSettings;
@@ -1879,7 +1908,8 @@ function buildPresencePanelSnapshot(input) {
     agents: summarizePanelAgents(agents),
     activityCard: summarizePanelActivityCard(status.lastActivity),
     logs: logs.map(redactPanelLogLine),
-    logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT
+    logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT,
+    hidden: settings.hiddenPanels ? settings.hiddenPanels.split(",") : []
   };
 }
 

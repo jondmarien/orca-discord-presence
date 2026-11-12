@@ -99,6 +99,7 @@ Settings are in **Orca Settings** under this plugin. Defaults:
 | Button label (`openButtonLabel`) | `Open Orca` | 1 to 32 characters |
 | Show agent count (`showAgentCount`) | off | |
 | Show status bar item (`showStatusBar`) | on | Orca desktop app only |
+| Hidden panels (`hiddenPanels`) | empty | Panel sections to hide, comma separated: `preview`, `strip`, `tiles`, `sink`, `client`, `detail`, `agents`, `toggles`, `actions`, `logs`. The eye buttons in the panel edit it. Never sent to Discord |
 
 The status bar item shows the current state at a glance (`Working`, `Blocked`, `Waiting`, `Done`, or `Discord`). Clicking it shows or hides the Rich Presence panel. It follows the same privacy settings as the Discord card.
 

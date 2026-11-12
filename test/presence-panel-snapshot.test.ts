@@ -212,3 +212,17 @@ test('activityCard maps keys and ms timestamp', () => {
   expect(buildPresencePanelSnapshot({ ...base, status: statusWith({ lastActivity: null }) }).activityCard).toBe(null)
   expect(buildPresencePanelSnapshot({ ...base, status: statusWith() }).activityCard?.startMs).toBe(null)
 })
+
+test('snapshot carries the hidden panel ids from settings', () => {
+  const build = (hiddenPanels: string) =>
+    buildPresencePanelSnapshot({
+      version: PLUGIN_VERSION,
+      status: statusWith({}),
+      settings: { ...DEFAULT_SETTINGS, hiddenPanels },
+      logs: [],
+      timeline: [],
+      agents: []
+    })
+  expect(build('strip,logs').hidden).toEqual(['strip', 'logs'])
+  expect(build('').hidden).toEqual([])
+})

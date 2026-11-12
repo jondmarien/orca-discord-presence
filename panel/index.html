@@ -20,13 +20,43 @@
   --c-blocked: #e81010;
   --c-completed: #23a55a;
   --c-idle: #9aa3ad;
-  --c-none: #262626;
+  --c-none: color-mix(in srgb, var(--fg) 14%, var(--card));
   --c-live: #23a55a;
   --bg: var(--orca-background, #111214);
   --card: var(--orca-card, #18191b);
   --border: var(--orca-border, #2a2a2a);
   --muted-fg: var(--orca-muted-foreground, #9a9a9a);
   --fg: var(--orca-foreground, #ececec);
+  --muted: var(--orca-muted, #1d1e21);
+  --track: color-mix(in srgb, var(--fg) 30%, var(--card));
+  /* How much state hue coloured text keeps; the rest is foreground. */
+  --ink: 65%;
+}
+/* Light fallbacks for hosts that do not inject Orca variables. The theme
+   event sets data-theme; without it the OS preference decides. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: var(--orca-background, #f5f5f5);
+  --card: var(--orca-card, #ffffff);
+  --border: var(--orca-border, #e0e0e0);
+  --fg: var(--orca-foreground, #1a1a1a);
+  --muted-fg: var(--orca-muted-foreground, #666);
+  --muted: var(--orca-muted, #efeff1);
+  --ink: 40%;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --bg: var(--orca-background, #f5f5f5);
+    --card: var(--orca-card, #ffffff);
+    --border: var(--orca-border, #e0e0e0);
+    --fg: var(--orca-foreground, #1a1a1a);
+    --muted-fg: var(--orca-muted-foreground, #666);
+    --muted: var(--orca-muted, #efeff1);
+    --ink: 40%;
+  }
 }
 * {
   box-sizing: border-box;
@@ -43,11 +73,14 @@ body {
   background: var(--bg);
 }
 .frame {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.hidden {
+.hidden,
+.user-hidden,
+.collapsed {
   display: none !important;
 }
 .note,
@@ -62,9 +95,29 @@ body {
   align-items: center;
   gap: 8px;
 }
+.row > *,
+.col > * {
+  min-width: 0;
+}
 .row.top {
   align-items: flex-start;
   gap: 12px;
+}
+#status-bar {
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+#status-bar > .row:first-child {
+  flex: 1 1 auto;
+}
+#indicator-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#status-bar > .row:last-child,
+.row.g6 {
+  flex-wrap: wrap;
 }
 .col {
   display: flex;
@@ -149,6 +202,8 @@ body {
 /* Segmented controls */
 .seg {
   display: inline-flex;
+  max-width: 100%;
+  overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 2px;
@@ -156,7 +211,9 @@ body {
 }
 .seg span,
 .seg button {
+  flex: none;
   padding: 3px 9px;
+  white-space: nowrap;
   border: 0;
   border-radius: 6px;
   background: none;
@@ -197,20 +254,21 @@ body {
   opacity: 0.55;
 }
 
-/* Discord card keeps its own palette in both themes: it previews Discord. */
 .dcard {
-  background: #232428;
-  border: 1px solid #2f3136;
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px;
+}
+.dcard .head {
+  margin-bottom: 8px;
 }
 .dcard .kicker {
   font-size: 11px;
   font-weight: 700;
-  color: #b5bac1;
+  color: var(--muted-fg);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-bottom: 8px;
 }
 .dcard img {
   width: 64px;
@@ -219,15 +277,16 @@ body {
   flex: 0 0 auto;
 }
 .dtext {
+  flex: 1 1 auto;
   min-width: 0;
 }
 .dcard .t1 {
   font-weight: 700;
-  color: #f2f3f5;
+  color: var(--fg);
 }
 .dcard .t2,
 .dcard .t3 {
-  color: #dbdee1;
+  color: var(--fg);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -291,7 +350,8 @@ body {
 }
 .leg {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   margin-top: 7px;
   font-size: 11px;
   color: var(--muted-fg);
@@ -307,6 +367,10 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+/* One tile hidden: the other fills the row. */
+.tiles.single {
+  grid-template-columns: 1fr;
 }
 .tile .v {
   font-size: 18px;
@@ -348,9 +412,14 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
+.agent-row {
+  min-width: 0;
+}
 .agent-label {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   white-space: pre;
 }
 .agent-label .kind,
@@ -358,13 +427,13 @@ body {
   flex: none;
 }
 .agent-label .sep {
-  color: var(--orca-muted-foreground, #9a9a9a);
+  color: var(--muted-fg);
 }
 .agent-label .title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--orca-foreground, #ececec);
+  color: var(--fg);
 }
 .agent-label .title-inner {
   display: inline-block;
@@ -391,31 +460,30 @@ body {
 }
 .chip {
   flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 11px;
   padding: 1px 8px;
   border-radius: 999px;
   font-weight: 600;
   white-space: nowrap;
 }
+.chip {
+  background: color-mix(in srgb, var(--chip, var(--c-idle)) 15%, transparent);
+  color: color-mix(in srgb, var(--chip, var(--c-idle)) var(--ink), var(--fg));
+}
 .chip[data-state='working'] {
-  background: rgba(18, 184, 240, 0.15);
-  color: #3fc8f5;
+  --chip: var(--c-working);
 }
 .chip[data-state='waiting'] {
-  background: rgba(245, 184, 0, 0.15);
-  color: #f5c23a;
+  --chip: var(--c-waiting);
 }
 .chip[data-state='blocked'] {
-  background: rgba(232, 16, 16, 0.15);
-  color: #ff5a5a;
+  --chip: var(--c-blocked);
 }
 .chip[data-state='completed'] {
-  background: rgba(35, 165, 90, 0.15);
-  color: #3ecf7a;
-}
-.chip[data-state='idle'] {
-  background: rgba(154, 163, 173, 0.15);
-  color: #b5bcc4;
+  --chip: var(--c-completed);
 }
 
 /* Switches: real checkboxes, so keyboard and screen readers work. */
@@ -425,7 +493,7 @@ body {
   height: 16px;
   margin: 0;
   border-radius: 999px;
-  background: #3a3a3a;
+  background: var(--track);
   position: relative;
   flex: none;
   cursor: pointer;
@@ -438,7 +506,7 @@ body {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #ececec;
+  background: #fff;
 }
 .sw:checked {
   background: var(--c-working);
@@ -452,7 +520,9 @@ body {
 }
 .sw:focus-visible,
 .seg button:focus-visible,
-.icon-btn:focus-visible {
+.icon-btn:focus-visible,
+.eye-btn:focus-visible,
+.btn:focus-visible {
   outline: 2px solid var(--c-working);
   outline-offset: 1px;
 }
@@ -469,8 +539,8 @@ body {
   border: 1px solid rgba(var(--glow), 0.35);
   background:
     radial-gradient(120% 90% at 85% 15%, rgba(var(--glow), 0.45), rgba(var(--glow), 0) 60%),
-    linear-gradient(160deg, color-mix(in srgb, rgb(var(--glow)) 14%, #0d0e10), #0d0e10 70%);
-  color: #f2f3f5;
+    linear-gradient(160deg, color-mix(in srgb, rgb(var(--glow)) 14%, var(--card)), var(--card) 70%);
+  color: var(--fg);
 }
 .hero[data-state='working'] {
   --glow: 18, 184, 240;
@@ -486,7 +556,7 @@ body {
 }
 .hero .live {
   font-size: 12px;
-  color: color-mix(in srgb, rgb(var(--glow)) 35%, #fff);
+  color: color-mix(in srgb, rgb(var(--glow)) var(--ink), var(--fg));
 }
 .hero .big {
   margin-top: 14px;
@@ -496,13 +566,13 @@ body {
 .hero .tim {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  color: color-mix(in srgb, rgb(var(--glow)) 35%, #fff);
+  color: color-mix(in srgb, rgb(var(--glow)) var(--ink), var(--fg));
 }
 .hero .quote {
   max-width: 170px;
   margin-top: 10px;
   font-size: 12px;
-  color: #9a9a9a;
+  color: var(--muted-fg);
   overflow-wrap: anywhere;
 }
 .hero img {
@@ -514,6 +584,7 @@ body {
   filter: drop-shadow(0 10px 30px rgba(var(--glow), 0.35));
 }
 .pulse {
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -549,7 +620,63 @@ body {
   opacity: 0.55;
   cursor: not-allowed;
 }
+.btn.sm {
+  padding: 1px 8px;
+  font-size: 11px;
+}
 
+/* Section eyes: quiet until hovered or focused, so headers stay calm. */
+.eye-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-fg);
+  opacity: 0.6;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.eye-btn:hover,
+.eye-btn:focus-visible {
+  opacity: 1;
+  color: var(--fg);
+}
+#btn-show-all {
+  position: relative;
+}
+#btn-show-all .badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--c-working);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+#btn-show-all .badge:empty {
+  display: none;
+}
+
+.logs-box {
+  position: relative;
+}
+.logs-box > .eye-btn {
+  position: absolute;
+  top: -3px;
+  right: 0;
+}
 details.logs summary {
   cursor: pointer;
   color: var(--muted-fg);
@@ -566,7 +693,7 @@ pre.log {
   overflow: auto;
   padding: 8px;
   border-radius: 6px;
-  background: var(--orca-muted, #161616);
+  background: var(--muted);
   color: var(--fg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 10px;
@@ -577,6 +704,7 @@ pre.log {
 
 /* Refresh button: a compact icon button sized to the view switch; the icon spins while pending. */
 .icon-btn {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -612,6 +740,113 @@ pre.log {
     animation: none;
   }
 }
+
+/* Narrow sidebars: shed text before colour. The frame is the query
+   container; hosts without container queries get the same steps from the
+   viewport, which is the frame plus the 8px body padding on each side. */
+@container (max-width: 259px) {
+  .tiles {
+    grid-template-columns: 1fr;
+  }
+  .dcard img {
+    width: 48px;
+    height: 48px;
+  }
+  .hero img {
+    width: 88px;
+    height: 88px;
+  }
+  .hero {
+    padding-bottom: 80px;
+  }
+  .hero .big {
+    font-size: 22px;
+    overflow-wrap: anywhere;
+  }
+  .hero .quote {
+    max-width: 100%;
+  }
+}
+@container (max-width: 239px) {
+  .leg span {
+    font-size: 0;
+  }
+}
+@container (max-width: 179px) {
+  .tile .v,
+  .tile .l,
+  .tile + .tile {
+    display: none;
+  }
+  .mix {
+    height: 10px;
+    margin-top: 0;
+  }
+}
+@supports not (container-type: inline-size) {
+  @media (max-width: 275px) {
+    .tiles {
+      grid-template-columns: 1fr;
+    }
+    .dcard img {
+      width: 48px;
+      height: 48px;
+    }
+    .hero img {
+      width: 88px;
+      height: 88px;
+    }
+    .hero {
+      padding-bottom: 80px;
+    }
+    .hero .big {
+      font-size: 22px;
+      overflow-wrap: anywhere;
+    }
+    .hero .quote {
+      max-width: 100%;
+    }
+  }
+  @media (max-width: 255px) {
+    .leg span {
+      font-size: 0;
+    }
+  }
+  @media (max-width: 195px) {
+    .tile .v,
+    .tile .l,
+    .tile + .tile {
+      display: none;
+    }
+    .mix {
+      height: 10px;
+      margin-top: 0;
+    }
+  }
+}
+@supports not (color: color-mix(in srgb, red 50%, blue)) {
+  :root {
+    --c-none: #262626;
+    --track: #45464b;
+  }
+  :root[data-theme='light'] {
+    --c-none: #e4e4e7;
+    --track: #c9c9ce;
+  }
+  .hero {
+    background:
+      radial-gradient(120% 90% at 85% 15%, rgba(var(--glow), 0.45), rgba(var(--glow), 0) 60%),
+      var(--card);
+  }
+  .hero .live,
+  .hero .tim {
+    color: rgb(var(--glow));
+  }
+  .chip {
+    background: var(--muted);
+    color: var(--fg);
+  }
+}
     </style>
   </head>
   <body>
@@ -628,12 +863,28 @@ pre.log {
             <button type="button" class="on" id="view-full">Full</button>
             <button type="button" id="view-minimal">Minimal</button>
           </div>
+          <button type="button" class="icon-btn" id="btn-show-all" aria-label="Show hidden sections" title="Show all hidden sections" disabled>
+            <svg class="glyph" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2"/><path d="M6.6 6.6A17.4 17.4 0 0 0 2 12s3.5 7 10 7a10.6 10.6 0 0 0 5.4-1.4"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg><span class="badge" id="show-all-count"></span>
+          </button>
           <button type="button" class="icon-btn" id="btn-refresh" aria-label="Refresh" title="Refresh now">
             <svg class="glyph" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/></svg>
           </button>
         </div>
       </header>
       <p class="flash" id="flash"></p>
+      <div class="row g6 hidden" id="hidden-tray">
+        <span class="muted small" id="hidden-tray-label">Hidden (0)</span>
+        <button type="button" class="btn sm" id="tray-show-all">Show all</button>
+        <div class="row g6" id="hidden-chips"></div>
+      </div>
+
+      <div class="row g6" id="actions-row">
+        <button type="button" class="btn" id="btn-reload">Reload</button>
+        <button type="button" class="btn" id="btn-clear">Clear</button>
+        <button type="button" class="btn" id="btn-toggle">Pause</button>
+        <button type="button" class="btn push" id="btn-status">Status</button>
+        <button type="button" class="eye-btn" id="eye-actions" data-hide="actions" aria-pressed="false" aria-label="Hide actions" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
 
       <section class="hero hidden" id="min-hero" data-state="idle" aria-label="Current state">
         <div class="row"><span class="pulse" aria-hidden="true"></span><span class="live">Live on Discord</span></div>
@@ -645,7 +896,7 @@ pre.log {
 
       <div class="col" id="full-a">
       <section class="dcard" aria-label="Discord profile preview">
-        <div class="kicker">Playing a game</div>
+        <div class="row between head"><div class="kicker">Playing a game</div><button type="button" class="eye-btn" id="eye-preview" data-hide="preview" aria-pressed="false" aria-label="Hide Discord preview" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         <div class="row top">
           <img id="dcard-img" src="../assets/state-idle.png" alt="" width="64" height="64" />
           <div class="dtext">
@@ -661,7 +912,7 @@ pre.log {
       <section class="card" id="strip-card" aria-label="Last 30 minutes">
         <div class="row between mb6">
           <span class="h">Last 30 min</span>
-          <span class="muted small">now →</span>
+          <span class="row g6"><span class="muted small">now →</span><button type="button" class="eye-btn" id="eye-strip" data-hide="strip" aria-pressed="false" aria-label="Hide Last 30 min" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span>
         </div>
         <div class="strip" id="strip"></div>
         <div class="leg">
@@ -674,13 +925,13 @@ pre.log {
       </section>
 
       <div class="tiles" id="full-b">
-        <div class="card tile">
-          <div class="l">Agents</div>
+        <div class="card tile" id="tile-agents-card">
+          <div class="row between"><div class="l">Agents</div><button type="button" class="eye-btn" id="eye-tiles" data-hide="tiles" aria-pressed="false" aria-label="Hide Agents tile" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
           <div class="v" id="tile-agents">0</div>
           <div class="mix" id="tile-mix"></div>
         </div>
-        <div class="card tile">
-          <div class="l">Sending to</div>
+        <div class="card tile" id="tile-sink-card">
+          <div class="row between"><div class="l">Sending to</div><button type="button" class="eye-btn" id="eye-sink" data-hide="sink" aria-pressed="false" aria-label="Hide Sending to" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
           <div class="v" id="tile-sink">Off</div>
           <div class="l" id="tile-sink-sub">Not connected</div>
         </div>
@@ -688,26 +939,26 @@ pre.log {
 
       <div class="col" id="full-d">
       <section class="card hidden" id="client-card" aria-label="Discord client">
-        <div class="h mb6">Discord client</div>
+        <div class="row between mb6"><span class="h">Discord client</span><button type="button" class="eye-btn" id="eye-client" data-hide="client" aria-pressed="false" aria-label="Hide Discord client" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         <select class="select" id="client-select" aria-label="Discord client"></select>
         <p class="muted small hidden" id="client-note"></p>
       </section>
       </div>
 
       <section class="card" id="detail-card" aria-label="Detail level">
-        <div class="h mb6">Detail level</div>
+        <div class="row between mb6"><span class="h">Detail level</span><button type="button" class="eye-btn" id="eye-detail" data-hide="detail" aria-pressed="false" aria-label="Hide Detail level" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         <div class="seg" id="detail-seg" role="group" aria-label="Detail level"></div>
       </section>
 
       <div class="col" id="full-c">
-      <section class="card col" aria-label="Agents">
-        <div class="h">Agents</div>
+      <section class="card col" id="agents-card" aria-label="Agents">
+        <div class="row between"><span class="h">Agents</span><button type="button" class="eye-btn" id="eye-agents" data-hide="agents" aria-pressed="false" aria-label="Hide Agents" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         <div class="col g6" id="agents-list"></div>
         <div class="muted small" id="agents-empty">No agents yet</div>
       </section>
 
-      <section class="card col g7" aria-label="Show on Discord">
-        <div class="h">Show on Discord</div>
+      <section class="card col g7" id="toggles-card" aria-label="Show on Discord">
+        <div class="row between"><span class="h">Show on Discord</span><button type="button" class="eye-btn" id="eye-toggles" data-hide="toggles" aria-pressed="false" aria-label="Hide Show on Discord" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         <div class="row between"><span>Agent state</span><input type="checkbox" class="sw" id="sw-showAgentState" role="switch" /></div>
         <div class="row between"><span>Agent count</span><input type="checkbox" class="sw" id="sw-showAgentCount" role="switch" /></div>
         <div class="row between"><span>Elapsed timer</span><input type="checkbox" class="sw" id="sw-showElapsed" role="switch" /></div>
@@ -716,14 +967,9 @@ pre.log {
         <div class="row between"><span>Machine name</span><input type="checkbox" class="sw" id="sw-showMachine" role="switch" /></div>
       </section>
 
-      <div class="row g6">
-        <button type="button" class="btn" id="btn-reload">Reload</button>
-        <button type="button" class="btn" id="btn-clear">Clear</button>
-        <button type="button" class="btn" id="btn-toggle">Pause</button>
-        <button type="button" class="btn push" id="btn-status">Status</button>
-      </div>
-
-      <details class="logs" id="logs-box">
+      <div class="logs-box" id="logs-box">
+        <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <details class="logs">
         <summary id="logs-summary">Logs</summary>
         <div class="log-toolbar">
           <button type="button" class="btn" id="btn-log-clear">Clear view</button>
@@ -731,6 +977,7 @@ pre.log {
         </div>
         <pre class="log" id="log-view">No log lines yet. Click Status to generate some.</pre>
       </details>
+      </div>
       </div>
     </div>
 
@@ -765,7 +1012,24 @@ var DETAIL_LEVELS = [
   ['full', 'Full']
 ]
 var VIEW_KEY = 'panelView'
-var FULL_ONLY_IDS = ['full-a', 'full-b', 'full-c', 'full-d']
+var FULL_ONLY_IDS = ['actions-row', 'full-a', 'full-b', 'full-c', 'full-d']
+// Hideable sections: [id kept in storage and the hiddenPanels setting, element id, label].
+// The ids must match HIDDEN_PANEL_IDS in src/presence/settings.ts.
+var PANEL_SECTIONS = [
+  ['preview', 'full-a', 'Discord preview'],
+  ['strip', 'strip-card', 'Last 30 min'],
+  ['tiles', 'tile-agents-card', 'Agents tile'],
+  ['sink', 'tile-sink-card', 'Sending to'],
+  ['client', 'client-card', 'Discord client'],
+  ['detail', 'detail-card', 'Detail level'],
+  ['agents', 'agents-card', 'Agents'],
+  ['toggles', 'toggles-card', 'Show on Discord'],
+  ['actions', 'actions-row', 'Actions'],
+  ['logs', 'logs-box', 'Logs']
+]
+var HIDDEN_KEY = 'panelHidden'
+var HIDDEN_SETTING = 'hiddenPanels'
+var SETTINGS_MIRROR_DELAY_MS = 400
 var SWITCH_FIELDS = ['showAgentState', 'showAgentCount', 'showElapsed', 'showBranch', 'showTerminals', 'showMachine']
 
 function $(id) {
@@ -931,6 +1195,8 @@ function tickAgents() {
   agentChips.forEach(function (entry) {
     var next = chipText(entry.agent)
     if (entry.chip.textContent !== next) entry.chip.textContent = next
+    // Why: a narrow chip ellipsizes, so the full age stays on hover.
+    setAttr(entry.chip, 'title', next)
   })
 }
 
@@ -979,6 +1245,7 @@ function renderAgents(agents) {
     var state = normalizeState(displayState(agent.state))
     chip.setAttribute('data-state', state)
     chip.textContent = chipText(agent)
+    chip.setAttribute('title', chip.textContent)
     agentChips.push({ agent: agent, chip: chip })
     row.appendChild(label)
     row.appendChild(chip)
@@ -1059,6 +1326,7 @@ function render(snapshot) {
   setText('indicator-label', indicatorLabel(snapshot))
   if (!snapshot || !snapshot.status) return
   lastSnapshot = snapshot
+  syncHiddenSetting(snapshot)
   var fields = snapshot.fields || {}
   minAgents = Array.isArray(snapshot.agents) ? snapshot.agents.length : 0
   renderCard(snapshot)
@@ -1125,6 +1393,7 @@ function renderClients(snapshot) {
   var fields = snapshot.fields || {}
   var chosen = fields.discordClient || 'auto'
   setClass($('client-card'), 'hidden', clients.length < 1)
+  collapseWrappers()
   var detected = clients.some(function (c) {
     return c.id === chosen
   })
@@ -1234,6 +1503,7 @@ function applyView(next) {
   setClass($('min-hero'), 'hidden', view !== 'minimal')
   setClass($('view-full'), 'on', view === 'full')
   setClass($('view-minimal'), 'on', view === 'minimal')
+  renderTray()
 }
 
 function storedView(result) {
@@ -1268,6 +1538,205 @@ function chooseView(next) {
     .catch(function () {
       // Why: the choice still applies for this session when it cannot be saved.
     })
+}
+
+// Hidden sections: storage `panelHidden` is the runtime source; the
+// `hiddenPanels` setting mirrors it for the Settings page and arrives in the
+// snapshot as `hidden`. Storage wins on load whichever answer lands first; a
+// later change to the setting (a Settings page edit) is adopted. Our own
+// mirror write echoes back a few snapshots later; until it does, snapshots
+// carry an older value and must not undo newer clicks. Junk in either source
+// is ignored. A separate class keeps this apart from the
+// `hidden` class that views and the client card toggle.
+var hiddenIds = []
+var hiddenFromStorage = false
+var settingsHiddenSig = null
+var settingsTimer = null
+var awaitingEcho = null
+
+function normalizeHidden(list) {
+  if (!Array.isArray(list)) return null
+  return PANEL_SECTIONS.map(function (s) {
+    return s[0]
+  }).filter(function (id) {
+    return list.indexOf(id) !== -1
+  })
+}
+
+function callHost(name, input, onError) {
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') return
+  Promise.resolve()
+    .then(function () {
+      return host.call(name, input)
+    })
+    .catch(function () {
+      // Why: hiding still applies for this session when it cannot be saved.
+      if (onError) onError()
+    })
+}
+
+function applyHidden(list) {
+  hiddenIds = list
+  PANEL_SECTIONS.forEach(function (s) {
+    var off = hiddenIds.indexOf(s[0]) !== -1
+    setClass($(s[1]), 'user-hidden', off)
+    setAttr($('eye-' + s[0]), 'aria-pressed', off ? 'true' : 'false')
+  })
+  collapseWrappers()
+  renderTray()
+}
+
+// Why: wrapper cols (full-a/c/d) stay in the frame's gap flow even when
+// every child hides (user-hidden or the client card's own `hidden`), leaving
+// a double gap. A separate `collapsed` class keeps this apart from the
+// `hidden` class that views toggle.
+var WRAPPER_IDS = ['full-a', 'full-b', 'full-c', 'full-d']
+function hasClass(el, name) {
+  return !!el && (' ' + el.className + ' ').indexOf(' ' + name + ' ') !== -1
+}
+function collapseWrappers() {
+  WRAPPER_IDS.forEach(function (id) {
+    var el = $(id)
+    if (!el) return
+    var kids = el.children || []
+    var anyVisible = false
+    for (var i = 0; i < kids.length; i += 1) {
+      if (!hasClass(kids[i], 'hidden') && !hasClass(kids[i], 'user-hidden')) {
+        anyVisible = true
+        break
+      }
+    }
+    setClass(el, 'collapsed', !anyVisible)
+  })
+  // Why: one hidden tile leaves a half-empty row; the survivor fills it.
+  // Derived from state, not DOM children, so it works wherever applyHidden runs.
+  var tiles = $('full-b')
+  if (tiles) {
+    var tilesHidden = hiddenIds.indexOf('tiles') !== -1
+    var sinkHidden = hiddenIds.indexOf('sink') !== -1
+    setClass(tiles, 'single', tilesHidden !== sinkHidden)
+  }
+}
+
+var traySignature = null
+// Minimal view renders only the strip and detail sections; restore chips for
+// full-only sections would unhide nothing visible, so the tray filters them.
+var MINIMAL_SECTIONS = ['strip', 'detail']
+function viewHidden() {
+  if (view !== 'minimal') return hiddenIds.slice()
+  return hiddenIds.filter(function (id) {
+    return MINIMAL_SECTIONS.indexOf(id) !== -1
+  })
+}
+function renderTray() {
+  var shown = viewHidden()
+  var count = shown.length
+  setClass($('hidden-tray'), 'hidden', count === 0)
+  setText('hidden-tray-label', 'Hidden (' + count + ')')
+  setText('show-all-count', count || '')
+  $('btn-show-all').disabled = count === 0
+  var signature = view + ':' + shown.join(',')
+  if (signature === traySignature) return
+  traySignature = signature
+  var box = $('hidden-chips')
+  clearChildren(box)
+  PANEL_SECTIONS.forEach(function (s) {
+    if (shown.indexOf(s[0]) === -1) return
+    var chip = document.createElement('button')
+    chip.setAttribute('type', 'button')
+    chip.className = 'btn sm'
+    chip.setAttribute('aria-label', 'Show ' + s[2])
+    chip.textContent = s[2]
+    chip.addEventListener('click', function () {
+      setHidden(
+        hiddenIds.filter(function (id) {
+          return id !== s[0]
+        })
+      )
+    })
+    box.appendChild(chip)
+  })
+}
+
+function setHidden(list) {
+  hiddenFromStorage = true
+  applyHidden(normalizeHidden(list))
+  callHost('storage.set', { key: HIDDEN_KEY, value: hiddenIds.slice() })
+  var mirror = function () {
+    settingsTimer = null
+    var value = hiddenIds.join(',')
+    awaitingEcho = value
+    callHost('settings.set', { key: HIDDEN_SETTING, value: value }, function () {
+      if (awaitingEcho === value) awaitingEcho = null
+    })
+  }
+  if (typeof setTimeout !== 'function') return mirror()
+  if (settingsTimer) clearTimeout(settingsTimer)
+  settingsTimer = setTimeout(mirror, SETTINGS_MIRROR_DELAY_MS)
+}
+
+function loadHidden() {
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') return Promise.resolve()
+  return Promise.resolve()
+    .then(function () {
+      return host.call('storage.get', { key: HIDDEN_KEY })
+    })
+    .then(
+      function (result) {
+        var list = normalizeHidden(Array.isArray(result) ? result : storedView(result))
+        // Why: a toggle made before storage answered is newer than what it holds.
+        if (!list || hiddenFromStorage) return
+        hiddenFromStorage = true
+        applyHidden(list)
+      },
+      function () {}
+    )
+}
+
+function syncHiddenSetting(snapshot) {
+  var list = normalizeHidden(snapshot.hidden)
+  if (!list) return
+  var signature = list.join(',')
+  if (settingsTimer || awaitingEcho !== null) {
+    if (signature === awaitingEcho) {
+      awaitingEcho = null
+      settingsHiddenSig = signature
+    }
+    return
+  }
+  if (signature === settingsHiddenSig) return
+  var first = settingsHiddenSig === null
+  settingsHiddenSig = signature
+  if ((first && hiddenFromStorage) || signature === hiddenIds.join(',')) return
+  applyHidden(list)
+  if (!first) {
+    hiddenFromStorage = true
+    callHost('storage.set', { key: HIDDEN_KEY, value: list.slice() })
+  }
+}
+
+function wireHidden() {
+  PANEL_SECTIONS.forEach(function (s) {
+    $('eye-' + s[0]).addEventListener('click', function () {
+      setHidden(hiddenIds.concat(s[0]))
+    })
+  })
+  var showAll = function () {
+    // Why: in minimal view only minimal sections are offered, so show-all
+    // restores just those; full-only sections stay hidden for the return trip.
+    var keep = viewHidden()
+    setHidden(
+      hiddenIds.filter(function (id) {
+        return keep.indexOf(id) === -1
+      })
+    )
+  }
+  $('btn-show-all').addEventListener('click', showAll)
+  $('tray-show-all').addEventListener('click', showAll)
+  renderTray()
+  loadHidden()
 }
 
 function request(name, input) {
@@ -1345,9 +1814,38 @@ function wireLogs() {
   })
 }
 
-function applyTheme(payload) {
+// Theme: the host event is the source; the last one is stored so the next
+// load paints in the right theme before the host speaks. Junk is ignored.
+var THEME_KEY = 'panelTheme'
+var themeFromEvent = false
+
+function themeOf(payload) {
   var theme = typeof payload === 'string' ? payload : payload && (payload.theme || payload.mode)
-  if (theme === 'light' || theme === 'dark') document.documentElement.setAttribute('data-theme', theme)
+  return theme === 'light' || theme === 'dark' ? theme : null
+}
+
+function applyTheme(payload) {
+  var theme = themeOf(payload)
+  if (!theme) return
+  themeFromEvent = true
+  setAttr(document.documentElement, 'data-theme', theme)
+  callHost('storage.set', { key: THEME_KEY, value: theme })
+}
+
+function loadTheme() {
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') return Promise.resolve()
+  return Promise.resolve()
+    .then(function () {
+      return host.call('storage.get', { key: THEME_KEY })
+    })
+    .then(
+      function (result) {
+        var theme = themeOf(storedView(result))
+        if (theme && !themeFromEvent) setAttr(document.documentElement, 'data-theme', theme)
+      },
+      function () {}
+    )
 }
 
 // Why: tests only. Non-enumerable so it never shows up when iterating window.
@@ -1370,6 +1868,7 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
     chooseView('minimal')
   })
   loadView()
+  wireHidden()
   $('btn-refresh').addEventListener('click', forceRefresh)
   $('btn-status').addEventListener('click', function () {
     run('presence.status', 'Status sent as a notification.')
@@ -1386,6 +1885,7 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
   if (typeof orca.plugin.on === 'function') {
     orca.plugin.on('presence.snapshot', render)
   }
+  loadTheme()
   if (typeof orca.on === 'function') {
     try {
       orca.on('theme', applyTheme)

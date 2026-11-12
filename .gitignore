@@ -7,3 +7,4 @@ companion/orca-presence-companion.exe
 
 # orca plugin shot output
 .orca/
+.cursor/

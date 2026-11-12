@@ -18,7 +18,7 @@ import { resolveBridgeTarget, type PresenceBridge } from './bridge'
 import type { TokenStore } from './bridge-token'
 import type { ClientStatus } from '../discord/detect'
 import { formatLogLine, type DiagnosticSink } from './log'
-import type { PresenceSettings } from './settings'
+import { affectsPresence, type PresenceSettings } from './settings'
 
 /**
  * Last successful publish path. `null` after a clear or before the first
@@ -426,6 +426,12 @@ export function createPresenceController({
       await schedule()
     },
     async setSettings(nextSettings) {
+      // Why: hiding a panel section is not a presence change; it must not
+      // lift a Clear hold or resend the activity.
+      if (!affectsPresence(currentSettings, nextSettings)) {
+        currentSettings = nextSettings
+        return
+      }
       holdClear = false
       const previousBridge =
         lastSink === 'bridge' && lastBridgeUrl != null

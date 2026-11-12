@@ -7,6 +7,7 @@ import {
   DEFAULT_SETTINGS,
   DETAIL_LEVELS,
   ELAPSED_MODES,
+  HIDDEN_PANEL_IDS,
   SETTING_KEYS_DECLARED,
   SHIPPED_APPLICATION_ID,
   normalizeOpenButtonLabel,
@@ -207,4 +208,21 @@ test('elapsedMode accepts state, rejects unknown', () => {
 test('showStatusBar defaults true and is a toggle field', () => {
   expect(DEFAULT_SETTINGS.showStatusBar).toBe(true)
   expect(toggleField(DEFAULT_SETTINGS, 'showStatusBar').showStatusBar).toBe(false)
+})
+
+test('hiddenPanels keeps known section ids in panel order; junk is empty', () => {
+  expect(DEFAULT_SETTINGS.hiddenPanels).toBe('')
+  expect(normalizeSettings({ hiddenPanels: 'strip,tiles' }).hiddenPanels).toBe('strip,tiles')
+  expect(normalizeSettings({ hiddenPanels: ' logs , strip ,, nope,strip' }).hiddenPanels).toBe('strip,logs')
+  expect(normalizeSettings({ hiddenPanels: 'nope' }).hiddenPanels).toBe('')
+  expect(normalizeSettings({ hiddenPanels: 42 }).hiddenPanels).toBe('')
+  expect(normalizeSettings({ hiddenPanels: ['strip'] }).hiddenPanels).toBe('')
+  expect(normalizeSettings({}).hiddenPanels).toBe('')
+  expect([...HIDDEN_PANEL_IDS]).toEqual(['preview', 'strip', 'tiles', 'sink', 'client', 'detail', 'agents', 'toggles', 'actions', 'logs'])
+})
+
+test('hiddenPanels ids match the panel section map', () => {
+  const panel = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/panel/panel.js'), 'utf8')
+  const ids = [...panel.matchAll(/^\s*\['(\w+)', '[\w-]+', '[^']+'\]/gm)].map((m) => m[1])
+  expect(ids).toEqual([...HIDDEN_PANEL_IDS])
 })

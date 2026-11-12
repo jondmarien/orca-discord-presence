@@ -2,6 +2,17 @@
 
 All notable changes to this plugin. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Each panel section has an eye button that hides it. Hidden sections are listed in a tray under the header, where you can bring back one section or all of them, and the eye button in the header shows how many are hidden. Your choice is kept across reloads and mirrored to a new **Hidden panels** setting (`hiddenPanels`). Hiding a section never changes what Discord shows and does not undo **Clear**.
+
+### Changed
+
+- The panel fits narrow sidebars without scrolling sideways. Header, legend and buttons wrap; tiles stack; below about 240px the legend shows only colours, and below about 180px the tiles become colour bars. Only the Detail level control scrolls, inside itself.
+- The panel follows Orca's light and dark theme everywhere, including the Discord preview card, the Minimal view, switches, chips and logs. The last theme is remembered so the panel opens in it.
+
 ## [1.0.3] - 2026-11-10
 
 ### Fixed

@@ -5,13 +5,43 @@
   --c-blocked: #e81010;
   --c-completed: #23a55a;
   --c-idle: #9aa3ad;
-  --c-none: #262626;
+  --c-none: color-mix(in srgb, var(--fg) 14%, var(--card));
   --c-live: #23a55a;
   --bg: var(--orca-background, #111214);
   --card: var(--orca-card, #18191b);
   --border: var(--orca-border, #2a2a2a);
   --muted-fg: var(--orca-muted-foreground, #9a9a9a);
   --fg: var(--orca-foreground, #ececec);
+  --muted: var(--orca-muted, #1d1e21);
+  --track: color-mix(in srgb, var(--fg) 30%, var(--card));
+  /* How much state hue coloured text keeps; the rest is foreground. */
+  --ink: 65%;
+}
+/* Light fallbacks for hosts that do not inject Orca variables. The theme
+   event sets data-theme; without it the OS preference decides. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: var(--orca-background, #f5f5f5);
+  --card: var(--orca-card, #ffffff);
+  --border: var(--orca-border, #e0e0e0);
+  --fg: var(--orca-foreground, #1a1a1a);
+  --muted-fg: var(--orca-muted-foreground, #666);
+  --muted: var(--orca-muted, #efeff1);
+  --ink: 40%;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --bg: var(--orca-background, #f5f5f5);
+    --card: var(--orca-card, #ffffff);
+    --border: var(--orca-border, #e0e0e0);
+    --fg: var(--orca-foreground, #1a1a1a);
+    --muted-fg: var(--orca-muted-foreground, #666);
+    --muted: var(--orca-muted, #efeff1);
+    --ink: 40%;
+  }
 }
 * {
   box-sizing: border-box;
@@ -28,11 +58,14 @@ body {
   background: var(--bg);
 }
 .frame {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.hidden {
+.hidden,
+.user-hidden,
+.collapsed {
   display: none !important;
 }
 .note,
@@ -47,9 +80,29 @@ body {
   align-items: center;
   gap: 8px;
 }
+.row > *,
+.col > * {
+  min-width: 0;
+}
 .row.top {
   align-items: flex-start;
   gap: 12px;
+}
+#status-bar {
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+#status-bar > .row:first-child {
+  flex: 1 1 auto;
+}
+#indicator-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#status-bar > .row:last-child,
+.row.g6 {
+  flex-wrap: wrap;
 }
 .col {
   display: flex;
@@ -134,6 +187,8 @@ body {
 /* Segmented controls */
 .seg {
   display: inline-flex;
+  max-width: 100%;
+  overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 2px;
@@ -141,7 +196,9 @@ body {
 }
 .seg span,
 .seg button {
+  flex: none;
   padding: 3px 9px;
+  white-space: nowrap;
   border: 0;
   border-radius: 6px;
   background: none;
@@ -182,20 +239,21 @@ body {
   opacity: 0.55;
 }
 
-/* Discord card keeps its own palette in both themes: it previews Discord. */
 .dcard {
-  background: #232428;
-  border: 1px solid #2f3136;
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px;
+}
+.dcard .head {
+  margin-bottom: 8px;
 }
 .dcard .kicker {
   font-size: 11px;
   font-weight: 700;
-  color: #b5bac1;
+  color: var(--muted-fg);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-bottom: 8px;
 }
 .dcard img {
   width: 64px;
@@ -204,15 +262,16 @@ body {
   flex: 0 0 auto;
 }
 .dtext {
+  flex: 1 1 auto;
   min-width: 0;
 }
 .dcard .t1 {
   font-weight: 700;
-  color: #f2f3f5;
+  color: var(--fg);
 }
 .dcard .t2,
 .dcard .t3 {
-  color: #dbdee1;
+  color: var(--fg);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -276,7 +335,8 @@ body {
 }
 .leg {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   margin-top: 7px;
   font-size: 11px;
   color: var(--muted-fg);
@@ -292,6 +352,10 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+/* One tile hidden: the other fills the row. */
+.tiles.single {
+  grid-template-columns: 1fr;
 }
 .tile .v {
   font-size: 18px;
@@ -333,9 +397,14 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
+.agent-row {
+  min-width: 0;
+}
 .agent-label {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   white-space: pre;
 }
 .agent-label .kind,
@@ -343,13 +412,13 @@ body {
   flex: none;
 }
 .agent-label .sep {
-  color: var(--orca-muted-foreground, #9a9a9a);
+  color: var(--muted-fg);
 }
 .agent-label .title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--orca-foreground, #ececec);
+  color: var(--fg);
 }
 .agent-label .title-inner {
   display: inline-block;
@@ -376,31 +445,30 @@ body {
 }
 .chip {
   flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 11px;
   padding: 1px 8px;
   border-radius: 999px;
   font-weight: 600;
   white-space: nowrap;
 }
+.chip {
+  background: color-mix(in srgb, var(--chip, var(--c-idle)) 15%, transparent);
+  color: color-mix(in srgb, var(--chip, var(--c-idle)) var(--ink), var(--fg));
+}
 .chip[data-state='working'] {
-  background: rgba(18, 184, 240, 0.15);
-  color: #3fc8f5;
+  --chip: var(--c-working);
 }
 .chip[data-state='waiting'] {
-  background: rgba(245, 184, 0, 0.15);
-  color: #f5c23a;
+  --chip: var(--c-waiting);
 }
 .chip[data-state='blocked'] {
-  background: rgba(232, 16, 16, 0.15);
-  color: #ff5a5a;
+  --chip: var(--c-blocked);
 }
 .chip[data-state='completed'] {
-  background: rgba(35, 165, 90, 0.15);
-  color: #3ecf7a;
-}
-.chip[data-state='idle'] {
-  background: rgba(154, 163, 173, 0.15);
-  color: #b5bcc4;
+  --chip: var(--c-completed);
 }
 
 /* Switches: real checkboxes, so keyboard and screen readers work. */
@@ -410,7 +478,7 @@ body {
   height: 16px;
   margin: 0;
   border-radius: 999px;
-  background: #3a3a3a;
+  background: var(--track);
   position: relative;
   flex: none;
   cursor: pointer;
@@ -423,7 +491,7 @@ body {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #ececec;
+  background: #fff;
 }
 .sw:checked {
   background: var(--c-working);
@@ -437,7 +505,9 @@ body {
 }
 .sw:focus-visible,
 .seg button:focus-visible,
-.icon-btn:focus-visible {
+.icon-btn:focus-visible,
+.eye-btn:focus-visible,
+.btn:focus-visible {
   outline: 2px solid var(--c-working);
   outline-offset: 1px;
 }
@@ -454,8 +524,8 @@ body {
   border: 1px solid rgba(var(--glow), 0.35);
   background:
     radial-gradient(120% 90% at 85% 15%, rgba(var(--glow), 0.45), rgba(var(--glow), 0) 60%),
-    linear-gradient(160deg, color-mix(in srgb, rgb(var(--glow)) 14%, #0d0e10), #0d0e10 70%);
-  color: #f2f3f5;
+    linear-gradient(160deg, color-mix(in srgb, rgb(var(--glow)) 14%, var(--card)), var(--card) 70%);
+  color: var(--fg);
 }
 .hero[data-state='working'] {
   --glow: 18, 184, 240;
@@ -471,7 +541,7 @@ body {
 }
 .hero .live {
   font-size: 12px;
-  color: color-mix(in srgb, rgb(var(--glow)) 35%, #fff);
+  color: color-mix(in srgb, rgb(var(--glow)) var(--ink), var(--fg));
 }
 .hero .big {
   margin-top: 14px;
@@ -481,13 +551,13 @@ body {
 .hero .tim {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  color: color-mix(in srgb, rgb(var(--glow)) 35%, #fff);
+  color: color-mix(in srgb, rgb(var(--glow)) var(--ink), var(--fg));
 }
 .hero .quote {
   max-width: 170px;
   margin-top: 10px;
   font-size: 12px;
-  color: #9a9a9a;
+  color: var(--muted-fg);
   overflow-wrap: anywhere;
 }
 .hero img {
@@ -499,6 +569,7 @@ body {
   filter: drop-shadow(0 10px 30px rgba(var(--glow), 0.35));
 }
 .pulse {
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -534,7 +605,63 @@ body {
   opacity: 0.55;
   cursor: not-allowed;
 }
+.btn.sm {
+  padding: 1px 8px;
+  font-size: 11px;
+}
 
+/* Section eyes: quiet until hovered or focused, so headers stay calm. */
+.eye-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-fg);
+  opacity: 0.6;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.eye-btn:hover,
+.eye-btn:focus-visible {
+  opacity: 1;
+  color: var(--fg);
+}
+#btn-show-all {
+  position: relative;
+}
+#btn-show-all .badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--c-working);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+#btn-show-all .badge:empty {
+  display: none;
+}
+
+.logs-box {
+  position: relative;
+}
+.logs-box > .eye-btn {
+  position: absolute;
+  top: -3px;
+  right: 0;
+}
 details.logs summary {
   cursor: pointer;
   color: var(--muted-fg);
@@ -551,7 +678,7 @@ pre.log {
   overflow: auto;
   padding: 8px;
   border-radius: 6px;
-  background: var(--orca-muted, #161616);
+  background: var(--muted);
   color: var(--fg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 10px;
@@ -562,6 +689,7 @@ pre.log {
 
 /* Refresh button: a compact icon button sized to the view switch; the icon spins while pending. */
 .icon-btn {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -595,6 +723,113 @@ pre.log {
 @media (prefers-reduced-motion: reduce) {
   .icon-btn.spin .glyph {
     animation: none;
+  }
+}
+
+/* Narrow sidebars: shed text before colour. The frame is the query
+   container; hosts without container queries get the same steps from the
+   viewport, which is the frame plus the 8px body padding on each side. */
+@container (max-width: 259px) {
+  .tiles {
+    grid-template-columns: 1fr;
+  }
+  .dcard img {
+    width: 48px;
+    height: 48px;
+  }
+  .hero img {
+    width: 88px;
+    height: 88px;
+  }
+  .hero {
+    padding-bottom: 80px;
+  }
+  .hero .big {
+    font-size: 22px;
+    overflow-wrap: anywhere;
+  }
+  .hero .quote {
+    max-width: 100%;
+  }
+}
+@container (max-width: 239px) {
+  .leg span {
+    font-size: 0;
+  }
+}
+@container (max-width: 179px) {
+  .tile .v,
+  .tile .l,
+  .tile + .tile {
+    display: none;
+  }
+  .mix {
+    height: 10px;
+    margin-top: 0;
+  }
+}
+@supports not (container-type: inline-size) {
+  @media (max-width: 275px) {
+    .tiles {
+      grid-template-columns: 1fr;
+    }
+    .dcard img {
+      width: 48px;
+      height: 48px;
+    }
+    .hero img {
+      width: 88px;
+      height: 88px;
+    }
+    .hero {
+      padding-bottom: 80px;
+    }
+    .hero .big {
+      font-size: 22px;
+      overflow-wrap: anywhere;
+    }
+    .hero .quote {
+      max-width: 100%;
+    }
+  }
+  @media (max-width: 255px) {
+    .leg span {
+      font-size: 0;
+    }
+  }
+  @media (max-width: 195px) {
+    .tile .v,
+    .tile .l,
+    .tile + .tile {
+      display: none;
+    }
+    .mix {
+      height: 10px;
+      margin-top: 0;
+    }
+  }
+}
+@supports not (color: color-mix(in srgb, red 50%, blue)) {
+  :root {
+    --c-none: #262626;
+    --track: #45464b;
+  }
+  :root[data-theme='light'] {
+    --c-none: #e4e4e7;
+    --track: #c9c9ce;
+  }
+  .hero {
+    background:
+      radial-gradient(120% 90% at 85% 15%, rgba(var(--glow), 0.45), rgba(var(--glow), 0) 60%),
+      var(--card);
+  }
+  .hero .live,
+  .hero .tim {
+    color: rgb(var(--glow));
+  }
+  .chip {
+    background: var(--muted);
+    color: var(--fg);
   }
 }
 

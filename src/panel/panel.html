@@ -30,12 +30,28 @@
             <button type="button" class="on" id="view-full">Full</button>
             <button type="button" id="view-minimal">Minimal</button>
           </div>
+          <button type="button" class="icon-btn" id="btn-show-all" aria-label="Show hidden sections" title="Show all hidden sections" disabled>
+            <svg class="glyph" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2"/><path d="M6.6 6.6A17.4 17.4 0 0 0 2 12s3.5 7 10 7a10.6 10.6 0 0 0 5.4-1.4"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg><span class="badge" id="show-all-count"></span>
+          </button>
           <button type="button" class="icon-btn" id="btn-refresh" aria-label="Refresh" title="Refresh now">
             <svg class="glyph" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/></svg>
           </button>
         </div>
       </header>
       <p class="flash" id="flash"></p>
+      <div class="row g6 hidden" id="hidden-tray">
+        <span class="muted small" id="hidden-tray-label">Hidden (0)</span>
+        <button type="button" class="btn sm" id="tray-show-all">Show all</button>
+        <div class="row g6" id="hidden-chips"></div>
+      </div>
+
+      <div class="row g6" id="actions-row">
+        <button type="button" class="btn" id="btn-reload">Reload</button>
+        <button type="button" class="btn" id="btn-clear">Clear</button>
+        <button type="button" class="btn" id="btn-toggle">Pause</button>
+        <button type="button" class="btn push" id="btn-status">Status</button>
+        <button type="button" class="eye-btn" id="eye-actions" data-hide="actions" aria-pressed="false" aria-label="Hide actions" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
 
       <section class="hero hidden" id="min-hero" data-state="idle" aria-label="Current state">
         <div class="row"><span class="pulse" aria-hidden="true"></span><span class="live">Live on Discord</span></div>
@@ -47,7 +63,7 @@
 
       <div class="col" id="full-a">
       <section class="dcard" aria-label="Discord profile preview">
-        <div class="kicker">Playing a game</div>
+        <div class="row between head"><div class="kicker">Playing a game</div><button type="button" class="eye-btn" id="eye-preview" data-hide="preview" aria-pressed="false" aria-label="Hide Discord preview" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         <div class="row top">
           <img id="dcard-img" src="../assets/state-idle.png" alt="" width="64" height="64" />
           <div class="dtext">
@@ -63,7 +79,7 @@
       <section class="card" id="strip-card" aria-label="Last 30 minutes">
         <div class="row between mb6">
           <span class="h">Last 30 min</span>
-          <span class="muted small">now →</span>
+          <span class="row g6"><span class="muted small">now →</span><button type="button" class="eye-btn" id="eye-strip" data-hide="strip" aria-pressed="false" aria-label="Hide Last 30 min" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span>
         </div>
         <div class="strip" id="strip"></div>
         <div class="leg">
@@ -76,13 +92,13 @@
       </section>
 
       <div class="tiles" id="full-b">
-        <div class="card tile">
-          <div class="l">Agents</div>
+        <div class="card tile" id="tile-agents-card">
+          <div class="row between"><div class="l">Agents</div><button type="button" class="eye-btn" id="eye-tiles" data-hide="tiles" aria-pressed="false" aria-label="Hide Agents tile" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
           <div class="v" id="tile-agents">0</div>
           <div class="mix" id="tile-mix"></div>
         </div>
-        <div class="card tile">
-          <div class="l">Sending to</div>
+        <div class="card tile" id="tile-sink-card">
+          <div class="row between"><div class="l">Sending to</div><button type="button" class="eye-btn" id="eye-sink" data-hide="sink" aria-pressed="false" aria-label="Hide Sending to" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
           <div class="v" id="tile-sink">Off</div>
           <div class="l" id="tile-sink-sub">Not connected</div>
         </div>
@@ -90,26 +106,26 @@
 
       <div class="col" id="full-d">
       <section class="card hidden" id="client-card" aria-label="Discord client">
-        <div class="h mb6">Discord client</div>
+        <div class="row between mb6"><span class="h">Discord client</span><button type="button" class="eye-btn" id="eye-client" data-hide="client" aria-pressed="false" aria-label="Hide Discord client" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         <select class="select" id="client-select" aria-label="Discord client"></select>
         <p class="muted small hidden" id="client-note"></p>
       </section>
       </div>
 
       <section class="card" id="detail-card" aria-label="Detail level">
-        <div class="h mb6">Detail level</div>
+        <div class="row between mb6"><span class="h">Detail level</span><button type="button" class="eye-btn" id="eye-detail" data-hide="detail" aria-pressed="false" aria-label="Hide Detail level" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         <div class="seg" id="detail-seg" role="group" aria-label="Detail level"></div>
       </section>
 
       <div class="col" id="full-c">
-      <section class="card col" aria-label="Agents">
-        <div class="h">Agents</div>
+      <section class="card col" id="agents-card" aria-label="Agents">
+        <div class="row between"><span class="h">Agents</span><button type="button" class="eye-btn" id="eye-agents" data-hide="agents" aria-pressed="false" aria-label="Hide Agents" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         <div class="col g6" id="agents-list"></div>
         <div class="muted small" id="agents-empty">No agents yet</div>
       </section>
 
-      <section class="card col g7" aria-label="Show on Discord">
-        <div class="h">Show on Discord</div>
+      <section class="card col g7" id="toggles-card" aria-label="Show on Discord">
+        <div class="row between"><span class="h">Show on Discord</span><button type="button" class="eye-btn" id="eye-toggles" data-hide="toggles" aria-pressed="false" aria-label="Hide Show on Discord" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         <div class="row between"><span>Agent state</span><input type="checkbox" class="sw" id="sw-showAgentState" role="switch" /></div>
         <div class="row between"><span>Agent count</span><input type="checkbox" class="sw" id="sw-showAgentCount" role="switch" /></div>
         <div class="row between"><span>Elapsed timer</span><input type="checkbox" class="sw" id="sw-showElapsed" role="switch" /></div>
@@ -118,14 +134,9 @@
         <div class="row between"><span>Machine name</span><input type="checkbox" class="sw" id="sw-showMachine" role="switch" /></div>
       </section>
 
-      <div class="row g6">
-        <button type="button" class="btn" id="btn-reload">Reload</button>
-        <button type="button" class="btn" id="btn-clear">Clear</button>
-        <button type="button" class="btn" id="btn-toggle">Pause</button>
-        <button type="button" class="btn push" id="btn-status">Status</button>
-      </div>
-
-      <details class="logs" id="logs-box">
+      <div class="logs-box" id="logs-box">
+        <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <details class="logs">
         <summary id="logs-summary">Logs</summary>
         <div class="log-toolbar">
           <button type="button" class="btn" id="btn-log-clear">Clear view</button>
@@ -133,6 +144,7 @@
         </div>
         <pre class="log" id="log-view">No log lines yet. Click Status to generate some.</pre>
       </details>
+      </div>
       </div>
     </div>
 

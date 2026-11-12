@@ -44,6 +44,23 @@ export const ELAPSED_MODES = ['session', 'state'] as const
 export type ElapsedMode = (typeof ELAPSED_MODES)[number]
 
 /**
+ * Panel sections the user may hide, in panel order. Must match
+ * `PANEL_SECTIONS` in `src/panel/panel.js` (a test pins both).
+ */
+export const HIDDEN_PANEL_IDS = [
+  'preview',
+  'strip',
+  'tiles',
+  'sink',
+  'client',
+  'detail',
+  'agents',
+  'toggles',
+  'actions',
+  'logs'
+] as const
+
+/**
  * Persisted plugin settings. Every identifying field is opt-in except the
  * non-identifying defaults (`enabled`, `generic` detail, agent state, elapsed).
  */
@@ -119,6 +136,11 @@ export type PresenceSettings = {
    * running falls back to auto order (`clientFallback` in the status).
    */
   discordClient: string
+  /**
+   * Comma list of hidden panel sections ({@link HIDDEN_PANEL_IDS}). Mirrors
+   * the panel's own storage so the Settings page can show and edit it.
+   */
+  hiddenPanels: string
 }
 
 /**
@@ -180,7 +202,8 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   showOpenButton: false,
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
   showAgentCount: false,
-  discordClient: 'auto'
+  discordClient: 'auto',
+  hiddenPanels: ''
 })
 
 /**
@@ -248,6 +271,21 @@ export function normalizeOpenUrl(value: unknown): string {
 }
 
 /**
+ * Keep the known section ids of a comma list, deduplicated, in panel order.
+ * Anything that is not a string (or names no section) becomes `""`.
+ *
+ * @param value - Raw settings value.
+ * @returns A normalized comma list.
+ */
+export function normalizeHiddenPanels(value: unknown): string {
+  if (typeof value !== 'string') {
+    return ''
+  }
+  const requested = new Set(value.split(',').map((id) => id.trim()))
+  return HIDDEN_PANEL_IDS.filter((id) => requested.has(id)).join(',')
+}
+
+/**
  * Coerce a Discord button label to 1–32 characters. Empty → default.
  *
  * @param value - Raw settings value.
@@ -312,7 +350,25 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
     typeof source.discordClient === 'string' && source.discordClient.trim().length > 0
       ? source.discordClient.trim().slice(0, 64)
       : DEFAULT_SETTINGS.discordClient
+  settings.hiddenPanels = normalizeHiddenPanels(source.hiddenPanels)
   return settings
+}
+
+/**
+ * Settings that only shape the panel, never what Discord receives.
+ */
+const PANEL_ONLY_KEYS: ReadonlySet<keyof PresenceSettings> = new Set(['hiddenPanels'])
+
+/**
+ * True when any setting other than panel layout differs between `a` and `b`.
+ *
+ * @param a - Previous settings.
+ * @param b - Next settings.
+ */
+export function affectsPresence(a: PresenceSettings, b: PresenceSettings): boolean {
+  return (Object.keys(DEFAULT_SETTINGS) as (keyof PresenceSettings)[]).some(
+    (key) => !PANEL_ONLY_KEYS.has(key) && a[key] !== b[key]
+  )
 }
 
 /**
