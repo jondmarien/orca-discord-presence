@@ -33,7 +33,8 @@ body {
   flex-direction: column;
   gap: 10px;
 }
-.hidden {
+.hidden,
+.user-hidden {
   display: none !important;
 }
 .note,
@@ -214,13 +215,15 @@ body {
   border-radius: 10px;
   padding: 12px;
 }
+.dcard .head {
+  margin-bottom: 8px;
+}
 .dcard .kicker {
   font-size: 11px;
   font-weight: 700;
   color: #b5bac1;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-bottom: 8px;
 }
 .dcard img {
   width: 64px;
@@ -472,7 +475,9 @@ body {
 }
 .sw:focus-visible,
 .seg button:focus-visible,
-.icon-btn:focus-visible {
+.icon-btn:focus-visible,
+.eye-btn:focus-visible,
+.btn:focus-visible {
   outline: 2px solid var(--c-working);
   outline-offset: 1px;
 }
@@ -569,6 +574,54 @@ body {
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+.btn.sm {
+  padding: 1px 8px;
+  font-size: 11px;
+}
+
+/* Section eyes: quiet until hovered or focused, so headers stay calm. */
+.eye-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-fg);
+  opacity: 0.6;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.eye-btn:hover,
+.eye-btn:focus-visible {
+  opacity: 1;
+  color: var(--fg);
+}
+#btn-show-all {
+  position: relative;
+}
+#btn-show-all .badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--c-working);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+#btn-show-all .badge:empty {
+  display: none;
 }
 
 details.logs summary {

@@ -646,3 +646,135 @@ test('refresh button reports a failed request', async () => {
   expect(byId.get('flash')?.textContent).toContain('worker busy')
   expect(button.disabled).toBe(false)
 })
+
+const SECTION_ELEMENTS: Record<string, string> = {
+  preview: 'full-a',
+  strip: 'strip-card',
+  tiles: 'full-b',
+  client: 'client-card',
+  detail: 'detail-card',
+  agents: 'agents-card',
+  toggles: 'toggles-card',
+  actions: 'actions-row',
+  logs: 'logs-box'
+}
+const userHidden = (byId: Map<string, FakeElement>, section: string) =>
+  byId.get(SECTION_ELEMENTS[section])?.className.split(/\s+/).includes('user-hidden')
+
+/** Host whose storage holds `panelHidden`; every call is recorded as JSON. */
+function hiddenHost(stored: unknown, calls: string[] = []) {
+  return async (name: string, input: Record<string, unknown>) => {
+    calls.push(JSON.stringify([name, input]))
+    if (name === 'storage.get') return input.key === 'panelHidden' ? stored : undefined
+    return undefined
+  }
+}
+
+test('every hideable section has an eye button; header has show-all and the tray', () => {
+  const html = buildPanelHtml()
+  for (const [section, elementId] of Object.entries(SECTION_ELEMENTS)) {
+    expect(html).toContain(`id="${elementId}"`)
+    expect(html).toMatch(new RegExp(`<button[^>]*id="eye-${section}"[^>]*data-hide="${section}"[^>]*aria-pressed="false"`))
+  }
+  expect(html).toContain('id="btn-show-all"')
+  expect(html).toContain('id="hidden-tray"')
+  // Show-all sits between the view switch and refresh.
+  expect(html.indexOf('id="view-switch"')).toBeLessThan(html.indexOf('id="btn-show-all"'))
+  expect(html.indexOf('id="btn-show-all"')).toBeLessThan(html.indexOf('id="btn-refresh"'))
+})
+
+test('eye hides its section, fills the tray, and persists to storage and settings', async () => {
+  const calls: string[] = []
+  const { byId } = mountPanel(hiddenHost(undefined, calls))
+  await settle()
+  const showAll = byId.get('btn-show-all') as FakeElement
+  expect(showAll.disabled).toBe(true)
+  expect(hidden(byId, 'hidden-tray')).toBe(true)
+  byId.get('eye-strip')?.dispatch('click')
+  byId.get('eye-logs')?.dispatch('click')
+  await settle()
+  expect(userHidden(byId, 'strip')).toBe(true)
+  expect(userHidden(byId, 'logs')).toBe(true)
+  expect(userHidden(byId, 'detail')).toBe(false)
+  expect(byId.get('eye-strip')?.getAttribute('aria-pressed')).toBe('true')
+  expect(showAll.disabled).toBe(false)
+  expect(byId.get('show-all-count')?.textContent).toBe('2')
+  expect(hidden(byId, 'hidden-tray')).toBe(false)
+  expect(byId.get('hidden-tray-label')?.textContent).toBe('Hidden (2)')
+  expect(byId.get('hidden-chips')?.children.map((c) => c.textContent)).toEqual(['Last 30 min', 'Logs'])
+  expect(calls).toContain(JSON.stringify(['storage.set', { key: 'panelHidden', value: ['strip', 'logs'] }]))
+  expect(calls).toContain(JSON.stringify(['settings.set', { key: 'hiddenPanels', value: 'strip,logs' }]))
+  // A restore chip brings back one section; show-all brings back the rest.
+  byId.get('hidden-chips')?.children[0]?.dispatch('click')
+  expect(userHidden(byId, 'strip')).toBe(false)
+  expect(userHidden(byId, 'logs')).toBe(true)
+  showAll.dispatch('click')
+  expect(userHidden(byId, 'logs')).toBe(false)
+  expect(hidden(byId, 'hidden-tray')).toBe(true)
+  expect(showAll.disabled).toBe(true)
+  await settle()
+  expect(calls.at(-1)).toBe(JSON.stringify(['settings.set', { key: 'hiddenPanels', value: '' }]))
+})
+
+test('tray show-all restores every section', async () => {
+  const { byId } = mountPanel(hiddenHost(['tiles', 'agents']))
+  await settle()
+  byId.get('tray-show-all')?.dispatch('click')
+  expect(userHidden(byId, 'tiles')).toBe(false)
+  expect(userHidden(byId, 'agents')).toBe(false)
+})
+
+test('stored panelHidden applies on load; junk is ignored', async () => {
+  const { byId } = mountPanel(hiddenHost(['tiles', 'nope', 'logs', 7]))
+  await settle()
+  expect(userHidden(byId, 'tiles')).toBe(true)
+  expect(userHidden(byId, 'logs')).toBe(true)
+  expect(byId.get('hidden-tray-label')?.textContent).toBe('Hidden (2)')
+  const wrapped = mountPanel(hiddenHost({ value: ['agents'] }))
+  await settle()
+  expect(userHidden(wrapped.byId, 'agents')).toBe(true)
+  for (const junk of ['strip', 42, null, { value: 'strip' }, { nope: 1 }]) {
+    const { byId: b, hook } = mountPanel(hiddenHost(junk))
+    await settle()
+    hook?.render(fullSnapshot([]))
+    expect(Object.keys(SECTION_ELEMENTS).some((s) => userHidden(b, s))).toBe(false)
+    expect(b.get('agents-list')?.children.length).toBe(3)
+  }
+})
+
+test('settings hiddenPanels applies when storage is empty; storage wins when present', async () => {
+  const fromSettings = mountPanel(hiddenHost(undefined))
+  await settle()
+  fromSettings.hook?.render({ ...fullSnapshot([]), hidden: ['detail'] })
+  expect(userHidden(fromSettings.byId, 'detail')).toBe(true)
+  const calls: string[] = []
+  const stored = mountPanel(hiddenHost(['strip'], calls))
+  await settle()
+  stored.hook?.render({ ...fullSnapshot([]), hidden: ['detail'] })
+  expect(userHidden(stored.byId, 'strip')).toBe(true)
+  expect(userHidden(stored.byId, 'detail')).toBe(false)
+  // A later change to the setting (the Settings page) is adopted and stored.
+  stored.hook?.render({ ...fullSnapshot([]), hidden: ['detail', 'toggles'] })
+  expect(userHidden(stored.byId, 'strip')).toBe(false)
+  expect(userHidden(stored.byId, 'toggles')).toBe(true)
+  await settle()
+  expect(calls).toContain(JSON.stringify(['storage.set', { key: 'panelHidden', value: ['detail', 'toggles'] }]))
+})
+
+test('a hidden client card stays hidden when clients are detected', async () => {
+  const { byId, hook } = mountPanel(hiddenHost(['client']))
+  await settle()
+  hook?.render(fullSnapshot([]))
+  expect(hidden(byId, 'client-card')).toBe(false)
+  expect(userHidden(byId, 'client')).toBe(true)
+})
+
+test('minimal view respects the hidden set for shared sections', async () => {
+  const host = async (name: string, input: Record<string, unknown>) =>
+    name === 'storage.get' ? (input.key === 'panelHidden' ? ['strip'] : 'minimal') : undefined
+  const { byId } = mountPanel(host)
+  await settle()
+  expect(hidden(byId, 'min-hero')).toBe(false)
+  expect(userHidden(byId, 'strip')).toBe(true)
+  expect(userHidden(byId, 'detail')).toBe(false)
+})

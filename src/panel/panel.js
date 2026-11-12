@@ -27,6 +27,22 @@ var DETAIL_LEVELS = [
 ]
 var VIEW_KEY = 'panelView'
 var FULL_ONLY_IDS = ['full-a', 'full-b', 'full-c', 'full-d']
+// Hideable sections: [id kept in storage and the hiddenPanels setting, element id, label].
+// The ids must match HIDDEN_PANEL_IDS in src/presence/settings.ts.
+var PANEL_SECTIONS = [
+  ['preview', 'full-a', 'Discord preview'],
+  ['strip', 'strip-card', 'Last 30 min'],
+  ['tiles', 'full-b', 'Tiles'],
+  ['client', 'client-card', 'Discord client'],
+  ['detail', 'detail-card', 'Detail level'],
+  ['agents', 'agents-card', 'Agents'],
+  ['toggles', 'toggles-card', 'Show on Discord'],
+  ['actions', 'actions-row', 'Actions'],
+  ['logs', 'logs-box', 'Logs']
+]
+var HIDDEN_KEY = 'panelHidden'
+var HIDDEN_SETTING = 'hiddenPanels'
+var SETTINGS_MIRROR_DELAY_MS = 400
 var SWITCH_FIELDS = ['showAgentState', 'showAgentCount', 'showElapsed', 'showBranch', 'showTerminals', 'showMachine']
 
 function $(id) {
@@ -323,6 +339,7 @@ function render(snapshot) {
   setText('indicator-label', indicatorLabel(snapshot))
   if (!snapshot || !snapshot.status) return
   lastSnapshot = snapshot
+  syncHiddenSetting(snapshot)
   var fields = snapshot.fields || {}
   minAgents = Array.isArray(snapshot.agents) ? snapshot.agents.length : 0
   renderCard(snapshot)
@@ -534,6 +551,142 @@ function chooseView(next) {
     })
 }
 
+// Hidden sections: storage `panelHidden` is the runtime source; the
+// `hiddenPanels` setting mirrors it for the Settings page and arrives in the
+// snapshot as `hidden`. Storage wins on load whichever answer lands first; a
+// later change to the setting (a Settings page edit) is adopted. Junk in
+// either source is ignored. A separate class keeps this apart from the
+// `hidden` class that views and the client card toggle.
+var hiddenIds = []
+var hiddenFromStorage = false
+var settingsHiddenSig = null
+var settingsTimer = null
+
+function normalizeHidden(list) {
+  if (!Array.isArray(list)) return null
+  return PANEL_SECTIONS.map(function (s) {
+    return s[0]
+  }).filter(function (id) {
+    return list.indexOf(id) !== -1
+  })
+}
+
+function callHost(name, input) {
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') return
+  Promise.resolve()
+    .then(function () {
+      return host.call(name, input)
+    })
+    .catch(function () {
+      // Why: hiding still applies for this session when it cannot be saved.
+    })
+}
+
+function applyHidden(list) {
+  hiddenIds = list
+  PANEL_SECTIONS.forEach(function (s) {
+    var off = hiddenIds.indexOf(s[0]) !== -1
+    setClass($(s[1]), 'user-hidden', off)
+    setAttr($('eye-' + s[0]), 'aria-pressed', off ? 'true' : 'false')
+  })
+  renderTray()
+}
+
+var traySignature = null
+function renderTray() {
+  var count = hiddenIds.length
+  setClass($('hidden-tray'), 'hidden', count === 0)
+  setText('hidden-tray-label', 'Hidden (' + count + ')')
+  setText('show-all-count', count || '')
+  $('btn-show-all').disabled = count === 0
+  var signature = hiddenIds.join(',')
+  if (signature === traySignature) return
+  traySignature = signature
+  var box = $('hidden-chips')
+  clearChildren(box)
+  PANEL_SECTIONS.forEach(function (s) {
+    if (hiddenIds.indexOf(s[0]) === -1) return
+    var chip = document.createElement('button')
+    chip.setAttribute('type', 'button')
+    chip.className = 'btn sm'
+    chip.setAttribute('aria-label', 'Show ' + s[2])
+    chip.textContent = s[2]
+    chip.addEventListener('click', function () {
+      setHidden(
+        hiddenIds.filter(function (id) {
+          return id !== s[0]
+        })
+      )
+    })
+    box.appendChild(chip)
+  })
+}
+
+function setHidden(list) {
+  hiddenFromStorage = true
+  applyHidden(normalizeHidden(list))
+  callHost('storage.set', { key: HIDDEN_KEY, value: hiddenIds.slice() })
+  var mirror = function () {
+    settingsTimer = null
+    callHost('settings.set', { key: HIDDEN_SETTING, value: hiddenIds.join(',') })
+  }
+  if (typeof setTimeout !== 'function') return mirror()
+  if (settingsTimer) clearTimeout(settingsTimer)
+  settingsTimer = setTimeout(mirror, SETTINGS_MIRROR_DELAY_MS)
+}
+
+function loadHidden() {
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') return Promise.resolve()
+  return Promise.resolve()
+    .then(function () {
+      return host.call('storage.get', { key: HIDDEN_KEY })
+    })
+    .then(
+      function (result) {
+        var list = normalizeHidden(Array.isArray(result) ? result : storedView(result))
+        // Why: a toggle made before storage answered is newer than what it holds.
+        if (!list || hiddenFromStorage) return
+        hiddenFromStorage = true
+        applyHidden(list)
+      },
+      function () {}
+    )
+}
+
+function syncHiddenSetting(snapshot) {
+  var list = normalizeHidden(snapshot.hidden)
+  if (!list) return
+  var signature = list.join(',')
+  if (signature === settingsHiddenSig) return
+  var first = settingsHiddenSig === null
+  settingsHiddenSig = signature
+  if ((first && hiddenFromStorage) || signature === hiddenIds.join(',')) return
+  applyHidden(list)
+  if (!first) {
+    hiddenFromStorage = true
+    callHost('storage.set', { key: HIDDEN_KEY, value: list.slice() })
+  }
+}
+
+function wireHidden() {
+  PANEL_SECTIONS.forEach(function (s) {
+    $('eye-' + s[0]).addEventListener('click', function (event) {
+      // Why: the logs eye sits in <summary>; a click must not fold the logs.
+      if (event && event.preventDefault) event.preventDefault()
+      setHidden(hiddenIds.concat(s[0]))
+    })
+  })
+  var showAll = function () {
+    setHidden([])
+  }
+  $('btn-show-all').addEventListener('click', showAll)
+  $('tray-show-all').addEventListener('click', showAll)
+  renderTray()
+  loadHidden()
+}
+
 function request(name, input) {
   return orca.plugin.request(name, input, { timeoutMs: REQUEST_TIMEOUT_MS })
 }
@@ -634,6 +787,7 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
     chooseView('minimal')
   })
   loadView()
+  wireHidden()
   $('btn-refresh').addEventListener('click', forceRefresh)
   $('btn-status').addEventListener('click', function () {
     run('presence.status', 'Status sent as a notification.')
