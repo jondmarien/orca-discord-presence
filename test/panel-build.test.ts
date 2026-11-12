@@ -657,7 +657,8 @@ test('refresh button reports a failed request', async () => {
 const SECTION_ELEMENTS: Record<string, string> = {
   preview: 'full-a',
   strip: 'strip-card',
-  tiles: 'full-b',
+  tiles: 'tile-agents-card',
+  sink: 'tile-sink-card',
   client: 'client-card',
   detail: 'detail-card',
   agents: 'agents-card',
@@ -729,6 +730,24 @@ test('tray show-all restores every section', async () => {
   byId.get('tray-show-all')?.dispatch('click')
   expect(userHidden(byId, 'tiles')).toBe(false)
   expect(userHidden(byId, 'agents')).toBe(false)
+})
+
+test('agents and sending-to tiles hide independently; survivor fills the row', async () => {
+  const { byId } = mountPanel(hiddenHost(undefined))
+  await settle()
+  byId.get('eye-tiles')?.dispatch('click')
+  await settle()
+  expect(userHidden(byId, 'tiles')).toBe(true)
+  expect(userHidden(byId, 'sink')).toBe(false)
+  expect(byId.get('full-b')?.className.split(/\s+/).includes('single')).toBe(true)
+  byId.get('eye-sink')?.dispatch('click')
+  await settle()
+  expect(userHidden(byId, 'sink')).toBe(true)
+  expect(byId.get('full-b')?.className.split(/\s+/).includes('collapsed')).toBe(true)
+  byId.get('tray-show-all')?.dispatch('click')
+  expect(userHidden(byId, 'tiles')).toBe(false)
+  expect(userHidden(byId, 'sink')).toBe(false)
+  expect(byId.get('full-b')?.className.split(/\s+/).includes('single')).toBe(false)
 })
 
 test('stored panelHidden applies on load; junk is ignored', async () => {

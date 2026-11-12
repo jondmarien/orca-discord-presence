@@ -353,6 +353,10 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+/* One tile hidden: the other fills the row. */
+.tiles.single {
+  grid-template-columns: 1fr;
+}
 .tile .v {
   font-size: 18px;
   font-weight: 600;

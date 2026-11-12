@@ -218,7 +218,7 @@ test('hiddenPanels keeps known section ids in panel order; junk is empty', () =>
   expect(normalizeSettings({ hiddenPanels: 42 }).hiddenPanels).toBe('')
   expect(normalizeSettings({ hiddenPanels: ['strip'] }).hiddenPanels).toBe('')
   expect(normalizeSettings({}).hiddenPanels).toBe('')
-  expect([...HIDDEN_PANEL_IDS]).toEqual(['preview', 'strip', 'tiles', 'client', 'detail', 'agents', 'toggles', 'actions', 'logs'])
+  expect([...HIDDEN_PANEL_IDS]).toEqual(['preview', 'strip', 'tiles', 'sink', 'client', 'detail', 'agents', 'toggles', 'actions', 'logs'])
 })
 
 test('hiddenPanels ids match the panel section map', () => {

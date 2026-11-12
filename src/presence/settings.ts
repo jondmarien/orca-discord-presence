@@ -51,6 +51,7 @@ export const HIDDEN_PANEL_IDS = [
   'preview',
   'strip',
   'tiles',
+  'sink',
   'client',
   'detail',
   'agents',

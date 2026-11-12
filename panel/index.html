@@ -368,6 +368,10 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
+/* One tile hidden: the other fills the row. */
+.tiles.single {
+  grid-template-columns: 1fr;
+}
 .tile .v {
   font-size: 18px;
   font-weight: 600;
@@ -921,13 +925,13 @@ pre.log {
       </section>
 
       <div class="tiles" id="full-b">
-        <div class="card tile">
-          <div class="row between"><div class="l">Agents</div><button type="button" class="eye-btn" id="eye-tiles" data-hide="tiles" aria-pressed="false" aria-label="Hide tiles" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
+        <div class="card tile" id="tile-agents-card">
+          <div class="row between"><div class="l">Agents</div><button type="button" class="eye-btn" id="eye-tiles" data-hide="tiles" aria-pressed="false" aria-label="Hide Agents tile" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
           <div class="v" id="tile-agents">0</div>
           <div class="mix" id="tile-mix"></div>
         </div>
-        <div class="card tile">
-          <div class="row between"><div class="l">Sending to</div><button type="button" class="eye-btn" id="eye-tiles-sink" data-hide="tiles" aria-pressed="false" aria-label="Hide tiles" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
+        <div class="card tile" id="tile-sink-card">
+          <div class="row between"><div class="l">Sending to</div><button type="button" class="eye-btn" id="eye-sink" data-hide="sink" aria-pressed="false" aria-label="Hide Sending to" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
           <div class="v" id="tile-sink">Off</div>
           <div class="l" id="tile-sink-sub">Not connected</div>
         </div>
@@ -1014,7 +1018,8 @@ var FULL_ONLY_IDS = ['actions-row', 'full-a', 'full-b', 'full-c', 'full-d']
 var PANEL_SECTIONS = [
   ['preview', 'full-a', 'Discord preview'],
   ['strip', 'strip-card', 'Last 30 min'],
-  ['tiles', 'full-b', 'Tiles'],
+  ['tiles', 'tile-agents-card', 'Agents tile'],
+  ['sink', 'tile-sink-card', 'Sending to'],
   ['client', 'client-card', 'Discord client'],
   ['detail', 'detail-card', 'Detail level'],
   ['agents', 'agents-card', 'Agents'],
@@ -1587,7 +1592,7 @@ function applyHidden(list) {
 // every child hides (user-hidden or the client card's own `hidden`), leaving
 // a double gap. A separate `collapsed` class keeps this apart from the
 // `hidden` class that views toggle.
-var WRAPPER_IDS = ['full-a', 'full-c', 'full-d']
+var WRAPPER_IDS = ['full-a', 'full-b', 'full-c', 'full-d']
 function hasClass(el, name) {
   return !!el && (' ' + el.className + ' ').indexOf(' ' + name + ' ') !== -1
 }
@@ -1605,6 +1610,14 @@ function collapseWrappers() {
     }
     setClass(el, 'collapsed', !anyVisible)
   })
+  // Why: one hidden tile leaves a half-empty row; the survivor fills it.
+  // Derived from state, not DOM children, so it works wherever applyHidden runs.
+  var tiles = $('full-b')
+  if (tiles) {
+    var tilesHidden = hiddenIds.indexOf('tiles') !== -1
+    var sinkHidden = hiddenIds.indexOf('sink') !== -1
+    setClass(tiles, 'single', tilesHidden !== sinkHidden)
+  }
 }
 
 var traySignature = null
@@ -1700,10 +1713,6 @@ function wireHidden() {
     $('eye-' + s[0]).addEventListener('click', function () {
       setHidden(hiddenIds.concat(s[0]))
     })
-  })
-  // Why: tiles hide as one unit but each tile carries its own eye.
-  $('eye-tiles-sink').addEventListener('click', function () {
-    setHidden(hiddenIds.concat('tiles'))
   })
   var showAll = function () {
     setHidden([])

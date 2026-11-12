@@ -32,7 +32,8 @@ var FULL_ONLY_IDS = ['actions-row', 'full-a', 'full-b', 'full-c', 'full-d']
 var PANEL_SECTIONS = [
   ['preview', 'full-a', 'Discord preview'],
   ['strip', 'strip-card', 'Last 30 min'],
-  ['tiles', 'full-b', 'Tiles'],
+  ['tiles', 'tile-agents-card', 'Agents tile'],
+  ['sink', 'tile-sink-card', 'Sending to'],
   ['client', 'client-card', 'Discord client'],
   ['detail', 'detail-card', 'Detail level'],
   ['agents', 'agents-card', 'Agents'],
@@ -605,7 +606,7 @@ function applyHidden(list) {
 // every child hides (user-hidden or the client card's own `hidden`), leaving
 // a double gap. A separate `collapsed` class keeps this apart from the
 // `hidden` class that views toggle.
-var WRAPPER_IDS = ['full-a', 'full-c', 'full-d']
+var WRAPPER_IDS = ['full-a', 'full-b', 'full-c', 'full-d']
 function hasClass(el, name) {
   return !!el && (' ' + el.className + ' ').indexOf(' ' + name + ' ') !== -1
 }
@@ -623,6 +624,14 @@ function collapseWrappers() {
     }
     setClass(el, 'collapsed', !anyVisible)
   })
+  // Why: one hidden tile leaves a half-empty row; the survivor fills it.
+  // Derived from state, not DOM children, so it works wherever applyHidden runs.
+  var tiles = $('full-b')
+  if (tiles) {
+    var tilesHidden = hiddenIds.indexOf('tiles') !== -1
+    var sinkHidden = hiddenIds.indexOf('sink') !== -1
+    setClass(tiles, 'single', tilesHidden !== sinkHidden)
+  }
 }
 
 var traySignature = null
@@ -718,10 +727,6 @@ function wireHidden() {
     $('eye-' + s[0]).addEventListener('click', function () {
       setHidden(hiddenIds.concat(s[0]))
     })
-  })
-  // Why: tiles hide as one unit but each tile carries its own eye.
-  $('eye-tiles-sink').addEventListener('click', function () {
-    setHidden(hiddenIds.concat('tiles'))
   })
   var showAll = function () {
     setHidden([])
