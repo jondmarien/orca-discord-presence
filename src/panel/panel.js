@@ -762,9 +762,38 @@ function wireLogs() {
   })
 }
 
-function applyTheme(payload) {
+// Theme: the host event is the source; the last one is stored so the next
+// load paints in the right theme before the host speaks. Junk is ignored.
+var THEME_KEY = 'panelTheme'
+var themeFromEvent = false
+
+function themeOf(payload) {
   var theme = typeof payload === 'string' ? payload : payload && (payload.theme || payload.mode)
-  if (theme === 'light' || theme === 'dark') document.documentElement.setAttribute('data-theme', theme)
+  return theme === 'light' || theme === 'dark' ? theme : null
+}
+
+function applyTheme(payload) {
+  var theme = themeOf(payload)
+  if (!theme) return
+  themeFromEvent = true
+  setAttr(document.documentElement, 'data-theme', theme)
+  callHost('storage.set', { key: THEME_KEY, value: theme })
+}
+
+function loadTheme() {
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') return Promise.resolve()
+  return Promise.resolve()
+    .then(function () {
+      return host.call('storage.get', { key: THEME_KEY })
+    })
+    .then(
+      function (result) {
+        var theme = themeOf(storedView(result))
+        if (theme && !themeFromEvent) setAttr(document.documentElement, 'data-theme', theme)
+      },
+      function () {}
+    )
 }
 
 // Why: tests only. Non-enumerable so it never shows up when iterating window.
@@ -804,6 +833,7 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
   if (typeof orca.plugin.on === 'function') {
     orca.plugin.on('presence.snapshot', render)
   }
+  loadTheme()
   if (typeof orca.on === 'function') {
     try {
       orca.on('theme', applyTheme)

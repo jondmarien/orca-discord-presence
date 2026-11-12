@@ -241,16 +241,17 @@ function mountPanel(
 ) {
   const html = buildPanelHtml()
   const { byId, document } = makeDom(html)
+  const hostEvents = new Map<string, (payload: unknown) => void>()
   const orca = {
     plugin: { request: pluginRequest ?? (() => new Promise(() => {})), on() {} },
     host: { has: () => false, ...(hostCall ? { call: hostCall } : {}) },
-    on() {}
+    on: (name: string, fn: (payload: unknown) => void) => void hostEvents.set(name, fn)
   }
   const sandbox = vm.createContext({ document, navigator: {}, orca, setInterval: () => 0 })
   vm.runInContext('globalThis.window = globalThis', sandbox)
   vm.runInContext(scriptOf(html), sandbox)
   const hook = (sandbox as { __presencePanel?: { render(s: unknown): void } }).__presencePanel
-  return { byId, hook, sandbox }
+  return { byId, hook, sandbox, hostEvents, root: document.documentElement }
 }
 
 test('full view renders timeline cells', () => {
@@ -777,4 +778,51 @@ test('minimal view respects the hidden set for shared sections', async () => {
   expect(hidden(byId, 'min-hero')).toBe(false)
   expect(userHidden(byId, 'strip')).toBe(true)
   expect(userHidden(byId, 'detail')).toBe(false)
+})
+
+test('panel chrome has no hard-coded dark colours and ships light fallbacks', () => {
+  const css = stylesOf(buildPanelHtml())
+  for (const hex of ['#232428', '#2f3136', '#3a3a3a', '#161616', '#0d0e10', '#f2f3f5', '#dbdee1', '#b5bac1']) {
+    expect(css.toLowerCase()).not.toContain(hex)
+  }
+  const light = {
+    '--bg': 'var(--orca-background, #f5f5f5)',
+    '--card': 'var(--orca-card, #ffffff)',
+    '--border': 'var(--orca-border, #e0e0e0)',
+    '--fg': 'var(--orca-foreground, #1a1a1a)',
+    '--muted-fg': 'var(--orca-muted-foreground, #666)'
+  }
+  for (const [name, value] of Object.entries(light)) {
+    expect(hasRule(css, ":root[data-theme='light']", `${name}: ${value}`)).toBe(true)
+    expect(hasRule(css, ":root:not([data-theme='dark'])", `${name}: ${value}`)).toBe(true)
+  }
+  expect(css).toContain('@media (prefers-color-scheme: light)')
+  for (const selector of ['.dcard', '.hero', 'pre.log', '.sw']) {
+    expect(hasRule(css, selector, 'var(--')).toBe(true)
+  }
+})
+
+test('theme event sets data-theme and is remembered for the next load', async () => {
+  const calls: string[] = []
+  const { hostEvents, root } = mountPanel(async (name, input) => {
+    calls.push(JSON.stringify([name, input]))
+    return undefined
+  })
+  hostEvents.get('theme')?.({ theme: 'light' })
+  expect(root.getAttribute('data-theme')).toBe('light')
+  await settle()
+  expect(calls).toContain(JSON.stringify(['storage.set', { key: 'panelTheme', value: 'light' }]))
+  const stored = mountPanel(async (name, input) => (name === 'storage.get' && input.key === 'panelTheme' ? 'dark' : undefined))
+  await settle()
+  expect(stored.root.getAttribute('data-theme')).toBe('dark')
+  for (const junk of ['sepia', 42, { value: 'mauve' }]) {
+    const j = mountPanel(async (name, input) => (name === 'storage.get' && input.key === 'panelTheme' ? junk : undefined))
+    await settle()
+    expect(j.root.getAttribute('data-theme')).toBeNull()
+  }
+  // A live event beats a stored value that answers late.
+  const late = mountPanel(async (name, input) => (name === 'storage.get' && input.key === 'panelTheme' ? 'dark' : undefined))
+  late.hostEvents.get('theme')?.('light')
+  await settle()
+  expect(late.root.getAttribute('data-theme')).toBe('light')
 })
