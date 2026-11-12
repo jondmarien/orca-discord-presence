@@ -1503,6 +1503,7 @@ function applyView(next) {
   setClass($('min-hero'), 'hidden', view !== 'minimal')
   setClass($('view-full'), 'on', view === 'full')
   setClass($('view-minimal'), 'on', view === 'minimal')
+  renderTray()
 }
 
 function storedView(result) {
@@ -1619,19 +1620,29 @@ function collapseWrappers() {
 }
 
 var traySignature = null
+// Minimal view renders only the strip and detail sections; restore chips for
+// full-only sections would unhide nothing visible, so the tray filters them.
+var MINIMAL_SECTIONS = ['strip', 'detail']
+function viewHidden() {
+  if (view !== 'minimal') return hiddenIds.slice()
+  return hiddenIds.filter(function (id) {
+    return MINIMAL_SECTIONS.indexOf(id) !== -1
+  })
+}
 function renderTray() {
-  var count = hiddenIds.length
+  var shown = viewHidden()
+  var count = shown.length
   setClass($('hidden-tray'), 'hidden', count === 0)
   setText('hidden-tray-label', 'Hidden (' + count + ')')
   setText('show-all-count', count || '')
   $('btn-show-all').disabled = count === 0
-  var signature = hiddenIds.join(',')
+  var signature = view + ':' + shown.join(',')
   if (signature === traySignature) return
   traySignature = signature
   var box = $('hidden-chips')
   clearChildren(box)
   PANEL_SECTIONS.forEach(function (s) {
-    if (hiddenIds.indexOf(s[0]) === -1) return
+    if (shown.indexOf(s[0]) === -1) return
     var chip = document.createElement('button')
     chip.setAttribute('type', 'button')
     chip.className = 'btn sm'
@@ -1713,7 +1724,14 @@ function wireHidden() {
     })
   })
   var showAll = function () {
-    setHidden([])
+    // Why: in minimal view only minimal sections are offered, so show-all
+    // restores just those; full-only sections stay hidden for the return trip.
+    var keep = viewHidden()
+    setHidden(
+      hiddenIds.filter(function (id) {
+        return keep.indexOf(id) === -1
+      })
+    )
   }
   $('btn-show-all').addEventListener('click', showAll)
   $('tray-show-all').addEventListener('click', showAll)

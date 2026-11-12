@@ -750,6 +750,23 @@ test('agents and sending-to tiles hide independently; survivor fills the row', a
   expect(byId.get('full-b')?.className.split(/\s+/).includes('single')).toBe(false)
 })
 
+test('minimal tray offers only minimal sections; show-all keeps full-only hidden', async () => {
+  const { byId } = mountPanel(async (name, input) => {
+    if (name !== 'storage.get') return undefined
+    const key = (input as { key?: string }).key
+    if (key === 'panelHidden') return ['sink', 'strip']
+    if (key === 'panelView') return 'minimal'
+    return undefined
+  })
+  await settle()
+  expect(byId.get('hidden-tray-label')?.textContent).toBe('Hidden (1)')
+  expect(byId.get('hidden-chips')?.children.map((c) => c.textContent)).toEqual(['Last 30 min'])
+  byId.get('tray-show-all')?.dispatch('click')
+  expect(userHidden(byId, 'strip')).toBe(false)
+  expect(userHidden(byId, 'sink')).toBe(true)
+  expect(hidden(byId, 'hidden-tray')).toBe(true)
+})
+
 test('stored panelHidden applies on load; junk is ignored', async () => {
   const { byId } = mountPanel(hiddenHost(['tiles', 'nope', 'logs', 7]))
   await settle()
