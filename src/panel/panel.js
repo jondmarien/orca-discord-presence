@@ -26,7 +26,7 @@ var DETAIL_LEVELS = [
   ['full', 'Full']
 ]
 var VIEW_KEY = 'panelView'
-var FULL_ONLY_IDS = ['full-a', 'full-b', 'full-c', 'full-d']
+var FULL_ONLY_IDS = ['actions-row', 'full-a', 'full-b', 'full-c', 'full-d']
 // Hideable sections: [id kept in storage and the hiddenPanels setting, element id, label].
 // The ids must match HIDDEN_PANEL_IDS in src/presence/settings.ts.
 var PANEL_SECTIONS = [
@@ -406,6 +406,7 @@ function renderClients(snapshot) {
   var fields = snapshot.fields || {}
   var chosen = fields.discordClient || 'auto'
   setClass($('client-card'), 'hidden', clients.length < 1)
+  collapseWrappers()
   var detected = clients.some(function (c) {
     return c.id === chosen
   })
@@ -594,7 +595,34 @@ function applyHidden(list) {
     setClass($(s[1]), 'user-hidden', off)
     setAttr($('eye-' + s[0]), 'aria-pressed', off ? 'true' : 'false')
   })
+  // Why: tiles hide as one unit but each tile carries its own eye.
+  setAttr($('eye-tiles-sink'), 'aria-pressed', hiddenIds.indexOf('tiles') !== -1 ? 'true' : 'false')
+  collapseWrappers()
   renderTray()
+}
+
+// Why: wrapper cols (full-a/c/d) stay in the frame's gap flow even when
+// every child hides (user-hidden or the client card's own `hidden`), leaving
+// a double gap. A separate `collapsed` class keeps this apart from the
+// `hidden` class that views toggle.
+var WRAPPER_IDS = ['full-a', 'full-c', 'full-d']
+function hasClass(el, name) {
+  return !!el && (' ' + el.className + ' ').indexOf(' ' + name + ' ') !== -1
+}
+function collapseWrappers() {
+  WRAPPER_IDS.forEach(function (id) {
+    var el = $(id)
+    if (!el) return
+    var kids = el.children || []
+    var anyVisible = false
+    for (var i = 0; i < kids.length; i += 1) {
+      if (!hasClass(kids[i], 'hidden') && !hasClass(kids[i], 'user-hidden')) {
+        anyVisible = true
+        break
+      }
+    }
+    setClass(el, 'collapsed', !anyVisible)
+  })
 }
 
 var traySignature = null
@@ -690,6 +718,10 @@ function wireHidden() {
     $('eye-' + s[0]).addEventListener('click', function () {
       setHidden(hiddenIds.concat(s[0]))
     })
+  })
+  // Why: tiles hide as one unit but each tile carries its own eye.
+  $('eye-tiles-sink').addEventListener('click', function () {
+    setHidden(hiddenIds.concat('tiles'))
   })
   var showAll = function () {
     setHidden([])

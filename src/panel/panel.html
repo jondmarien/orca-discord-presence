@@ -45,6 +45,14 @@
         <div class="row g6" id="hidden-chips"></div>
       </div>
 
+      <div class="row g6" id="actions-row">
+        <button type="button" class="btn" id="btn-reload">Reload</button>
+        <button type="button" class="btn" id="btn-clear">Clear</button>
+        <button type="button" class="btn" id="btn-toggle">Pause</button>
+        <button type="button" class="btn push" id="btn-status">Status</button>
+        <button type="button" class="eye-btn" id="eye-actions" data-hide="actions" aria-pressed="false" aria-label="Hide actions" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
+
       <section class="hero hidden" id="min-hero" data-state="idle" aria-label="Current state">
         <div class="row"><span class="pulse" aria-hidden="true"></span><span class="live">Live on Discord</span></div>
         <div class="big" id="min-state">Idle</div>
@@ -90,7 +98,7 @@
           <div class="mix" id="tile-mix"></div>
         </div>
         <div class="card tile">
-          <div class="l">Sending to</div>
+          <div class="row between"><div class="l">Sending to</div><button type="button" class="eye-btn" id="eye-tiles-sink" data-hide="tiles" aria-pressed="false" aria-label="Hide tiles" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
           <div class="v" id="tile-sink">Off</div>
           <div class="l" id="tile-sink-sub">Not connected</div>
         </div>
@@ -125,14 +133,6 @@
         <div class="row between"><span>Terminal count</span><input type="checkbox" class="sw" id="sw-showTerminals" role="switch" /></div>
         <div class="row between"><span>Machine name</span><input type="checkbox" class="sw" id="sw-showMachine" role="switch" /></div>
       </section>
-
-      <div class="row g6" id="actions-row">
-        <button type="button" class="btn" id="btn-reload">Reload</button>
-        <button type="button" class="btn" id="btn-clear">Clear</button>
-        <button type="button" class="btn" id="btn-toggle">Pause</button>
-        <button type="button" class="btn push" id="btn-status">Status</button>
-        <button type="button" class="eye-btn" id="eye-actions" data-hide="actions" aria-pressed="false" aria-label="Hide actions" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      </div>
 
       <div class="logs-box" id="logs-box">
         <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>

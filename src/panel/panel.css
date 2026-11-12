@@ -64,7 +64,8 @@ body {
   gap: 10px;
 }
 .hidden,
-.user-hidden {
+.user-hidden,
+.collapsed {
   display: none !important;
 }
 .note,
