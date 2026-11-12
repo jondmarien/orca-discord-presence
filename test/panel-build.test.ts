@@ -161,6 +161,10 @@ test('narrow layout: header, legend and action rows wrap; flex children may shri
   expect(hasRule(css, '.seg', 'overflow-x: auto')).toBe(true)
   expect(hasRule(css, '.seg', 'max-width: 100%')).toBe(true)
   expect(hasRule(css, '.chip', 'max-width: 40%')).toBe(true)
+  // The chip keeps its text until it hits the cap; a long title shrinks first.
+  expect(hasRule(css, '.chip', 'flex: none')).toBe(true)
+  // Narrow hero: content clears the corner art instead of running under it.
+  expect(hasRule(css, '.hero', 'padding-bottom: 80px')).toBe(true)
 })
 
 test('narrow breakpoints use container queries with a media fallback', () => {
