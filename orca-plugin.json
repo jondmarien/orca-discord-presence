@@ -4,7 +4,7 @@
   "execution": "trusted-worker",
   "id": "discord-presence",
   "name": "Rich Presence for Discord",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "icon": "assets/icon.png",
   "cover": {
     "path": "assets/cover.webp",
@@ -40,7 +40,7 @@
       {
         "id": "presence",
         "title": "Rich Presence",
-        "icon": "activity",
+        "icon": "bot",
         "entry": "panel/index.html"
       }
     ],
@@ -115,7 +115,7 @@
       {
         "id": "presence",
         "text": "Discord",
-        "icon": "activity",
+        "icon": "bot",
         "tooltip": "Rich Presence for Discord",
         "command": "presence.open-panel"
       }

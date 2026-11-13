@@ -2,6 +2,12 @@
 
 All notable changes to this plugin. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-11-12
+
+### Changed
+
+- Panel and status bar icons use `bot` instead of `activity`, so the tab no longer collides with other plugins using the activity glyph. (Orca panel icons come from a fixed set; a custom Discord mark is not possible there. See [stablyai/orca#28300](https://github.com/stablyai/orca/issues/28300).)
+
 ## [1.1.0] - 2026-11-12
 
 ### Added
