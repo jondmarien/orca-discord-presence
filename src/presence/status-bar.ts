@@ -18,7 +18,7 @@ import type { PresenceSettings } from './settings'
 export type StatusBarPatch = {
   id: 'presence'
   text: string
-  icon: 'activity' | 'warning'
+  icon: 'bot' | 'warning'
   tone: 'neutral' | 'accent' | 'success' | 'warning' | 'danger'
   tooltip: string
   visible: boolean
@@ -75,7 +75,7 @@ export function renderStatusBar({
     return {
       id: 'presence',
       text: 'Discord off',
-      icon: 'activity',
+      icon: 'bot',
       tone: 'neutral',
       tooltip: `Discord: off. ${click}`,
       visible
@@ -95,7 +95,7 @@ export function renderStatusBar({
   return {
     id: 'presence',
     text: notConnected || !agent ? 'Discord' : `${agent.text}${count}`,
-    icon: notConnected ? 'warning' : 'activity',
+    icon: notConnected ? 'warning' : 'bot',
     tone: notConnected ? 'warning' : (agent?.tone ?? 'neutral'),
     tooltip: `Discord: ${parts.filter(Boolean).join(' · ')}. ${click}`,
     visible

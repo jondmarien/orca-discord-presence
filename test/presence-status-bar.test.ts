@@ -40,35 +40,35 @@ function render({ status, settings, agentState, agentCount = 1, elapsedStartMs }
 }
 
 test.each<[string, Input, string, string, string]>([
-  ['working, 1 agent', { agentState: 'working', agentCount: 1 }, 'Working', 'accent', 'activity'],
-  ['working, 3 agents', { agentState: 'working', agentCount: 3 }, 'Working · 3', 'accent', 'activity'],
+  ['working, 1 agent', { agentState: 'working', agentCount: 1 }, 'Working', 'accent', 'bot'],
+  ['working, 3 agents', { agentState: 'working', agentCount: 3 }, 'Working · 3', 'accent', 'bot'],
   [
     '3 agents, count hidden',
     { agentState: 'working', agentCount: 3, settings: { showAgentCount: false } },
     'Working',
     'accent',
-    'activity'
+    'bot'
   ],
-  ['blocked', { agentState: 'blocked' }, 'Blocked', 'danger', 'activity'],
-  ['waiting', { agentState: 'waiting' }, 'Waiting', 'warning', 'activity'],
-  ['done', { agentState: 'done' }, 'Done', 'success', 'activity'],
-  ['idle, connected', {}, 'Discord', 'neutral', 'activity'],
+  ['blocked', { agentState: 'blocked' }, 'Blocked', 'danger', 'bot'],
+  ['waiting', { agentState: 'waiting' }, 'Waiting', 'warning', 'bot'],
+  ['done', { agentState: 'done' }, 'Done', 'success', 'bot'],
+  ['idle, connected', {}, 'Discord', 'neutral', 'bot'],
   [
     'state hidden',
     { agentState: 'working', settings: { showAgentState: false } },
     'Discord',
     'neutral',
-    'activity'
+    'bot'
   ],
-  ['disabled', { agentState: 'working', status: { enabled: false } }, 'Discord off', 'neutral', 'activity'],
+  ['disabled', { agentState: 'working', status: { enabled: false } }, 'Discord off', 'neutral', 'bot'],
   [
     'detail off',
     { agentState: 'working', settings: { detailLevel: 'off' } },
     'Discord off',
     'neutral',
-    'activity'
+    'bot'
   ],
-  ['clear hold', { agentState: 'working', status: { heldClear: true } }, 'Discord off', 'neutral', 'activity'],
+  ['clear hold', { agentState: 'working', status: { heldClear: true } }, 'Discord off', 'neutral', 'bot'],
   [
     'not connected',
     { agentState: 'working', status: { connected: false, sink: null } },
@@ -81,7 +81,7 @@ test.each<[string, Input, string, string, string]>([
     { agentState: 'working', status: { connected: false, sink: 'bridge' } },
     'Working',
     'accent',
-    'activity'
+    'bot'
   ],
   [
     'bridge failing',

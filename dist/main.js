@@ -1973,7 +1973,7 @@ function renderStatusBar({
     return {
       id: "presence",
       text: "Discord off",
-      icon: "activity",
+      icon: "bot",
       tone: "neutral",
       tooltip: `Discord: off. ${click}`,
       visible
@@ -1990,7 +1990,7 @@ function renderStatusBar({
   return {
     id: "presence",
     text: notConnected || !agent ? "Discord" : `${agent.text}${count}`,
-    icon: notConnected ? "warning" : "activity",
+    icon: notConnected ? "warning" : "bot",
     tone: notConnected ? "warning" : agent?.tone ?? "neutral",
     tooltip: `Discord: ${parts.filter(Boolean).join(" · ")}. ${click}`,
     visible
