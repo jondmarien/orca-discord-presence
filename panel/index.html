@@ -32,9 +32,11 @@
   /* How much state hue coloured text keeps; the rest is foreground. */
   --ink: 65%;
 }
-/* Light fallbacks for hosts that do not inject Orca variables. The theme
-   event sets data-theme; without it the OS preference decides. */
-:root[data-theme='light'] {
+/* Light fallbacks for hosts that do not inject Orca variables. The host
+   sets html.light / html.dark and the theme event sets data-theme; without
+   either, the OS preference decides. */
+:root[data-theme='light'],
+:root.light {
   color-scheme: light;
   --bg: var(--orca-background, #f5f5f5);
   --card: var(--orca-card, #ffffff);
@@ -44,11 +46,12 @@
   --muted: var(--orca-muted, #efeff1);
   --ink: 40%;
 }
-:root[data-theme='dark'] {
+:root[data-theme='dark'],
+:root.dark {
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) {
+  :root:not([data-theme='dark']):not(.dark) {
     --bg: var(--orca-background, #f5f5f5);
     --card: var(--orca-card, #ffffff);
     --border: var(--orca-border, #e0e0e0);
@@ -68,7 +71,7 @@ body {
 }
 body {
   padding: 8px;
-  font: 13px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font: 13px/1.4 var(--orca-font-sans, system-ui, -apple-system, 'Segoe UI', sans-serif);
   color: var(--fg);
   background: var(--bg);
 }
@@ -80,8 +83,23 @@ body {
 }
 .hidden,
 .user-hidden,
+.feature-disabled,
 .collapsed {
   display: none !important;
+}
+#app[data-view='minimal'] .full-only {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .note,
 .muted {
@@ -128,8 +146,22 @@ body {
 .g6 {
   gap: 6px;
 }
+.g4 {
+  gap: 4px;
+}
 .col.g7 {
   gap: 7px;
+}
+.host-badge {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted-fg);
+  background: var(--muted);
+  white-space: nowrap;
 }
 .between {
   justify-content: space-between;
@@ -249,6 +281,11 @@ body {
   font: inherit;
   font-size: 12px;
 }
+.select.sm {
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 6px;
+}
 .select:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -362,29 +399,39 @@ body {
   gap: 4px;
 }
 
-/* Tiles */
-.tiles {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-/* One tile hidden: the other fills the row. */
-.tiles.single {
-  grid-template-columns: 1fr;
+/* Full-width responsive summary tiles */
+.tile-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+  flex-wrap: wrap;
 }
 .tile .v {
   font-size: 18px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2;
 }
 .tile .l {
   font-size: 11px;
   color: var(--muted-fg);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+#tile-sink-sub {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  overflow-wrap: anywhere;
 }
 .mix {
   display: flex;
-  height: 6px;
-  margin-top: 6px;
+  flex: 1 1 80px;
+  min-width: 48px;
+  height: 7px;
   border-radius: 999px;
   overflow: hidden;
   background: var(--c-none);
@@ -411,9 +458,22 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-.agent-row {
   min-width: 0;
+}
+.agent-btn {
+  width: 100%;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.agent-btn:hover {
+  background: var(--muted);
 }
 .agent-label {
   display: flex;
@@ -522,8 +582,11 @@ body {
 .seg button:focus-visible,
 .icon-btn:focus-visible,
 .eye-btn:focus-visible,
+.drag-handle:focus-visible,
+.agent-btn:focus-visible,
+.lb-sort:focus-visible,
 .btn:focus-visible {
-  outline: 2px solid var(--c-working);
+  outline: 2px solid var(--orca-ring, var(--c-working));
   outline-offset: 1px;
 }
 
@@ -624,6 +687,138 @@ body {
   padding: 1px 8px;
   font-size: 11px;
 }
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted-fg);
+}
+.btn.ghost:hover {
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+/* Reorderable sections and 6-dot drag handles */
+#sections {
+  position: relative;
+  overflow-anchor: none;
+}
+.drag-handle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted-fg);
+  opacity: 0.55;
+  cursor: grab;
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+.drag-handle:hover,
+.drag-handle:focus-visible {
+  opacity: 1;
+  color: var(--fg);
+}
+#sections[data-reordering],
+#sections[data-reordering] .drag-handle {
+  cursor: grabbing;
+  -webkit-user-select: none;
+  user-select: none;
+}
+[data-block][data-dragging] {
+  position: relative;
+  z-index: 10;
+  scale: 1.015;
+  border-color: var(--orca-ring, var(--c-working));
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
+}
+.order-footer {
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+/* Leaderboards card */
+.lb-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted-fg);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+.lb-col-ws {
+  font-weight: 600;
+}
+.lb-sort {
+  border: 0;
+  background: none;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-fg);
+  cursor: pointer;
+  text-align: right;
+  white-space: nowrap;
+}
+.lb-sort.on {
+  color: var(--fg);
+  background: var(--c-none);
+}
+.lb-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.lb-row-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.lb-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lb-num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-fg);
+  text-align: right;
+  white-space: nowrap;
+}
+.lb-num.active {
+  color: var(--fg);
+  font-weight: 600;
+}
+.lb-bar {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--c-none);
+  overflow: hidden;
+}
+.lb-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--orca-accent, var(--c-working));
+}
+.lb-caption {
+  font-size: 10px;
+}
 
 /* Section eyes: quiet until hovered or focused, so headers stay calm. */
 .eye-btn {
@@ -672,18 +867,23 @@ body {
 .logs-box {
   position: relative;
 }
-.logs-box > .eye-btn {
+.logs-actions {
   position: absolute;
   top: -3px;
   right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 details.logs summary {
   cursor: pointer;
   color: var(--muted-fg);
   font-size: 12px;
+  padding-right: 48px;
 }
 .log-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin: 8px 0;
 }
@@ -695,7 +895,7 @@ pre.log {
   border-radius: 6px;
   background: var(--muted);
   color: var(--fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--orca-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   font-size: 10px;
   line-height: 1.4;
   white-space: pre-wrap;
@@ -745,9 +945,6 @@ pre.log {
    container; hosts without container queries get the same steps from the
    viewport, which is the frame plus the 8px body padding on each side. */
 @container (max-width: 259px) {
-  .tiles {
-    grid-template-columns: 1fr;
-  }
   .dcard img {
     width: 48px;
     height: 48px;
@@ -773,21 +970,31 @@ pre.log {
   }
 }
 @container (max-width: 179px) {
-  .tile .v,
-  .tile .l,
-  .tile + .tile {
-    display: none;
+  .tile .v {
+    font-size: 15px;
   }
   .mix {
     height: 10px;
-    margin-top: 0;
+  }
+  .lb-head,
+  .lb-row-top {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .lb-head [data-lb-sort='messages'],
+  .lb-row-top .lb-msg {
+    display: none;
+  }
+  #leaderboards-card[data-lb-metric='messages'] .lb-head [data-lb-sort='messages'],
+  #leaderboards-card[data-lb-metric='messages'] .lb-row-top .lb-msg {
+    display: block;
+  }
+  #leaderboards-card[data-lb-metric='messages'] .lb-head [data-lb-sort='tokens'],
+  #leaderboards-card[data-lb-metric='messages'] .lb-row-top .lb-tok {
+    display: none;
   }
 }
 @supports not (container-type: inline-size) {
   @media (max-width: 275px) {
-    .tiles {
-      grid-template-columns: 1fr;
-    }
     .dcard img {
       width: 48px;
       height: 48px;
@@ -813,14 +1020,11 @@ pre.log {
     }
   }
   @media (max-width: 195px) {
-    .tile .v,
-    .tile .l,
-    .tile + .tile {
-      display: none;
+    .tile .v {
+      font-size: 15px;
     }
     .mix {
       height: 10px;
-      margin-top: 0;
     }
   }
 }
@@ -829,7 +1033,8 @@ pre.log {
     --c-none: #262626;
     --track: #45464b;
   }
-  :root[data-theme='light'] {
+  :root[data-theme='light'],
+  :root.light {
     --c-none: #e4e4e7;
     --track: #c9c9ce;
   }
@@ -852,11 +1057,12 @@ pre.log {
   <body>
     <p class="note hidden" id="static-note"></p>
 
-    <div id="app" class="frame">
+    <div id="app" class="frame" data-view="full">
       <header class="row between" id="status-bar">
         <div class="row">
           <span class="dot" id="dot" aria-hidden="true"></span>
           <b id="indicator-label">Waiting for worker snapshot</b>
+          <span class="host-badge hidden" id="host-badge"></span>
         </div>
         <div class="row">
           <div class="seg sm" id="view-switch" role="group" aria-label="Panel view">
@@ -877,14 +1083,7 @@ pre.log {
         <button type="button" class="btn sm" id="tray-show-all">Show all</button>
         <div class="row g6" id="hidden-chips"></div>
       </div>
-
-      <div class="row g6" id="actions-row">
-        <button type="button" class="btn" id="btn-reload">Reload</button>
-        <button type="button" class="btn" id="btn-clear">Clear</button>
-        <button type="button" class="btn" id="btn-toggle">Pause</button>
-        <button type="button" class="btn push" id="btn-status">Status</button>
-        <button type="button" class="eye-btn" id="eye-actions" data-hide="actions" aria-pressed="false" aria-label="Hide actions" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      </div>
+      <div class="sr-only" id="order-live" aria-live="polite"></div>
 
       <section class="hero hidden" id="min-hero" data-state="idle" aria-label="Current state">
         <div class="row"><span class="pulse" aria-hidden="true"></span><span class="live">Live on Discord</span></div>
@@ -894,96 +1093,725 @@ pre.log {
         <img id="min-img" src="../assets/state-idle.png" alt="" width="132" height="132" />
       </section>
 
-      <div class="col" id="full-a">
-      <section class="dcard" aria-label="Discord profile preview">
-        <div class="row between head"><div class="kicker">Playing a game</div><button type="button" class="eye-btn" id="eye-preview" data-hide="preview" aria-pressed="false" aria-label="Hide Discord preview" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-        <div class="row top">
-          <img id="dcard-img" src="../assets/state-idle.png" alt="" width="64" height="64" />
-          <div class="dtext">
-            <div class="t1">Orca</div>
-            <div class="t2" id="dcard-details">Waiting for first update</div>
-            <div class="t3" id="dcard-state"></div>
-            <div class="t4 hidden" id="dcard-timer"></div>
+      <div class="col" id="sections">
+        <div class="row g6 full-only" id="actions-row" data-block="actions">
+          <button type="button" class="drag-handle" data-drag-handle="actions" aria-label="Reorder Actions" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button>
+          <button type="button" class="btn" id="btn-reload">Reload</button>
+          <button type="button" class="btn" id="btn-clear">Clear</button>
+          <button type="button" class="btn" id="btn-toggle">Pause</button>
+          <button type="button" class="btn push" id="btn-status">Status</button>
+          <button type="button" class="eye-btn" id="eye-actions" data-hide="actions" aria-pressed="false" aria-label="Hide actions" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        </div>
+
+        <section class="dcard full-only" id="preview-card" data-block="preview" aria-label="Discord profile preview">
+          <div class="row between head">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="preview" aria-label="Reorder Discord preview" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><div class="kicker">Playing a game</div></span>
+            <button type="button" class="eye-btn" id="eye-preview" data-hide="preview" aria-pressed="false" aria-label="Hide Discord preview" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
           </div>
+          <div class="row top">
+            <img id="dcard-img" src="../assets/state-idle.png" alt="" width="64" height="64" />
+            <div class="dtext">
+              <div class="t1">Orca</div>
+              <div class="t2" id="dcard-details">Waiting for first update</div>
+              <div class="t3" id="dcard-state"></div>
+              <div class="t4 hidden" id="dcard-timer"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card" id="strip-card" data-block="strip" aria-label="Last 30 minutes">
+          <div class="row between mb6">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="strip" aria-label="Reorder Last 30 min" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Last 30 min</span></span>
+            <span class="row g6"><span class="muted small">now →</span><button type="button" class="eye-btn" id="eye-strip" data-hide="strip" aria-pressed="false" aria-label="Hide Last 30 min" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span>
+          </div>
+          <div class="strip" id="strip"></div>
+          <div class="leg">
+            <span><i class="dot" data-state="working"></i>working</span>
+            <span><i class="dot" data-state="waiting"></i>waiting</span>
+            <span><i class="dot" data-state="blocked"></i>blocked</span>
+            <span><i class="dot" data-state="completed"></i>completed</span>
+            <span><i class="dot" data-state="idle"></i>idle</span>
+          </div>
+        </section>
+
+        <section class="card tile full-only" id="tile-agents-card" data-block="tiles" aria-label="Agents summary">
+          <div class="row between">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="tiles" aria-label="Reorder Agents tile" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><div class="l">Agents</div></span>
+            <button type="button" class="eye-btn" id="eye-tiles" data-hide="tiles" aria-pressed="false" aria-label="Hide Agents tile" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="tile-body">
+            <div class="v" id="tile-agents">0</div>
+            <div class="mix" id="tile-mix"></div>
+          </div>
+        </section>
+
+        <section class="card tile full-only" id="tile-sink-card" data-block="sink" aria-label="Sending to">
+          <div class="row between">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="sink" aria-label="Reorder Sending to" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><div class="l">Sending to</div></span>
+            <button type="button" class="eye-btn" id="eye-sink" data-hide="sink" aria-pressed="false" aria-label="Hide Sending to" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="tile-body">
+            <div class="v" id="tile-sink">Off</div>
+            <div class="l" id="tile-sink-sub">Not connected</div>
+          </div>
+        </section>
+
+        <section class="card hidden full-only" id="client-card" data-block="client" aria-label="Discord client">
+          <div class="row between mb6">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="client" aria-label="Reorder Discord client" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Discord client</span></span>
+            <button type="button" class="eye-btn" id="eye-client" data-hide="client" aria-pressed="false" aria-label="Hide Discord client" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <select class="select" id="client-select" aria-label="Discord client"></select>
+          <p class="muted small hidden" id="client-note"></p>
+        </section>
+
+        <section class="card" id="detail-card" data-block="detail" aria-label="Detail level">
+          <div class="row between mb6">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="detail" aria-label="Reorder Detail level" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Detail level</span></span>
+            <button type="button" class="eye-btn" id="eye-detail" data-hide="detail" aria-pressed="false" aria-label="Hide Detail level" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="seg" id="detail-seg" role="group" aria-label="Detail level"></div>
+        </section>
+
+        <section class="card col full-only" id="agents-card" data-block="agents" aria-label="Agents">
+          <div class="row between">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="agents" aria-label="Reorder Agents" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Agents</span></span>
+            <button type="button" class="eye-btn" id="eye-agents" data-hide="agents" aria-pressed="false" aria-label="Hide Agents" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="col g6" id="agents-list"></div>
+          <div class="muted small" id="agents-empty">No agents yet</div>
+        </section>
+
+        <section class="card col g7 full-only" id="toggles-card" data-block="toggles" aria-label="Show on Discord">
+          <div class="row between">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="toggles" aria-label="Reorder Show on Discord" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Show on Discord</span></span>
+            <button type="button" class="eye-btn" id="eye-toggles" data-hide="toggles" aria-pressed="false" aria-label="Hide Show on Discord" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="row between"><span>Agent state</span><input type="checkbox" class="sw" id="sw-showAgentState" role="switch" /></div>
+          <div class="row between"><span>Agent count</span><input type="checkbox" class="sw" id="sw-showAgentCount" role="switch" /></div>
+          <div class="row between"><span>Elapsed timer</span><input type="checkbox" class="sw" id="sw-showElapsed" role="switch" /></div>
+          <div class="row between"><span>Project name</span><input type="checkbox" class="sw" id="sw-showProject" role="switch" /></div>
+          <div class="row between"><span>Branch</span><input type="checkbox" class="sw" id="sw-showBranch" role="switch" /></div>
+          <div class="row between"><span>Terminal count</span><input type="checkbox" class="sw" id="sw-showTerminals" role="switch" /></div>
+          <div class="row between"><span>Machine name</span><input type="checkbox" class="sw" id="sw-showMachine" role="switch" /></div>
+          <div class="row between">
+            <span>Session stats</span>
+            <select class="select sm" id="sel-showSessionStats" aria-label="Show session stats">
+              <option value="off">Off</option>
+              <option value="tokens">Tokens</option>
+              <option value="messages">Messages</option>
+              <option value="both">Both</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="card col g6 full-only feature-disabled" id="leaderboards-card" data-block="leaderboards" aria-label="Leaderboards">
+          <div class="row between">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="leaderboards" aria-label="Reorder Leaderboards" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Leaderboards</span></span>
+            <button type="button" class="eye-btn" id="eye-leaderboards" data-hide="leaderboards" aria-pressed="false" aria-label="Hide Leaderboards" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="lb-head" id="lb-head">
+            <span class="lb-col-ws">Workspace</span>
+            <button type="button" class="lb-sort" id="lb-sort-messages" data-lb-sort="messages" aria-pressed="false">Messages</button>
+            <button type="button" class="lb-sort on" id="lb-sort-tokens" data-lb-sort="tokens" aria-pressed="true">Tokens</button>
+          </div>
+          <div class="col g6" id="lb-rows"></div>
+          <div class="muted small" id="lb-empty">No local session history yet</div>
+          <div class="muted small lb-caption">Local &amp; WSL history</div>
+        </section>
+
+        <div class="logs-box full-only" id="logs-box" data-block="logs">
+          <div class="logs-actions">
+            <button type="button" class="drag-handle" data-drag-handle="logs" aria-label="Reorder Logs" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button>
+            <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <details class="logs">
+            <summary id="logs-summary">Logs</summary>
+            <div class="log-toolbar">
+              <button type="button" class="btn" id="btn-log-clear">Clear view</button>
+              <button type="button" class="btn" id="btn-log-copy">Copy</button>
+              <button type="button" class="btn hidden" id="btn-log-save">Save</button>
+            </div>
+            <pre class="log" id="log-view">No log lines yet. Click Status to generate some.</pre>
+          </details>
         </div>
-      </section>
       </div>
 
-      <section class="card" id="strip-card" aria-label="Last 30 minutes">
-        <div class="row between mb6">
-          <span class="h">Last 30 min</span>
-          <span class="row g6"><span class="muted small">now →</span><button type="button" class="eye-btn" id="eye-strip" data-hide="strip" aria-pressed="false" aria-label="Hide Last 30 min" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span>
-        </div>
-        <div class="strip" id="strip"></div>
-        <div class="leg">
-          <span><i class="dot" data-state="working"></i>working</span>
-          <span><i class="dot" data-state="waiting"></i>waiting</span>
-          <span><i class="dot" data-state="blocked"></i>blocked</span>
-          <span><i class="dot" data-state="completed"></i>completed</span>
-          <span><i class="dot" data-state="idle"></i>idle</span>
-        </div>
-      </section>
-
-      <div class="tiles" id="full-b">
-        <div class="card tile" id="tile-agents-card">
-          <div class="row between"><div class="l">Agents</div><button type="button" class="eye-btn" id="eye-tiles" data-hide="tiles" aria-pressed="false" aria-label="Hide Agents tile" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-          <div class="v" id="tile-agents">0</div>
-          <div class="mix" id="tile-mix"></div>
-        </div>
-        <div class="card tile" id="tile-sink-card">
-          <div class="row between"><div class="l">Sending to</div><button type="button" class="eye-btn" id="eye-sink" data-hide="sink" aria-pressed="false" aria-label="Hide Sending to" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-          <div class="v" id="tile-sink">Off</div>
-          <div class="l" id="tile-sink-sub">Not connected</div>
-        </div>
-      </div>
-
-      <div class="col" id="full-d">
-      <section class="card hidden" id="client-card" aria-label="Discord client">
-        <div class="row between mb6"><span class="h">Discord client</span><button type="button" class="eye-btn" id="eye-client" data-hide="client" aria-pressed="false" aria-label="Hide Discord client" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-        <select class="select" id="client-select" aria-label="Discord client"></select>
-        <p class="muted small hidden" id="client-note"></p>
-      </section>
-      </div>
-
-      <section class="card" id="detail-card" aria-label="Detail level">
-        <div class="row between mb6"><span class="h">Detail level</span><button type="button" class="eye-btn" id="eye-detail" data-hide="detail" aria-pressed="false" aria-label="Hide Detail level" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-        <div class="seg" id="detail-seg" role="group" aria-label="Detail level"></div>
-      </section>
-
-      <div class="col" id="full-c">
-      <section class="card col" id="agents-card" aria-label="Agents">
-        <div class="row between"><span class="h">Agents</span><button type="button" class="eye-btn" id="eye-agents" data-hide="agents" aria-pressed="false" aria-label="Hide Agents" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-        <div class="col g6" id="agents-list"></div>
-        <div class="muted small" id="agents-empty">No agents yet</div>
-      </section>
-
-      <section class="card col g7" id="toggles-card" aria-label="Show on Discord">
-        <div class="row between"><span class="h">Show on Discord</span><button type="button" class="eye-btn" id="eye-toggles" data-hide="toggles" aria-pressed="false" aria-label="Hide Show on Discord" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-        <div class="row between"><span>Agent state</span><input type="checkbox" class="sw" id="sw-showAgentState" role="switch" /></div>
-        <div class="row between"><span>Agent count</span><input type="checkbox" class="sw" id="sw-showAgentCount" role="switch" /></div>
-        <div class="row between"><span>Elapsed timer</span><input type="checkbox" class="sw" id="sw-showElapsed" role="switch" /></div>
-        <div class="row between"><span>Branch</span><input type="checkbox" class="sw" id="sw-showBranch" role="switch" /></div>
-        <div class="row between"><span>Terminal count</span><input type="checkbox" class="sw" id="sw-showTerminals" role="switch" /></div>
-        <div class="row between"><span>Machine name</span><input type="checkbox" class="sw" id="sw-showMachine" role="switch" /></div>
-      </section>
-
-      <div class="logs-box" id="logs-box">
-        <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      <details class="logs">
-        <summary id="logs-summary">Logs</summary>
-        <div class="log-toolbar">
-          <button type="button" class="btn" id="btn-log-clear">Clear view</button>
-          <button type="button" class="btn" id="btn-log-copy">Copy</button>
-        </div>
-        <pre class="log" id="log-view">No log lines yet. Click Status to generate some.</pre>
-      </details>
-      </div>
+      <div class="order-footer hidden" id="order-footer">
+        <button type="button" class="btn sm ghost" id="btn-reset-order">Reset layout</button>
       </div>
     </div>
 
     <script>
 ;(function () {
 'use strict'
+// Pure Pointer Events vertical block reordering for the Orca isolated panel.
+// Inlined before panel.js inside the single panel IIFE (zero dependencies).
+// Mechanics adapted from mswdev/orca-fleet-monitor (PRs #7 & #8): root pointer
+// capture, dragstart suppression, midpoint hysteresis for unequal heights,
+// scroll-jump protection, time-based edge auto-scroll, FLIP sibling slides,
+// Escape/cancel rollback, and Alt+Arrow keyboard fallback.
+
+var REORDER_DRAG_PX = 5
+var REORDER_TOUCH_HOLD_MS = 350
+var REORDER_TOUCH_SLOP_PX = 10
+var REORDER_DROP_MS = 180
+var REORDER_EDGE_PX = 48
+var REORDER_SCROLL_PX_PER_MS = 14 / 16.7
+var REORDER_REVEAL_PX = 8
+var REORDER_EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
+
+function reconcileOrder(saved, defaults) {
+  var known = {}
+  for (var i = 0; i < defaults.length; i += 1) {
+    known[defaults[i]] = true
+  }
+  var seen = {}
+  var out = []
+  if (Array.isArray(saved)) {
+    for (var j = 0; j < saved.length; j += 1) {
+      var id = typeof saved[j] === 'string' ? saved[j].trim() : ''
+      if (id && known[id] && !seen[id]) {
+        seen[id] = true
+        out.push(id)
+      }
+    }
+  }
+  for (var k = 0; k < defaults.length; k += 1) {
+    if (!seen[defaults[k]]) {
+      out.push(defaults[k])
+    }
+  }
+  return out
+}
+
+function mergeVisibleOrder(visibleIds, fullOrder) {
+  var visibleSet = {}
+  for (var i = 0; i < visibleIds.length; i += 1) {
+    visibleSet[visibleIds[i]] = true
+  }
+  var next = fullOrder.slice()
+  var cursor = 0
+  for (var j = 0; j < next.length; j += 1) {
+    if (visibleSet[next[j]] && cursor < visibleIds.length) {
+      next[j] = visibleIds[cursor]
+      cursor += 1
+    }
+  }
+  while (cursor < visibleIds.length) {
+    if (next.indexOf(visibleIds[cursor]) === -1) {
+      next.push(visibleIds[cursor])
+    }
+    cursor += 1
+  }
+  return next
+}
+
+function movedIds(ids, id, toIndex) {
+  var from = ids.indexOf(id)
+  if (from === -1) return ids.slice()
+  var to = Math.max(0, Math.min(ids.length - 1, toIndex))
+  if (to === from) return ids.slice()
+  var next = ids.slice()
+  next.splice(from, 1)
+  next.splice(to, 0, id)
+  return next
+}
+
+// Midpoint hysteresis using layout offsetTop/offsetHeight (ignores CSS transform).
+// Only swaps past the neighbor's vertical midpoint in the direction of travel,
+// so short blocks (actions) and tall blocks (toggles/logs) never oscillate.
+function targetIndex(items, activeItem, pointerY) {
+  var from = items.indexOf(activeItem)
+  if (from === -1) return -1
+  for (var i = 0; i < items.length; i += 1) {
+    if (i === from) continue
+    var item = items[i]
+    var top = item.offsetTop
+    var height = item.offsetHeight
+    if (pointerY < top || pointerY > top + height) continue
+    var mid = top + height / 2
+    if (i > from && pointerY >= mid) return i
+    if (i < from && pointerY <= mid) return i
+    return from
+  }
+  return from
+}
+
+function createBlockReorder(options) {
+  var container = options.container
+  var doc = options.doc || document
+  var win = options.win || window
+  var getVisibleBlocks = options.getVisibleBlocks
+  var getLabel = options.getLabel
+  var applyDomOrder = options.applyDomOrder
+  var onCommit = options.onCommit
+  var onAnnounce = options.onAnnounce
+  var getOrder = options.getOrder
+  var motionOn =
+    options.motion ||
+    function () {
+      return !(win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches)
+    }
+  var later =
+    options.later ||
+    function (fn, ms) {
+      return setTimeout(fn, ms)
+    }
+  var cancelLater =
+    options.cancelLater ||
+    function (id) {
+      clearTimeout(id)
+    }
+  var reqFrame =
+    options.frame ||
+    function (fn) {
+      return typeof win.requestAnimationFrame === 'function' ? win.requestAnimationFrame(fn) : later(function () { fn(Date.now()) }, 16)
+    }
+  var cancelFrame =
+    options.cancelFrame ||
+    function (id) {
+      if (typeof win.cancelAnimationFrame === 'function') win.cancelAnimationFrame(id)
+      else cancelLater(id)
+    }
+
+  var press = null
+  var drag = null
+  var suppressClickUntil = 0
+
+  function closestMatching(node, attr) {
+    var cur = node
+    while (cur && cur !== container) {
+      if (typeof cur.getAttribute === 'function' && cur.getAttribute(attr) != null) return cur
+      cur = cur.parentNode
+    }
+    return null
+  }
+
+  function containerOriginY() {
+    if (typeof container.getBoundingClientRect === 'function') {
+      return container.getBoundingClientRect().top
+    }
+    return 0
+  }
+
+  function blockById(id) {
+    var blocks = getVisibleBlocks()
+    for (var i = 0; i < blocks.length; i += 1) {
+      if (blocks[i].getAttribute('data-block') === id) return blocks[i]
+    }
+    return null
+  }
+
+  function clampDeltaY(el, rawDy) {
+    var minDy = -el.offsetTop
+    var containerH = container.offsetHeight || 0
+    var maxDy = containerH > 0 ? Math.max(0, containerH - (el.offsetTop + el.offsetHeight)) : rawDy
+    if (rawDy < minDy) return minDy
+    if (rawDy > maxDy) return maxDy
+    return rawDy
+  }
+
+  function applyLiftTransform() {
+    if (!drag) return
+    var el = blockById(drag.id)
+    if (!el) return
+    var pointerInContainer = drag.clientY - containerOriginY()
+    var desiredTop = pointerInContainer - drag.grabOffsetY
+    var dy = clampDeltaY(el, desiredTop - el.offsetTop)
+    el.setAttribute('data-dragging', '')
+    el.style.transform = 'translateY(' + Math.round(dy) + 'px)'
+  }
+
+  function animateFlip(beforeTops, skipId) {
+    if (!motionOn()) return
+    var blocks = getVisibleBlocks()
+    for (var i = 0; i < blocks.length; i += 1) {
+      var el = blocks[i]
+      var id = el.getAttribute('data-block')
+      if (!id || id === skipId) continue
+      if (beforeTops[id] === undefined) continue
+      var dy = beforeTops[id] - el.offsetTop
+      if (Math.abs(dy) < 1) continue
+      if (typeof el.animate === 'function') {
+        try {
+          el.animate(
+            [{ transform: 'translateY(' + dy + 'px)' }, { transform: 'translateY(0px)' }],
+            { duration: REORDER_DROP_MS, easing: REORDER_EASE }
+          )
+        } catch (err) {}
+      }
+    }
+  }
+
+  function snapshotTops() {
+    var tops = {}
+    var blocks = getVisibleBlocks()
+    for (var i = 0; i < blocks.length; i += 1) {
+      var id = blocks[i].getAttribute('data-block')
+      if (id) tops[id] = blocks[i].offsetTop
+    }
+    return tops
+  }
+
+  function reorderInPlace(nextOrder, skipFlipId) {
+    var beforeTops = snapshotTops()
+    var savedScrollY = typeof win.scrollY === 'number' ? win.scrollY : 0
+    var logEl = doc.getElementById ? doc.getElementById('log-view') : null
+    var savedLogScroll = logEl && typeof logEl.scrollTop === 'number' ? logEl.scrollTop : null
+    applyDomOrder(nextOrder)
+    if (savedLogScroll !== null && logEl && logEl.scrollTop !== savedLogScroll) {
+      logEl.scrollTop = savedLogScroll
+    }
+    if (typeof win.scrollTo === 'function' && typeof win.scrollY === 'number' && win.scrollY !== savedScrollY) {
+      win.scrollTo(0, savedScrollY)
+    }
+    animateFlip(beforeTops, skipFlipId)
+  }
+
+  function stopAutoScroll() {
+    if (drag && drag.scrollRaf != null) {
+      cancelFrame(drag.scrollRaf)
+      drag.scrollRaf = null
+      drag.scrollLastTs = 0
+    }
+  }
+
+  function stepAutoScroll(ts) {
+    if (!drag) return
+    drag.scrollRaf = null
+    var vh = win.innerHeight || 0
+    if (vh <= 0 || typeof win.scrollBy !== 'function') return
+    var dir = 0
+    var ratio = 0
+    if (drag.clientY < REORDER_EDGE_PX) {
+      dir = -1
+      ratio = Math.min(1, (REORDER_EDGE_PX - drag.clientY) / REORDER_EDGE_PX)
+    } else if (drag.clientY > vh - REORDER_EDGE_PX) {
+      dir = 1
+      ratio = Math.min(1, (drag.clientY - (vh - REORDER_EDGE_PX)) / REORDER_EDGE_PX)
+    }
+    if (!dir) {
+      drag.scrollLastTs = 0
+      return
+    }
+    var dt = drag.scrollLastTs ? Math.min(48, Math.max(0, ts - drag.scrollLastTs)) : 16
+    drag.scrollLastTs = ts
+    win.scrollBy(0, dir * REORDER_SCROLL_PX_PER_MS * dt * (0.4 + 0.6 * ratio))
+    updateDragPosition()
+    drag.scrollRaf = reqFrame(stepAutoScroll)
+  }
+
+  function ensureAutoScroll() {
+    if (!drag || drag.scrollRaf != null) return
+    var vh = win.innerHeight || 0
+    if (vh <= 0) return
+    if (drag.clientY < REORDER_EDGE_PX || drag.clientY > vh - REORDER_EDGE_PX) {
+      drag.scrollLastTs = 0
+      drag.scrollRaf = reqFrame(stepAutoScroll)
+    }
+  }
+
+  function clearPress() {
+    if (!press) return
+    if (press.timer != null) {
+      cancelLater(press.timer)
+    }
+    press = null
+  }
+
+  function beginDrag(p) {
+    var visible = getVisibleBlocks()
+    if (visible.length < 2) {
+      clearPress()
+      return
+    }
+    var el = blockById(p.id)
+    if (!el) {
+      clearPress()
+      return
+    }
+    var visibleIds = visible.map(function (b) {
+      return b.getAttribute('data-block')
+    })
+    var fullOrder = getOrder().slice()
+    drag = {
+      id: p.id,
+      pointerId: p.pointerId,
+      pointerType: p.pointerType,
+      clientY: p.clientY,
+      grabOffsetY: p.startClientY - containerOriginY() - el.offsetTop,
+      startFullOrder: fullOrder,
+      currentFullOrder: fullOrder,
+      startVisibleIds: visibleIds,
+      currentVisibleIds: visibleIds,
+      scrollRaf: null,
+      scrollLastTs: 0
+    }
+    clearPress()
+    container.setAttribute('data-reordering', '')
+    if (typeof container.setPointerCapture === 'function') {
+      try {
+        container.setPointerCapture(drag.pointerId)
+      } catch (err) {}
+    }
+    applyLiftTransform()
+    ensureAutoScroll()
+  }
+
+  function updateDragPosition() {
+    if (!drag) return
+    var visible = getVisibleBlocks()
+    var el = blockById(drag.id)
+    if (!el || visible.length < 2) {
+      finish(false)
+      return
+    }
+    var pointerInContainer = drag.clientY - containerOriginY()
+    var nextIdx = targetIndex(visible, el, pointerInContainer)
+    var currentIdx = visible.indexOf(el)
+    if (nextIdx >= 0 && nextIdx !== currentIdx) {
+      var nextVisible = movedIds(drag.currentVisibleIds, drag.id, nextIdx)
+      var nextFull = mergeVisibleOrder(nextVisible, drag.currentFullOrder)
+      drag.currentVisibleIds = nextVisible
+      drag.currentFullOrder = nextFull
+      reorderInPlace(nextFull, drag.id)
+    }
+    applyLiftTransform()
+  }
+
+  function finish(commit) {
+    if (!drag) return false
+    var active = drag
+    stopAutoScroll()
+    drag = null
+    suppressClickUntil = Date.now() + 250
+    container.removeAttribute('data-reordering')
+    if (typeof container.releasePointerCapture === 'function') {
+      try {
+        container.releasePointerCapture(active.pointerId)
+      } catch (err) {}
+    }
+    var el = blockById(active.id)
+    var prevTransform = el ? el.style.transform : ''
+    if (!commit) {
+      reorderInPlace(active.startFullOrder, active.id)
+    }
+    el = blockById(active.id)
+    if (el) {
+      el.removeAttribute('data-dragging')
+      el.style.transform = ''
+      if (motionOn() && prevTransform && typeof el.animate === 'function') {
+        try {
+          el.animate([{ transform: prevTransform }, { transform: 'translateY(0px)' }], {
+            duration: REORDER_DROP_MS,
+            easing: REORDER_EASE
+          })
+        } catch (err) {}
+      }
+    }
+    var changed = active.currentFullOrder.join(',') !== active.startFullOrder.join(',')
+    if (commit && changed) {
+      onCommit(active.currentFullOrder)
+      var idx = active.currentVisibleIds.indexOf(active.id)
+      if (idx !== -1 && onAnnounce) {
+        onAnnounce(getLabel(active.id) + ', position ' + (idx + 1) + ' of ' + active.currentVisibleIds.length)
+      }
+    }
+    return true
+  }
+
+  function revealBlock(el) {
+    if (!el || typeof el.getBoundingClientRect !== 'function' || typeof win.scrollBy !== 'function') return
+    var rect = el.getBoundingClientRect()
+    var vh = win.innerHeight || 0
+    if (vh <= 0) return
+    if (rect.top < REORDER_REVEAL_PX) {
+      win.scrollBy(0, rect.top - REORDER_REVEAL_PX)
+    } else if (rect.bottom > vh - REORDER_REVEAL_PX) {
+      win.scrollBy(0, rect.bottom - (vh - REORDER_REVEAL_PX))
+    }
+  }
+
+  function moveByKeyboard(id, delta) {
+    if (drag) return false
+    var visible = getVisibleBlocks()
+    var visibleIds = visible.map(function (b) {
+      return b.getAttribute('data-block')
+    })
+    var at = visibleIds.indexOf(id)
+    var to = Math.max(0, Math.min(visibleIds.length - 1, at + delta))
+    if (at === -1 || to === at) return false
+    var nextVisible = movedIds(visibleIds, id, to)
+    var nextFull = mergeVisibleOrder(nextVisible, getOrder())
+    reorderInPlace(nextFull, null)
+    onCommit(nextFull)
+    var movedEl = blockById(id)
+    var handle =
+      movedEl && typeof movedEl.querySelector === 'function'
+        ? movedEl.querySelector('[data-drag-handle]')
+        : doc.querySelector
+          ? doc.querySelector('[data-drag-handle="' + id + '"]')
+          : null
+    if (handle && typeof handle.focus === 'function') {
+      try {
+        handle.focus({ preventScroll: true })
+      } catch (err) {
+        handle.focus()
+      }
+    }
+    revealBlock(movedEl)
+    if (onAnnounce) {
+      onAnnounce(getLabel(id) + ', position ' + (to + 1) + ' of ' + nextVisible.length)
+    }
+    return true
+  }
+
+  container.addEventListener('dragstart', function (event) {
+    if (event && typeof event.preventDefault === 'function') event.preventDefault()
+  })
+
+  container.addEventListener('contextmenu', function (event) {
+    if ((press && press.pointerType === 'touch') || drag) {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault()
+    }
+  })
+
+  container.addEventListener('pointerdown', function (event) {
+    if (!event) return
+    if (event.isPrimary === false) return
+    if (typeof event.button === 'number' && event.button !== 0) return
+    if (event.ctrlKey || event.metaKey || event.altKey) return
+    var handle = closestMatching(event.target, 'data-drag-handle')
+    if (!handle) return
+    var id = handle.getAttribute('data-drag-handle')
+    if (!id) return
+    if (getVisibleBlocks().length < 2) return
+    clearPress()
+    press = {
+      id: id,
+      pointerId: event.pointerId == null ? 1 : event.pointerId,
+      pointerType: event.pointerType || 'mouse',
+      startClientX: event.clientX || 0,
+      startClientY: event.clientY || 0,
+      clientY: event.clientY || 0,
+      timer: null
+    }
+    if (press.pointerType === 'touch') {
+      var captured = press
+      press.timer = later(function () {
+        if (press === captured) beginDrag(captured)
+      }, REORDER_TOUCH_HOLD_MS)
+    }
+  })
+
+  container.addEventListener('pointermove', function (event) {
+    if (!event) return
+    var pid = event.pointerId == null ? 1 : event.pointerId
+    if (event.pointerType === 'mouse' && typeof event.buttons === 'number' && event.buttons === 0) {
+      clearPress()
+      if (drag) finish(true)
+      return
+    }
+    if (drag && drag.pointerId === pid) {
+      drag.clientY = event.clientY || 0
+      updateDragPosition()
+      ensureAutoScroll()
+      return
+    }
+    if (press && press.pointerId === pid) {
+      var dx = (event.clientX || 0) - press.startClientX
+      var dy = (event.clientY || 0) - press.startClientY
+      var dist = Math.sqrt(dx * dx + dy * dy)
+      press.clientY = event.clientY || 0
+      if (press.pointerType === 'touch') {
+        if (dist > REORDER_TOUCH_SLOP_PX) clearPress()
+      } else if (dist >= REORDER_DRAG_PX) {
+        beginDrag(press)
+        if (drag) {
+          drag.clientY = event.clientY || 0
+          updateDragPosition()
+        }
+      }
+    }
+  })
+
+  container.addEventListener('pointerup', function (event) {
+    var pid = event && event.pointerId != null ? event.pointerId : 1
+    if (press && press.pointerId === pid) clearPress()
+    if (drag && drag.pointerId === pid) finish(true)
+  })
+
+  container.addEventListener('pointercancel', function (event) {
+    var pid = event && event.pointerId != null ? event.pointerId : 1
+    if (press && press.pointerId === pid) clearPress()
+    if (drag && drag.pointerId === pid) finish(false)
+  })
+
+  container.addEventListener(
+    'touchmove',
+    function (event) {
+      if (drag && event && typeof event.preventDefault === 'function') {
+        event.preventDefault()
+      }
+    },
+    { passive: false }
+  )
+
+  container.addEventListener('keydown', function (event) {
+    if (!event || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+    var delta = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
+    if (!delta) return
+    var handle = closestMatching(event.target, 'data-drag-handle')
+    if (!handle) return
+    var id = handle.getAttribute('data-drag-handle')
+    if (!id) return
+    if (typeof event.preventDefault === 'function') event.preventDefault()
+    moveByKeyboard(id, delta)
+  })
+
+  if (typeof doc.addEventListener === 'function') {
+    doc.addEventListener('keydown', function (event) {
+      if (event && event.key === 'Escape' && drag) {
+        if (typeof event.preventDefault === 'function') event.preventDefault()
+        finish(false)
+      }
+    })
+  }
+
+  if (typeof win.addEventListener === 'function') {
+    win.addEventListener('blur', function () {
+      clearPress()
+      if (drag) finish(false)
+    })
+    win.addEventListener('scroll', function () {
+      if (drag) updateDragPosition()
+    })
+  }
+
+  return {
+    dragging: function () {
+      return !!drag
+    },
+    cancel: function () {
+      clearPress()
+      return finish(false)
+    },
+    sync: function () {
+      if (!drag) return
+      if (!blockById(drag.id)) {
+        finish(false)
+        return
+      }
+      applyLiftTransform()
+    },
+    consumeClick: function (event) {
+      if (event && event.detail === 0) return false
+      return Date.now() < suppressClickUntil
+    },
+    moveByKeyboard: moveByKeyboard
+  }
+}
 var orca = window.orca
 var REQUEST_TIMEOUT_MS = 5000
 var TIMELINE_CELLS = 30
@@ -1012,11 +1840,10 @@ var DETAIL_LEVELS = [
   ['full', 'Full']
 ]
 var VIEW_KEY = 'panelView'
-var FULL_ONLY_IDS = ['actions-row', 'full-a', 'full-b', 'full-c', 'full-d']
 // Hideable sections: [id kept in storage and the hiddenPanels setting, element id, label].
 // The ids must match HIDDEN_PANEL_IDS in src/presence/settings.ts.
 var PANEL_SECTIONS = [
-  ['preview', 'full-a', 'Discord preview'],
+  ['preview', 'preview-card', 'Discord preview'],
   ['strip', 'strip-card', 'Last 30 min'],
   ['tiles', 'tile-agents-card', 'Agents tile'],
   ['sink', 'tile-sink-card', 'Sending to'],
@@ -1025,12 +1852,41 @@ var PANEL_SECTIONS = [
   ['agents', 'agents-card', 'Agents'],
   ['toggles', 'toggles-card', 'Show on Discord'],
   ['actions', 'actions-row', 'Actions'],
+  ['leaderboards', 'leaderboards-card', 'Leaderboards'],
   ['logs', 'logs-box', 'Logs']
 ]
+var DEFAULT_BLOCK_ORDER = [
+  'actions',
+  'preview',
+  'strip',
+  'tiles',
+  'sink',
+  'client',
+  'detail',
+  'agents',
+  'toggles',
+  'leaderboards',
+  'logs'
+]
+var SECTION_BY_ID = {}
+PANEL_SECTIONS.forEach(function (s) {
+  SECTION_BY_ID[s[0]] = s
+})
 var HIDDEN_KEY = 'panelHidden'
 var HIDDEN_SETTING = 'hiddenPanels'
+var ORDER_KEY = 'panelOrder'
+var ORDER_SETTING = 'panelOrder'
 var SETTINGS_MIRROR_DELAY_MS = 400
-var SWITCH_FIELDS = ['showAgentState', 'showAgentCount', 'showElapsed', 'showBranch', 'showTerminals', 'showMachine']
+var SWITCH_FIELDS = [
+  'showAgentState',
+  'showAgentCount',
+  'showElapsed',
+  'showProject',
+  'showBranch',
+  'showTerminals',
+  'showMachine'
+]
+var HOST_LABELS = { local: 'Local', ssh: 'SSH', wsl: 'WSL/VM' }
 
 function $(id) {
   return document.getElementById(id)
@@ -1187,7 +2043,10 @@ function clearChildren(el) {
 // Why: snapshot `sinceMs` is the epoch time the agent entered its state, so
 // the chip shows the age; rows keep their chip nodes for the 1 s tick.
 function chipText(agent) {
-  return displayState(agent.state) + ' \u00b7 ' + formatSince(Math.max(0, Date.now() - agent.sinceMs))
+  var label = displayState(agent.state)
+  if (agent.outcome === 'failure') label += ' (failed)'
+  else if (agent.outcome === 'interruption') label += ' (interrupted)'
+  return label + ' \u00b7 ' + formatSince(Math.max(0, Date.now() - agent.sinceMs))
 }
 
 var agentChips = []
@@ -1205,7 +2064,21 @@ function renderAgents(agents) {
   var list = Array.isArray(agents) ? agents : []
   var signature = list
     .map(function (a) {
-      return a.kind + '|' + (a.title || '') + '|' + a.state + '|' + a.sinceMs
+      return (
+        a.kind +
+        '|' +
+        (a.title || '') +
+        '|' +
+        (a.taskTitle || '') +
+        '|' +
+        a.state +
+        '|' +
+        (a.outcome || '') +
+        '|' +
+        (a.focusKey || '') +
+        '|' +
+        a.sinceMs
+      )
     })
     .join(';')
   setClass($('agents-empty'), 'hidden', list.length > 0)
@@ -1216,25 +2089,45 @@ function renderAgents(agents) {
   agentChips = []
   marqueeTitles = []
   list.forEach(function (agent) {
-    var row = document.createElement('div')
-    row.className = 'agent-row'
-    // Why: kind, muted ` | `, then the chat name; only the title truncates.
+    var clickable = typeof agent.focusKey === 'string' && agent.focusKey.length > 0
+    var row = document.createElement(clickable ? 'button' : 'div')
+    row.className = clickable ? 'agent-row agent-btn' : 'agent-row'
+    if (clickable) {
+      row.setAttribute('type', 'button')
+      row.setAttribute('title', 'Jump to agent terminal')
+      row.addEventListener('click', function () {
+        request('presence.focus-agent', { key: agent.focusKey }).then(
+          function (res) {
+            if (res && res.ok === false) flash(res.message || 'Could not focus agent terminal.')
+          },
+          function (error) {
+            flash('Focus failed: ' + errorText(error))
+          }
+        )
+      })
+    }
+    // Why: kind, muted ` | `, then the chat or task name; only the title truncates.
     var label = document.createElement('span')
     label.className = 'agent-label'
     var kind = document.createElement('span')
     kind.className = 'kind'
     kind.textContent = String(agent.kind || 'agent')
     label.appendChild(kind)
-    if (agent.title) {
+    var displayTitle = agent.title || agent.taskTitle || ''
+    if (displayTitle) {
       var sep = document.createElement('span')
       sep.className = 'sep'
       sep.textContent = ' | '
       var title = document.createElement('span')
       title.className = 'title'
-      title.setAttribute('title', String(agent.title))
+      var hoverTitle =
+        agent.title && agent.taskTitle && agent.taskTitle !== agent.title
+          ? agent.title + ' \u2014 ' + agent.taskTitle
+          : displayTitle
+      title.setAttribute('title', String(hoverTitle))
       var inner = document.createElement('span')
       inner.className = 'title-inner'
-      inner.textContent = String(agent.title)
+      inner.textContent = String(displayTitle)
       title.appendChild(inner)
       label.appendChild(sep)
       label.appendChild(title)
@@ -1252,6 +2145,107 @@ function renderAgents(agents) {
     box.appendChild(row)
   })
   scheduleMarquee()
+}
+
+function formatCompact(n) {
+  var v = Math.max(0, Math.floor(Number(n) || 0))
+  if (v < 1000) return String(v)
+  if (v < 10000) {
+    var k1 = Math.round(v / 100) / 10
+    return k1 >= 10 ? Math.round(k1) + 'k' : (k1 % 1 === 0 ? k1.toFixed(0) : k1.toFixed(1)) + 'k'
+  }
+  if (v < 1000000) {
+    var k2 = Math.round(v / 1000)
+    return k2 >= 1000 ? '1M' : k2 + 'k'
+  }
+  var m = Math.round(v / 100000) / 10
+  return (m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)) + 'M'
+}
+
+var leaderboardsEnabled = false
+var lbMetric = 'tokens'
+var lbRowsCache = []
+var lbSignature = null
+function renderLeaderboards(snapshot) {
+  var fields = (snapshot && snapshot.fields) || {}
+  var lb = snapshot && snapshot.leaderboards
+  var enabled = !!(fields.showLeaderboards || (lb && lb.enabled))
+  var changedEnabled = enabled !== leaderboardsEnabled
+  leaderboardsEnabled = enabled
+  var card = $('leaderboards-card')
+  setClass(card, 'feature-disabled', !enabled)
+  setAttr(card, 'data-lb-metric', lbMetric)
+  if (changedEnabled) renderTray()
+  if (!enabled) return
+  lbRowsCache = lb && Array.isArray(lb.rows) ? lb.rows : []
+  drawLeaderboardRows()
+}
+
+function drawLeaderboardRows() {
+  var card = $('leaderboards-card')
+  setAttr(card, 'data-lb-metric', lbMetric)
+  setClass($('lb-sort-messages'), 'on', lbMetric === 'messages')
+  setAttr($('lb-sort-messages'), 'aria-pressed', lbMetric === 'messages' ? 'true' : 'false')
+  setClass($('lb-sort-tokens'), 'on', lbMetric === 'tokens')
+  setAttr($('lb-sort-tokens'), 'aria-pressed', lbMetric === 'tokens' ? 'true' : 'false')
+  var sorted = lbRowsCache
+    .slice()
+    .sort(function (a, b) {
+      if (lbMetric === 'messages') {
+        return b.messages - a.messages || b.tokens - a.tokens || String(a.name).localeCompare(String(b.name))
+      }
+      return b.tokens - a.tokens || b.messages - a.messages || String(a.name).localeCompare(String(b.name))
+    })
+    .slice(0, 5)
+  var hasRows = sorted.length > 0
+  setClass($('lb-head'), 'hidden', !hasRows)
+  setClass($('lb-empty'), 'hidden', hasRows)
+  var sig =
+    lbMetric +
+    '|' +
+    sorted
+      .map(function (r) {
+        return r.name + ':' + r.messages + ':' + r.tokens
+      })
+      .join(';')
+  if (sig === lbSignature) return
+  lbSignature = sig
+  var box = $('lb-rows')
+  clearChildren(box)
+  var maxVal = 0
+  sorted.forEach(function (r) {
+    var val = lbMetric === 'messages' ? r.messages : r.tokens
+    if (val > maxVal) maxVal = val
+  })
+  sorted.forEach(function (r) {
+    var row = document.createElement('div')
+    row.className = 'lb-row'
+    var top = document.createElement('div')
+    top.className = 'lb-row-top'
+    var name = document.createElement('span')
+    name.className = 'lb-name'
+    name.textContent = String(r.name)
+    name.setAttribute('title', String(r.name))
+    var msgs = document.createElement('span')
+    msgs.className = 'lb-num lb-msg' + (lbMetric === 'messages' ? ' active' : '')
+    msgs.textContent = formatCompact(r.messages)
+    var toks = document.createElement('span')
+    toks.className = 'lb-num lb-tok' + (lbMetric === 'tokens' ? ' active' : '')
+    toks.textContent = formatCompact(r.tokens)
+    top.appendChild(name)
+    top.appendChild(msgs)
+    top.appendChild(toks)
+    var bar = document.createElement('div')
+    bar.className = 'lb-bar'
+    var fill = document.createElement('i')
+    var val = lbMetric === 'messages' ? r.messages : r.tokens
+    var pct = maxVal > 0 ? Math.max(4, Math.round((val / maxVal) * 100)) : 0
+    fill.style.width = pct + '%'
+    bar.appendChild(fill)
+    row.appendChild(top)
+    row.appendChild(bar)
+    box.appendChild(row)
+  })
 }
 
 var mixSignature = null
@@ -1320,13 +2314,23 @@ function updateMeta() {
   setText('min-meta', parts.join(' \u00b7 '))
 }
 
+function renderHostBadge(snapshot) {
+  var kind = snapshot && snapshot.status && snapshot.status.hostKind
+  var label = kind ? HOST_LABELS[kind] : ''
+  var badge = $('host-badge')
+  setClass(badge, 'hidden', !label)
+  if (label) setText('host-badge', label)
+}
+
 var lastSnapshot = null
 function render(snapshot) {
   setAttr($('status-bar'), 'class', barClass(snapshot))
   setText('indicator-label', indicatorLabel(snapshot))
+  renderHostBadge(snapshot)
   if (!snapshot || !snapshot.status) return
   lastSnapshot = snapshot
   syncHiddenSetting(snapshot)
+  syncOrderSetting(snapshot)
   var fields = snapshot.fields || {}
   minAgents = Array.isArray(snapshot.agents) ? snapshot.agents.length : 0
   renderCard(snapshot)
@@ -1340,19 +2344,21 @@ function render(snapshot) {
   renderMinimal(snapshot, agents)
   renderControls(snapshot)
   renderAgents(agents)
+  renderLeaderboards(snapshot)
   setText('btn-toggle', fields.enabled === false ? 'Resume' : 'Pause')
   var logs = snapshot.logs || []
   setText('logs-summary', 'Logs (' + logs.length + ')')
   if (logs.length) {
-    var view = $('log-view')
+    var logEl = $('log-view')
     var text = logs.join('\n')
-    if (view.textContent !== text) {
+    if (logEl.textContent !== text) {
       // Why: keep the reader's place; only follow the tail when already at the bottom.
-      var atBottom = view.scrollTop + view.clientHeight >= view.scrollHeight - 4
-      view.textContent = text
-      if (atBottom) view.scrollTop = view.scrollHeight
+      var atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4
+      logEl.textContent = text
+      if (atBottom) logEl.scrollTop = logEl.scrollHeight
     }
   }
+  if (blockReorder) blockReorder.sync()
 }
 
 var pending = {}
@@ -1372,6 +2378,11 @@ function renderControls(snapshot) {
     var el = $('sw-' + name)
     if (el && !pending[name] && el.checked !== !!fields[name]) el.checked = !!fields[name]
   })
+  var statsSelect = $('sel-showSessionStats')
+  var nextStats = fields.showSessionStats || 'off'
+  if (statsSelect && !pending.showSessionStats && statsSelect.value !== nextStats) {
+    statsSelect.value = nextStats
+  }
 }
 
 // Why: the card shows whenever a client is detected so the choice is always
@@ -1393,7 +2404,6 @@ function renderClients(snapshot) {
   var fields = snapshot.fields || {}
   var chosen = fields.discordClient || 'auto'
   setClass($('client-card'), 'hidden', clients.length < 1)
-  collapseWrappers()
   var detected = clients.some(function (c) {
     return c.id === chosen
   })
@@ -1421,7 +2431,7 @@ function renderClients(snapshot) {
       select.appendChild(option)
     })
   }
-  if (!pending.discordClient) select.value = chosen
+  if (!pending.discordClient && select.value !== chosen) select.value = chosen
   var fallback = !!snapshot.status.clientFallback
   setClass($('client-note'), 'hidden', !fallback)
   setText(
@@ -1474,10 +2484,32 @@ function wireControls() {
   })
   SWITCH_FIELDS.forEach(function (name) {
     var el = $('sw-' + name)
-    el.addEventListener('change', function () {
-      writeSetting(name, !!el.checked, [el])
-    })
+    if (el) {
+      el.addEventListener('change', function () {
+        writeSetting(name, !!el.checked, [el])
+      })
+    }
   })
+  var statsSelect = $('sel-showSessionStats')
+  if (statsSelect) {
+    statsSelect.addEventListener('change', function () {
+      writeSetting('showSessionStats', statsSelect.value, [statsSelect])
+    })
+  }
+  var lbMessages = $('lb-sort-messages')
+  var lbTokens = $('lb-sort-tokens')
+  if (lbMessages) {
+    lbMessages.addEventListener('click', function () {
+      lbMetric = 'messages'
+      drawLeaderboardRows()
+    })
+  }
+  if (lbTokens) {
+    lbTokens.addEventListener('click', function () {
+      lbMetric = 'tokens'
+      drawLeaderboardRows()
+    })
+  }
   var seg = $('detail-seg')
   DETAIL_LEVELS.forEach(function (level) {
     var button = document.createElement('button')
@@ -1497,9 +2529,8 @@ function wireControls() {
 var view = 'full'
 function applyView(next) {
   view = next === 'minimal' ? 'minimal' : 'full'
-  FULL_ONLY_IDS.forEach(function (id) {
-    setClass($(id), 'hidden', view === 'minimal')
-  })
+  if (blockReorder) blockReorder.cancel()
+  setAttr($('app'), 'data-view', view)
   setClass($('min-hero'), 'hidden', view !== 'minimal')
   setClass($('view-full'), 'on', view === 'full')
   setClass($('view-minimal'), 'on', view === 'minimal')
@@ -1583,50 +2614,24 @@ function applyHidden(list) {
     setClass($(s[1]), 'user-hidden', off)
     setAttr($('eye-' + s[0]), 'aria-pressed', off ? 'true' : 'false')
   })
-  collapseWrappers()
+  if (blockReorder) blockReorder.sync()
   renderTray()
 }
 
-// Why: wrapper cols (full-a/c/d) stay in the frame's gap flow even when
-// every child hides (user-hidden or the client card's own `hidden`), leaving
-// a double gap. A separate `collapsed` class keeps this apart from the
-// `hidden` class that views toggle.
-var WRAPPER_IDS = ['full-a', 'full-b', 'full-c', 'full-d']
 function hasClass(el, name) {
   return !!el && (' ' + el.className + ' ').indexOf(' ' + name + ' ') !== -1
-}
-function collapseWrappers() {
-  WRAPPER_IDS.forEach(function (id) {
-    var el = $(id)
-    if (!el) return
-    var kids = el.children || []
-    var anyVisible = false
-    for (var i = 0; i < kids.length; i += 1) {
-      if (!hasClass(kids[i], 'hidden') && !hasClass(kids[i], 'user-hidden')) {
-        anyVisible = true
-        break
-      }
-    }
-    setClass(el, 'collapsed', !anyVisible)
-  })
-  // Why: one hidden tile leaves a half-empty row; the survivor fills it.
-  // Derived from state, not DOM children, so it works wherever applyHidden runs.
-  var tiles = $('full-b')
-  if (tiles) {
-    var tilesHidden = hiddenIds.indexOf('tiles') !== -1
-    var sinkHidden = hiddenIds.indexOf('sink') !== -1
-    setClass(tiles, 'single', tilesHidden !== sinkHidden)
-  }
 }
 
 var traySignature = null
 // Minimal view renders only the strip and detail sections; restore chips for
 // full-only sections would unhide nothing visible, so the tray filters them.
+// Leaderboards is also omitted while `showLeaderboards` is disabled.
 var MINIMAL_SECTIONS = ['strip', 'detail']
 function viewHidden() {
-  if (view !== 'minimal') return hiddenIds.slice()
   return hiddenIds.filter(function (id) {
-    return MINIMAL_SECTIONS.indexOf(id) !== -1
+    if (id === 'leaderboards' && !leaderboardsEnabled) return false
+    if (view === 'minimal') return MINIMAL_SECTIONS.indexOf(id) !== -1
+    return true
   })
 }
 function renderTray() {
@@ -1789,20 +2794,207 @@ function run(command, doneMessage) {
   )
 }
 
+// Section order: storage `panelOrder` is the runtime source; the `panelOrder`
+// setting mirrors it for the Settings page and arrives in the snapshot as
+// `order`. Follows the same storage-wins + echo-guard contract as hiddenPanels.
+var blockOrder = DEFAULT_BLOCK_ORDER.slice()
+var orderFromStorage = false
+var settingsOrderSig = null
+var orderSettingsTimer = null
+var awaitingOrderEcho = null
+var blockReorder = null
+
+function isDefaultOrder(list) {
+  return list.join(',') === DEFAULT_BLOCK_ORDER.join(',')
+}
+
+function orderSettingValue(list) {
+  return isDefaultOrder(list) ? '' : list.join(',')
+}
+
+function applyDomOrder(orderList) {
+  blockOrder = reconcileOrder(orderList, DEFAULT_BLOCK_ORDER)
+  var sections = $('sections')
+  if (sections) {
+    var kids = sections.children || []
+    // Why: skip all DOM reparenting when blocks are already in order, and only
+    // move out-of-place nodes so unchanged cards never flash or lose state.
+    var target = []
+    for (var i = 0; i < blockOrder.length; i += 1) {
+      var info = SECTION_BY_ID[blockOrder[i]]
+      var el = info ? $(info[1]) : null
+      if (el) target.push(el)
+    }
+    var same = kids.length === target.length
+    if (same) {
+      for (var j = 0; j < target.length; j += 1) {
+        if (kids[j] !== target[j]) {
+          same = false
+          break
+        }
+      }
+    }
+    if (!same) {
+      for (var k = 0; k < target.length; k += 1) {
+        var current = sections.children[k]
+        if (current !== target[k]) {
+          if (typeof sections.insertBefore === 'function') {
+            sections.insertBefore(target[k], current || null)
+          } else {
+            sections.appendChild(target[k])
+          }
+        }
+      }
+    }
+  }
+  setClass($('order-footer'), 'hidden', isDefaultOrder(blockOrder))
+}
+
+function visibleBlocks() {
+  var sections = $('sections')
+  if (!sections) return []
+  var out = []
+  for (var i = 0; i < blockOrder.length; i += 1) {
+    var id = blockOrder[i]
+    var info = SECTION_BY_ID[id]
+    var el = info ? $(info[1]) : null
+    if (!el) continue
+    if (hasClass(el, 'hidden') || hasClass(el, 'user-hidden') || hasClass(el, 'feature-disabled')) continue
+    if (view === 'minimal' && hasClass(el, 'full-only')) continue
+    out.push(el)
+  }
+  return out
+}
+
+function announceOrder(message) {
+  setText('order-live', message)
+}
+
+function setOrder(nextList) {
+  orderFromStorage = true
+  applyDomOrder(nextList)
+  var settingVal = orderSettingValue(blockOrder)
+  callHost('storage.set', { key: ORDER_KEY, value: settingVal ? blockOrder.slice() : [] })
+  var mirror = function () {
+    orderSettingsTimer = null
+    awaitingOrderEcho = settingVal
+    callHost('settings.set', { key: ORDER_SETTING, value: settingVal }, function () {
+      if (awaitingOrderEcho === settingVal) awaitingOrderEcho = null
+    })
+  }
+  if (typeof setTimeout !== 'function') return mirror()
+  if (orderSettingsTimer) clearTimeout(orderSettingsTimer)
+  orderSettingsTimer = setTimeout(mirror, SETTINGS_MIRROR_DELAY_MS)
+}
+
+function loadOrder() {
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') return Promise.resolve()
+  return Promise.resolve()
+    .then(function () {
+      return host.call('storage.get', { key: ORDER_KEY })
+    })
+    .then(
+      function (result) {
+        var raw = Array.isArray(result) ? result : storedView(result)
+        if (!Array.isArray(raw) || orderFromStorage) return
+        orderFromStorage = true
+        applyDomOrder(raw)
+      },
+      function () {}
+    )
+}
+
+function syncOrderSetting(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.order)) return
+  var normalized = reconcileOrder(snapshot.order, DEFAULT_BLOCK_ORDER)
+  var signature = orderSettingValue(normalized)
+  if (orderSettingsTimer || awaitingOrderEcho !== null) {
+    if (signature === awaitingOrderEcho) {
+      awaitingOrderEcho = null
+      settingsOrderSig = signature
+    }
+    return
+  }
+  if (signature === settingsOrderSig) return
+  var first = settingsOrderSig === null
+  settingsOrderSig = signature
+  if ((first && orderFromStorage) || signature === orderSettingValue(blockOrder)) return
+  if (blockReorder && blockReorder.dragging()) return
+  applyDomOrder(normalized)
+  if (!first) {
+    orderFromStorage = true
+    callHost('storage.set', { key: ORDER_KEY, value: signature ? blockOrder.slice() : [] })
+  }
+}
+
+function wireReorder() {
+  var sections = $('sections')
+  if (sections && typeof createBlockReorder === 'function') {
+    blockReorder = createBlockReorder({
+      container: sections,
+      doc: document,
+      win: window,
+      getOrder: function () {
+        return blockOrder
+      },
+      getVisibleBlocks: visibleBlocks,
+      getLabel: function (id) {
+        return SECTION_BY_ID[id] ? SECTION_BY_ID[id][2] : id
+      },
+      applyDomOrder: applyDomOrder,
+      onCommit: function (nextOrder) {
+        setOrder(nextOrder)
+      },
+      onAnnounce: announceOrder
+    })
+  }
+  var resetBtn = $('btn-reset-order')
+  if (resetBtn) {
+    resetBtn.addEventListener('click', function () {
+      setOrder(DEFAULT_BLOCK_ORDER.slice())
+      flash('Layout order reset.')
+      announceOrder('Layout order reset to default.')
+    })
+  }
+  loadOrder()
+}
+
 function wireLogs() {
   $('btn-log-clear').addEventListener('click', function () {
     $('log-view').textContent = ''
     flash('Cleared this view only (not the on-disk log).')
   })
   $('btn-log-copy').addEventListener('click', function () {
-    var text = $('log-view').textContent || ''
-    var fallback = function () {
+    var logEl = $('log-view')
+    var text = logEl.textContent || ''
+    var selectLogs = function () {
+      if (typeof document.createRange !== 'function' || typeof window.getSelection !== 'function') return false
       var range = document.createRange()
-      range.selectNodeContents($('log-view'))
+      range.selectNodeContents(logEl)
       var sel = window.getSelection()
+      if (!sel) return false
       sel.removeAllRanges()
       sel.addRange(range)
-      flash('Logs selected — copy with the system shortcut.')
+      return true
+    }
+    // Why: isolated frames allow synchronous execCommand('copy') inside a user
+    // click gesture even when navigator.clipboard.writeText is blocked.
+    var copiedSync = false
+    try {
+      if (selectLogs() && typeof document.execCommand === 'function') {
+        copiedSync = !!document.execCommand('copy')
+      }
+    } catch (err) {
+      copiedSync = false
+    }
+    if (copiedSync) {
+      flash('Logs copied.')
+      return
+    }
+    var fallback = function () {
+      selectLogs()
+      flash('Logs selected \u2014 copy with the system shortcut.')
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(function () {
@@ -1812,16 +3004,49 @@ function wireLogs() {
       fallback()
     }
   })
+  var saveBtn = $('btn-log-save')
+  if (saveBtn && orca && orca.files && typeof orca.files.saveAs === 'function') {
+    setClass(saveBtn, 'hidden', false)
+    saveBtn.addEventListener('click', function () {
+      var text = $('log-view').textContent || ''
+      Promise.resolve()
+        .then(function () {
+          return orca.files.saveAs({
+            suggestedName: 'discord-presence.log',
+            mimeType: 'text/plain',
+            data: text
+          })
+        })
+        .then(
+          function (result) {
+            flash(result && result.status === 'saved' ? 'Logs saved.' : 'Save cancelled.')
+          },
+          function (error) {
+            flash('Save failed: ' + errorText(error))
+          }
+        )
+    })
+  }
 }
 
-// Theme: the host event is the source; the last one is stored so the next
-// load paints in the right theme before the host speaks. Junk is ignored.
+// Theme: the host event (`{ colorScheme }`) is the source; html.light /
+// html.dark seeds initial boot synchronously before async storage resolves.
 var THEME_KEY = 'panelTheme'
 var themeFromEvent = false
 
 function themeOf(payload) {
-  var theme = typeof payload === 'string' ? payload : payload && (payload.theme || payload.mode)
+  var theme =
+    typeof payload === 'string'
+      ? payload
+      : payload && (payload.colorScheme || payload.theme || payload.mode)
   return theme === 'light' || theme === 'dark' ? theme : null
+}
+
+function seedInitialTheme() {
+  var root = document.documentElement
+  if (!root) return
+  if (hasClass(root, 'light')) setAttr(root, 'data-theme', 'light')
+  else if (hasClass(root, 'dark')) setAttr(root, 'data-theme', 'dark')
 }
 
 function applyTheme(payload) {
@@ -1849,9 +3074,20 @@ function loadTheme() {
 }
 
 // Why: tests only. Non-enumerable so it never shows up when iterating window.
-Object.defineProperty(window, '__presencePanel', { value: { render: render }, enumerable: false })
+Object.defineProperty(window, '__presencePanel', {
+  value: {
+    render: render,
+    reconcileOrder: reconcileOrder,
+    mergeVisibleOrder: mergeVisibleOrder,
+    movedIds: movedIds,
+    targetIndex: targetIndex,
+    createBlockReorder: createBlockReorder
+  },
+  enumerable: false
+})
 
 buildStrip()
+seedInitialTheme()
 
 if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
   $('app').classList.add('hidden')
@@ -1869,6 +3105,7 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
   })
   loadView()
   wireHidden()
+  wireReorder()
   $('btn-refresh').addEventListener('click', forceRefresh)
   $('btn-status').addEventListener('click', function () {
     run('presence.status', 'Status sent as a notification.')

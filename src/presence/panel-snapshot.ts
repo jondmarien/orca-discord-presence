@@ -1,11 +1,11 @@
 /**
- * Privacy-safe diagnostics snapshot embedded in the Orca panel HTML.
+ * Privacy-safe diagnostics snapshot pushed to the Orca panel over `panels.post`
+ * and returned by `presence.snapshot`.
  *
- * Panels cannot call `settings.*` or `storage.*` today (PLAN.md Task B4 /
- * issue #10). The worker therefore serializes a redacted view of status,
- * field toggles, and recent log lines into `panel/index.html` when the
- * install is writable. The Discord Application ID and bridge token are
- * never included.
+ * The panel talks to the worker via `window.orca.plugin.request` / `plugin.on`
+ * and reads/writes its own settings and storage through `window.orca.host`.
+ * The Discord Application ID, bridge token, bridge URL, workspace paths, raw
+ * SSH hostnames, and session history titles are never included.
  *
  * @module presence/panel-snapshot
  * @author Jonathan Marien
@@ -16,8 +16,9 @@ import { localAssetName, type DiscordActivity } from './activity'
 import type { CanonicalAgentState } from './agent-state'
 import type { AgentSlot } from './agents'
 import type { PresenceStatus } from './controller'
+import type { WorkspaceHostKind, WorkspaceLeaderboardRow } from './leaderboards'
 import { LOG_DIR_NAME, LOG_FILE_NAME } from './log'
-import type { PresenceSettings } from './settings'
+import type { PresenceSettings, SessionStatsMode } from './settings'
 import type { TimelineSlot } from './timeline'
 
 /**
@@ -34,14 +35,18 @@ export type PresencePanelActivitySummary = {
 }
 
 /**
- * One agent row: no workspace, pane or terminal id ever. `title` is the chat
- * name, local panel only (never Discord, bridge or logs), truncated.
+ * One agent row: no workspace, pane or terminal id ever. `title` and
+ * `taskTitle` are local panel only (never Discord, bridge or logs), truncated.
+ * `focusKey` is an opaque worker-local index used by `presence.focus-agent`.
  */
 export type PresencePanelAgent = {
   kind: string
   title?: string
+  taskTitle?: string
   state: CanonicalAgentState
   sinceMs: number
+  outcome?: 'failure' | 'interruption'
+  focusKey?: string
 }
 
 /**
@@ -56,12 +61,12 @@ export type PresencePanelActivityCard = {
 }
 
 /**
- * Read-only field toggles. Changing them still requires the command palette
- * until the host makes `settings.set` panel-callable.
+ * Current field toggles mirrored into the panel UI.
  */
 export type PresencePanelFields = {
   enabled: boolean
   showBranch: boolean
+  showProject: boolean
   showAgentState: boolean
   showTerminals: boolean
   showMachine: boolean
@@ -70,12 +75,22 @@ export type PresencePanelFields = {
   debugLogging: boolean
   showOpenButton: boolean
   showAgentCount: boolean
+  showSessionStats: SessionStatsMode
+  showLeaderboards: boolean
   /** `auto` or a detected client id (never a socket path). */
   discordClient: string
 }
 
 /**
- * JSON blob assigned to `window.__PRESENCE_PANEL__` / `#presence-snapshot`.
+ * Local workspace leaderboard payload included in the panel snapshot.
+ */
+export type PresencePanelLeaderboards = {
+  enabled: boolean
+  rows: WorkspaceLeaderboardRow[]
+}
+
+/**
+ * Redacted snapshot delivered to the panel frame.
  */
 export type PresencePanelSnapshot = {
   version: string
@@ -96,6 +111,8 @@ export type PresencePanelSnapshot = {
     debugLogging: boolean
     lastActivity: PresencePanelActivitySummary | null
     logFile: string | null
+    /** Coarse host location of the focused workspace (never an SSH hostname). */
+    hostKind?: WorkspaceHostKind
   }
   fields: PresencePanelFields
   timeline: TimelineSlot[]
@@ -105,6 +122,10 @@ export type PresencePanelSnapshot = {
   logHint: string
   /** Hidden panel section ids from the `hiddenPanels` setting. */
   hidden: string[]
+  /** Custom panel section order from the `panelOrder` setting (`[]` = default). */
+  order: string[]
+  /** Local workspace leaderboard (empty when `showLeaderboards` is false). */
+  leaderboards: PresencePanelLeaderboards
 }
 
 /**
@@ -117,6 +138,12 @@ export type PresencePanelSnapshotInput = {
   logs: readonly string[]
   timeline: TimelineSlot[]
   agents: readonly AgentSlot[]
+  /** Coarse host location of the focused workspace. */
+  hostKind?: WorkspaceHostKind
+  /** Optional opaque handle resolver for clickable agent focus rows. */
+  focusKeyOf?: (slot: AgentSlot) => string | undefined
+  /** Local workspace leaderboard rows when `showLeaderboards` is on. */
+  leaderboardRows?: readonly WorkspaceLeaderboardRow[]
   /** Clock for `generatedAt`. Defaults to `new Date()`. */
   now?: Date
 }
@@ -172,23 +199,42 @@ function panelTitle(title: string | undefined): string | undefined {
   return text.length > PANEL_TITLE_MAX ? `${text.slice(0, PANEL_TITLE_MAX - 1)}…` : text
 }
 
+function panelOutcome(outcome: string | undefined): 'failure' | 'interruption' | undefined {
+  return outcome === 'failure' || outcome === 'interruption' ? outcome : undefined
+}
+
 /**
  * Privacy-safe agent rows, highest-priority state first, then oldest first.
  *
  * Why: slots carry workspace ids, pane keys and terminal ids. Rebuilding each
- * row from kind, title, state and time means none of those can reach the panel.
+ * row from kind, title, taskTitle, state, outcome and time means none of those
+ * can reach the panel.
  */
-export function summarizePanelAgents(slots: readonly AgentSlot[]): PresencePanelAgent[] {
-  return slots
-    .map((slot) => ({
-      kind: slot.kind && slot.kind.length > 0 ? slot.kind : 'agent',
-      ...(panelTitle(slot.title) ? { title: panelTitle(slot.title) } : {}),
-      state: slot.canonicalState,
-      sinceMs: slot.stateStartedAt ?? slot.receivedAt
-    }))
+export function summarizePanelAgents(
+  slots: readonly AgentSlot[],
+  options: { focusKeyOf?: (slot: AgentSlot) => string | undefined } = {}
+): PresencePanelAgent[] {
+  return [...slots]
     .sort(
-      (a, b) => AGENT_ROW_PRIORITY[b.state] - AGENT_ROW_PRIORITY[a.state] || a.sinceMs - b.sinceMs
+      (a, b) =>
+        AGENT_ROW_PRIORITY[b.canonicalState] - AGENT_ROW_PRIORITY[a.canonicalState] ||
+        (a.stateStartedAt ?? a.receivedAt) - (b.stateStartedAt ?? b.receivedAt)
     )
+    .map((slot) => {
+      const title = panelTitle(slot.title)
+      const taskTitle = panelTitle(slot.taskTitle)
+      const outcome = panelOutcome(slot.outcome)
+      const focusKey = options.focusKeyOf?.(slot)
+      return {
+        kind: slot.kind && slot.kind.length > 0 ? slot.kind : 'agent',
+        ...(title ? { title } : {}),
+        ...(taskTitle && taskTitle !== title ? { taskTitle } : {}),
+        state: slot.canonicalState,
+        sinceMs: slot.stateStartedAt ?? slot.receivedAt,
+        ...(outcome ? { outcome } : {}),
+        ...(focusKey ? { focusKey } : {})
+      }
+    })
 }
 
 /**
@@ -224,7 +270,18 @@ export function formatPanelStatusToast(snapshot: PresencePanelSnapshot): string 
  * `machineLabel`, and `openUrl` are intentionally omitted.
  */
 export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): PresencePanelSnapshot {
-  const { version, status, settings, logs, timeline, agents, now = new Date() } = input
+  const {
+    version,
+    status,
+    settings,
+    logs,
+    timeline,
+    agents,
+    hostKind,
+    focusKeyOf,
+    leaderboardRows = [],
+    now = new Date()
+  } = input
   return {
     version,
     generatedAt: now.toISOString(),
@@ -241,11 +298,13 @@ export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): P
       bridgeEnabled: status.bridgeEnabled,
       debugLogging: settings.debugLogging,
       lastActivity: summarizePanelActivity(status.lastActivity),
-      logFile: status.logFile
+      logFile: status.logFile,
+      ...(hostKind ? { hostKind } : {})
     },
     fields: {
       enabled: settings.enabled,
       showBranch: settings.showBranch,
+      showProject: settings.showProject,
       showAgentState: settings.showAgentState,
       showTerminals: settings.showTerminals,
       showMachine: settings.showMachine,
@@ -254,14 +313,23 @@ export function buildPresencePanelSnapshot(input: PresencePanelSnapshotInput): P
       debugLogging: settings.debugLogging,
       showOpenButton: settings.showOpenButton,
       showAgentCount: settings.showAgentCount,
+      showSessionStats: settings.showSessionStats,
+      showLeaderboards: settings.showLeaderboards,
       discordClient: settings.discordClient
     },
     timeline: [...timeline],
-    agents: summarizePanelAgents(agents),
+    agents: summarizePanelAgents(agents, { focusKeyOf }),
     activityCard: summarizePanelActivityCard(status.lastActivity),
     logs: logs.map(redactPanelLogLine),
     logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT,
-    hidden: settings.hiddenPanels ? settings.hiddenPanels.split(',') : []
+    hidden: settings.hiddenPanels ? settings.hiddenPanels.split(',') : [],
+    order: settings.panelOrder ? settings.panelOrder.split(',') : [],
+    leaderboards: {
+      enabled: settings.showLeaderboards,
+      rows: settings.showLeaderboards
+        ? leaderboardRows.map(({ name, messages, tokens }) => ({ name, messages, tokens }))
+        : []
+    }
   }
 }
 

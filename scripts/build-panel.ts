@@ -22,7 +22,7 @@ const read = (name: string): string => readFileSync(join(root, 'src/panel', name
  * a top-level `var orca` would assign to the frozen `window.orca` and throw.
  */
 export function buildPanelHtml(): string {
-  const script = `;(function () {\n'use strict'\n${read('panel.js')}\n})()`
+  const script = `;(function () {\n'use strict'\n${read('reorder.js')}\n${read('panel.js')}\n})()`
   // Why: function replacers keep `$&`-style sequences in the source literal.
   return (
     read('panel.html')

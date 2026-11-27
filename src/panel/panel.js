@@ -26,11 +26,10 @@ var DETAIL_LEVELS = [
   ['full', 'Full']
 ]
 var VIEW_KEY = 'panelView'
-var FULL_ONLY_IDS = ['actions-row', 'full-a', 'full-b', 'full-c', 'full-d']
 // Hideable sections: [id kept in storage and the hiddenPanels setting, element id, label].
 // The ids must match HIDDEN_PANEL_IDS in src/presence/settings.ts.
 var PANEL_SECTIONS = [
-  ['preview', 'full-a', 'Discord preview'],
+  ['preview', 'preview-card', 'Discord preview'],
   ['strip', 'strip-card', 'Last 30 min'],
   ['tiles', 'tile-agents-card', 'Agents tile'],
   ['sink', 'tile-sink-card', 'Sending to'],
@@ -39,12 +38,41 @@ var PANEL_SECTIONS = [
   ['agents', 'agents-card', 'Agents'],
   ['toggles', 'toggles-card', 'Show on Discord'],
   ['actions', 'actions-row', 'Actions'],
+  ['leaderboards', 'leaderboards-card', 'Leaderboards'],
   ['logs', 'logs-box', 'Logs']
 ]
+var DEFAULT_BLOCK_ORDER = [
+  'actions',
+  'preview',
+  'strip',
+  'tiles',
+  'sink',
+  'client',
+  'detail',
+  'agents',
+  'toggles',
+  'leaderboards',
+  'logs'
+]
+var SECTION_BY_ID = {}
+PANEL_SECTIONS.forEach(function (s) {
+  SECTION_BY_ID[s[0]] = s
+})
 var HIDDEN_KEY = 'panelHidden'
 var HIDDEN_SETTING = 'hiddenPanels'
+var ORDER_KEY = 'panelOrder'
+var ORDER_SETTING = 'panelOrder'
 var SETTINGS_MIRROR_DELAY_MS = 400
-var SWITCH_FIELDS = ['showAgentState', 'showAgentCount', 'showElapsed', 'showBranch', 'showTerminals', 'showMachine']
+var SWITCH_FIELDS = [
+  'showAgentState',
+  'showAgentCount',
+  'showElapsed',
+  'showProject',
+  'showBranch',
+  'showTerminals',
+  'showMachine'
+]
+var HOST_LABELS = { local: 'Local', ssh: 'SSH', wsl: 'WSL/VM' }
 
 function $(id) {
   return document.getElementById(id)
@@ -201,7 +229,10 @@ function clearChildren(el) {
 // Why: snapshot `sinceMs` is the epoch time the agent entered its state, so
 // the chip shows the age; rows keep their chip nodes for the 1 s tick.
 function chipText(agent) {
-  return displayState(agent.state) + ' \u00b7 ' + formatSince(Math.max(0, Date.now() - agent.sinceMs))
+  var label = displayState(agent.state)
+  if (agent.outcome === 'failure') label += ' (failed)'
+  else if (agent.outcome === 'interruption') label += ' (interrupted)'
+  return label + ' \u00b7 ' + formatSince(Math.max(0, Date.now() - agent.sinceMs))
 }
 
 var agentChips = []
@@ -219,7 +250,21 @@ function renderAgents(agents) {
   var list = Array.isArray(agents) ? agents : []
   var signature = list
     .map(function (a) {
-      return a.kind + '|' + (a.title || '') + '|' + a.state + '|' + a.sinceMs
+      return (
+        a.kind +
+        '|' +
+        (a.title || '') +
+        '|' +
+        (a.taskTitle || '') +
+        '|' +
+        a.state +
+        '|' +
+        (a.outcome || '') +
+        '|' +
+        (a.focusKey || '') +
+        '|' +
+        a.sinceMs
+      )
     })
     .join(';')
   setClass($('agents-empty'), 'hidden', list.length > 0)
@@ -230,25 +275,45 @@ function renderAgents(agents) {
   agentChips = []
   marqueeTitles = []
   list.forEach(function (agent) {
-    var row = document.createElement('div')
-    row.className = 'agent-row'
-    // Why: kind, muted ` | `, then the chat name; only the title truncates.
+    var clickable = typeof agent.focusKey === 'string' && agent.focusKey.length > 0
+    var row = document.createElement(clickable ? 'button' : 'div')
+    row.className = clickable ? 'agent-row agent-btn' : 'agent-row'
+    if (clickable) {
+      row.setAttribute('type', 'button')
+      row.setAttribute('title', 'Jump to agent terminal')
+      row.addEventListener('click', function () {
+        request('presence.focus-agent', { key: agent.focusKey }).then(
+          function (res) {
+            if (res && res.ok === false) flash(res.message || 'Could not focus agent terminal.')
+          },
+          function (error) {
+            flash('Focus failed: ' + errorText(error))
+          }
+        )
+      })
+    }
+    // Why: kind, muted ` | `, then the chat or task name; only the title truncates.
     var label = document.createElement('span')
     label.className = 'agent-label'
     var kind = document.createElement('span')
     kind.className = 'kind'
     kind.textContent = String(agent.kind || 'agent')
     label.appendChild(kind)
-    if (agent.title) {
+    var displayTitle = agent.title || agent.taskTitle || ''
+    if (displayTitle) {
       var sep = document.createElement('span')
       sep.className = 'sep'
       sep.textContent = ' | '
       var title = document.createElement('span')
       title.className = 'title'
-      title.setAttribute('title', String(agent.title))
+      var hoverTitle =
+        agent.title && agent.taskTitle && agent.taskTitle !== agent.title
+          ? agent.title + ' \u2014 ' + agent.taskTitle
+          : displayTitle
+      title.setAttribute('title', String(hoverTitle))
       var inner = document.createElement('span')
       inner.className = 'title-inner'
-      inner.textContent = String(agent.title)
+      inner.textContent = String(displayTitle)
       title.appendChild(inner)
       label.appendChild(sep)
       label.appendChild(title)
@@ -266,6 +331,107 @@ function renderAgents(agents) {
     box.appendChild(row)
   })
   scheduleMarquee()
+}
+
+function formatCompact(n) {
+  var v = Math.max(0, Math.floor(Number(n) || 0))
+  if (v < 1000) return String(v)
+  if (v < 10000) {
+    var k1 = Math.round(v / 100) / 10
+    return k1 >= 10 ? Math.round(k1) + 'k' : (k1 % 1 === 0 ? k1.toFixed(0) : k1.toFixed(1)) + 'k'
+  }
+  if (v < 1000000) {
+    var k2 = Math.round(v / 1000)
+    return k2 >= 1000 ? '1M' : k2 + 'k'
+  }
+  var m = Math.round(v / 100000) / 10
+  return (m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)) + 'M'
+}
+
+var leaderboardsEnabled = false
+var lbMetric = 'tokens'
+var lbRowsCache = []
+var lbSignature = null
+function renderLeaderboards(snapshot) {
+  var fields = (snapshot && snapshot.fields) || {}
+  var lb = snapshot && snapshot.leaderboards
+  var enabled = !!(fields.showLeaderboards || (lb && lb.enabled))
+  var changedEnabled = enabled !== leaderboardsEnabled
+  leaderboardsEnabled = enabled
+  var card = $('leaderboards-card')
+  setClass(card, 'feature-disabled', !enabled)
+  setAttr(card, 'data-lb-metric', lbMetric)
+  if (changedEnabled) renderTray()
+  if (!enabled) return
+  lbRowsCache = lb && Array.isArray(lb.rows) ? lb.rows : []
+  drawLeaderboardRows()
+}
+
+function drawLeaderboardRows() {
+  var card = $('leaderboards-card')
+  setAttr(card, 'data-lb-metric', lbMetric)
+  setClass($('lb-sort-messages'), 'on', lbMetric === 'messages')
+  setAttr($('lb-sort-messages'), 'aria-pressed', lbMetric === 'messages' ? 'true' : 'false')
+  setClass($('lb-sort-tokens'), 'on', lbMetric === 'tokens')
+  setAttr($('lb-sort-tokens'), 'aria-pressed', lbMetric === 'tokens' ? 'true' : 'false')
+  var sorted = lbRowsCache
+    .slice()
+    .sort(function (a, b) {
+      if (lbMetric === 'messages') {
+        return b.messages - a.messages || b.tokens - a.tokens || String(a.name).localeCompare(String(b.name))
+      }
+      return b.tokens - a.tokens || b.messages - a.messages || String(a.name).localeCompare(String(b.name))
+    })
+    .slice(0, 5)
+  var hasRows = sorted.length > 0
+  setClass($('lb-head'), 'hidden', !hasRows)
+  setClass($('lb-empty'), 'hidden', hasRows)
+  var sig =
+    lbMetric +
+    '|' +
+    sorted
+      .map(function (r) {
+        return r.name + ':' + r.messages + ':' + r.tokens
+      })
+      .join(';')
+  if (sig === lbSignature) return
+  lbSignature = sig
+  var box = $('lb-rows')
+  clearChildren(box)
+  var maxVal = 0
+  sorted.forEach(function (r) {
+    var val = lbMetric === 'messages' ? r.messages : r.tokens
+    if (val > maxVal) maxVal = val
+  })
+  sorted.forEach(function (r) {
+    var row = document.createElement('div')
+    row.className = 'lb-row'
+    var top = document.createElement('div')
+    top.className = 'lb-row-top'
+    var name = document.createElement('span')
+    name.className = 'lb-name'
+    name.textContent = String(r.name)
+    name.setAttribute('title', String(r.name))
+    var msgs = document.createElement('span')
+    msgs.className = 'lb-num lb-msg' + (lbMetric === 'messages' ? ' active' : '')
+    msgs.textContent = formatCompact(r.messages)
+    var toks = document.createElement('span')
+    toks.className = 'lb-num lb-tok' + (lbMetric === 'tokens' ? ' active' : '')
+    toks.textContent = formatCompact(r.tokens)
+    top.appendChild(name)
+    top.appendChild(msgs)
+    top.appendChild(toks)
+    var bar = document.createElement('div')
+    bar.className = 'lb-bar'
+    var fill = document.createElement('i')
+    var val = lbMetric === 'messages' ? r.messages : r.tokens
+    var pct = maxVal > 0 ? Math.max(4, Math.round((val / maxVal) * 100)) : 0
+    fill.style.width = pct + '%'
+    bar.appendChild(fill)
+    row.appendChild(top)
+    row.appendChild(bar)
+    box.appendChild(row)
+  })
 }
 
 var mixSignature = null
@@ -334,13 +500,23 @@ function updateMeta() {
   setText('min-meta', parts.join(' \u00b7 '))
 }
 
+function renderHostBadge(snapshot) {
+  var kind = snapshot && snapshot.status && snapshot.status.hostKind
+  var label = kind ? HOST_LABELS[kind] : ''
+  var badge = $('host-badge')
+  setClass(badge, 'hidden', !label)
+  if (label) setText('host-badge', label)
+}
+
 var lastSnapshot = null
 function render(snapshot) {
   setAttr($('status-bar'), 'class', barClass(snapshot))
   setText('indicator-label', indicatorLabel(snapshot))
+  renderHostBadge(snapshot)
   if (!snapshot || !snapshot.status) return
   lastSnapshot = snapshot
   syncHiddenSetting(snapshot)
+  syncOrderSetting(snapshot)
   var fields = snapshot.fields || {}
   minAgents = Array.isArray(snapshot.agents) ? snapshot.agents.length : 0
   renderCard(snapshot)
@@ -354,19 +530,21 @@ function render(snapshot) {
   renderMinimal(snapshot, agents)
   renderControls(snapshot)
   renderAgents(agents)
+  renderLeaderboards(snapshot)
   setText('btn-toggle', fields.enabled === false ? 'Resume' : 'Pause')
   var logs = snapshot.logs || []
   setText('logs-summary', 'Logs (' + logs.length + ')')
   if (logs.length) {
-    var view = $('log-view')
+    var logEl = $('log-view')
     var text = logs.join('\n')
-    if (view.textContent !== text) {
+    if (logEl.textContent !== text) {
       // Why: keep the reader's place; only follow the tail when already at the bottom.
-      var atBottom = view.scrollTop + view.clientHeight >= view.scrollHeight - 4
-      view.textContent = text
-      if (atBottom) view.scrollTop = view.scrollHeight
+      var atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4
+      logEl.textContent = text
+      if (atBottom) logEl.scrollTop = logEl.scrollHeight
     }
   }
+  if (blockReorder) blockReorder.sync()
 }
 
 var pending = {}
@@ -386,6 +564,11 @@ function renderControls(snapshot) {
     var el = $('sw-' + name)
     if (el && !pending[name] && el.checked !== !!fields[name]) el.checked = !!fields[name]
   })
+  var statsSelect = $('sel-showSessionStats')
+  var nextStats = fields.showSessionStats || 'off'
+  if (statsSelect && !pending.showSessionStats && statsSelect.value !== nextStats) {
+    statsSelect.value = nextStats
+  }
 }
 
 // Why: the card shows whenever a client is detected so the choice is always
@@ -407,7 +590,6 @@ function renderClients(snapshot) {
   var fields = snapshot.fields || {}
   var chosen = fields.discordClient || 'auto'
   setClass($('client-card'), 'hidden', clients.length < 1)
-  collapseWrappers()
   var detected = clients.some(function (c) {
     return c.id === chosen
   })
@@ -435,7 +617,7 @@ function renderClients(snapshot) {
       select.appendChild(option)
     })
   }
-  if (!pending.discordClient) select.value = chosen
+  if (!pending.discordClient && select.value !== chosen) select.value = chosen
   var fallback = !!snapshot.status.clientFallback
   setClass($('client-note'), 'hidden', !fallback)
   setText(
@@ -488,10 +670,32 @@ function wireControls() {
   })
   SWITCH_FIELDS.forEach(function (name) {
     var el = $('sw-' + name)
-    el.addEventListener('change', function () {
-      writeSetting(name, !!el.checked, [el])
-    })
+    if (el) {
+      el.addEventListener('change', function () {
+        writeSetting(name, !!el.checked, [el])
+      })
+    }
   })
+  var statsSelect = $('sel-showSessionStats')
+  if (statsSelect) {
+    statsSelect.addEventListener('change', function () {
+      writeSetting('showSessionStats', statsSelect.value, [statsSelect])
+    })
+  }
+  var lbMessages = $('lb-sort-messages')
+  var lbTokens = $('lb-sort-tokens')
+  if (lbMessages) {
+    lbMessages.addEventListener('click', function () {
+      lbMetric = 'messages'
+      drawLeaderboardRows()
+    })
+  }
+  if (lbTokens) {
+    lbTokens.addEventListener('click', function () {
+      lbMetric = 'tokens'
+      drawLeaderboardRows()
+    })
+  }
   var seg = $('detail-seg')
   DETAIL_LEVELS.forEach(function (level) {
     var button = document.createElement('button')
@@ -511,9 +715,8 @@ function wireControls() {
 var view = 'full'
 function applyView(next) {
   view = next === 'minimal' ? 'minimal' : 'full'
-  FULL_ONLY_IDS.forEach(function (id) {
-    setClass($(id), 'hidden', view === 'minimal')
-  })
+  if (blockReorder) blockReorder.cancel()
+  setAttr($('app'), 'data-view', view)
   setClass($('min-hero'), 'hidden', view !== 'minimal')
   setClass($('view-full'), 'on', view === 'full')
   setClass($('view-minimal'), 'on', view === 'minimal')
@@ -597,50 +800,24 @@ function applyHidden(list) {
     setClass($(s[1]), 'user-hidden', off)
     setAttr($('eye-' + s[0]), 'aria-pressed', off ? 'true' : 'false')
   })
-  collapseWrappers()
+  if (blockReorder) blockReorder.sync()
   renderTray()
 }
 
-// Why: wrapper cols (full-a/c/d) stay in the frame's gap flow even when
-// every child hides (user-hidden or the client card's own `hidden`), leaving
-// a double gap. A separate `collapsed` class keeps this apart from the
-// `hidden` class that views toggle.
-var WRAPPER_IDS = ['full-a', 'full-b', 'full-c', 'full-d']
 function hasClass(el, name) {
   return !!el && (' ' + el.className + ' ').indexOf(' ' + name + ' ') !== -1
-}
-function collapseWrappers() {
-  WRAPPER_IDS.forEach(function (id) {
-    var el = $(id)
-    if (!el) return
-    var kids = el.children || []
-    var anyVisible = false
-    for (var i = 0; i < kids.length; i += 1) {
-      if (!hasClass(kids[i], 'hidden') && !hasClass(kids[i], 'user-hidden')) {
-        anyVisible = true
-        break
-      }
-    }
-    setClass(el, 'collapsed', !anyVisible)
-  })
-  // Why: one hidden tile leaves a half-empty row; the survivor fills it.
-  // Derived from state, not DOM children, so it works wherever applyHidden runs.
-  var tiles = $('full-b')
-  if (tiles) {
-    var tilesHidden = hiddenIds.indexOf('tiles') !== -1
-    var sinkHidden = hiddenIds.indexOf('sink') !== -1
-    setClass(tiles, 'single', tilesHidden !== sinkHidden)
-  }
 }
 
 var traySignature = null
 // Minimal view renders only the strip and detail sections; restore chips for
 // full-only sections would unhide nothing visible, so the tray filters them.
+// Leaderboards is also omitted while `showLeaderboards` is disabled.
 var MINIMAL_SECTIONS = ['strip', 'detail']
 function viewHidden() {
-  if (view !== 'minimal') return hiddenIds.slice()
   return hiddenIds.filter(function (id) {
-    return MINIMAL_SECTIONS.indexOf(id) !== -1
+    if (id === 'leaderboards' && !leaderboardsEnabled) return false
+    if (view === 'minimal') return MINIMAL_SECTIONS.indexOf(id) !== -1
+    return true
   })
 }
 function renderTray() {
@@ -803,20 +980,207 @@ function run(command, doneMessage) {
   )
 }
 
+// Section order: storage `panelOrder` is the runtime source; the `panelOrder`
+// setting mirrors it for the Settings page and arrives in the snapshot as
+// `order`. Follows the same storage-wins + echo-guard contract as hiddenPanels.
+var blockOrder = DEFAULT_BLOCK_ORDER.slice()
+var orderFromStorage = false
+var settingsOrderSig = null
+var orderSettingsTimer = null
+var awaitingOrderEcho = null
+var blockReorder = null
+
+function isDefaultOrder(list) {
+  return list.join(',') === DEFAULT_BLOCK_ORDER.join(',')
+}
+
+function orderSettingValue(list) {
+  return isDefaultOrder(list) ? '' : list.join(',')
+}
+
+function applyDomOrder(orderList) {
+  blockOrder = reconcileOrder(orderList, DEFAULT_BLOCK_ORDER)
+  var sections = $('sections')
+  if (sections) {
+    var kids = sections.children || []
+    // Why: skip all DOM reparenting when blocks are already in order, and only
+    // move out-of-place nodes so unchanged cards never flash or lose state.
+    var target = []
+    for (var i = 0; i < blockOrder.length; i += 1) {
+      var info = SECTION_BY_ID[blockOrder[i]]
+      var el = info ? $(info[1]) : null
+      if (el) target.push(el)
+    }
+    var same = kids.length === target.length
+    if (same) {
+      for (var j = 0; j < target.length; j += 1) {
+        if (kids[j] !== target[j]) {
+          same = false
+          break
+        }
+      }
+    }
+    if (!same) {
+      for (var k = 0; k < target.length; k += 1) {
+        var current = sections.children[k]
+        if (current !== target[k]) {
+          if (typeof sections.insertBefore === 'function') {
+            sections.insertBefore(target[k], current || null)
+          } else {
+            sections.appendChild(target[k])
+          }
+        }
+      }
+    }
+  }
+  setClass($('order-footer'), 'hidden', isDefaultOrder(blockOrder))
+}
+
+function visibleBlocks() {
+  var sections = $('sections')
+  if (!sections) return []
+  var out = []
+  for (var i = 0; i < blockOrder.length; i += 1) {
+    var id = blockOrder[i]
+    var info = SECTION_BY_ID[id]
+    var el = info ? $(info[1]) : null
+    if (!el) continue
+    if (hasClass(el, 'hidden') || hasClass(el, 'user-hidden') || hasClass(el, 'feature-disabled')) continue
+    if (view === 'minimal' && hasClass(el, 'full-only')) continue
+    out.push(el)
+  }
+  return out
+}
+
+function announceOrder(message) {
+  setText('order-live', message)
+}
+
+function setOrder(nextList) {
+  orderFromStorage = true
+  applyDomOrder(nextList)
+  var settingVal = orderSettingValue(blockOrder)
+  callHost('storage.set', { key: ORDER_KEY, value: settingVal ? blockOrder.slice() : [] })
+  var mirror = function () {
+    orderSettingsTimer = null
+    awaitingOrderEcho = settingVal
+    callHost('settings.set', { key: ORDER_SETTING, value: settingVal }, function () {
+      if (awaitingOrderEcho === settingVal) awaitingOrderEcho = null
+    })
+  }
+  if (typeof setTimeout !== 'function') return mirror()
+  if (orderSettingsTimer) clearTimeout(orderSettingsTimer)
+  orderSettingsTimer = setTimeout(mirror, SETTINGS_MIRROR_DELAY_MS)
+}
+
+function loadOrder() {
+  var host = orca && orca.host
+  if (!host || typeof host.call !== 'function') return Promise.resolve()
+  return Promise.resolve()
+    .then(function () {
+      return host.call('storage.get', { key: ORDER_KEY })
+    })
+    .then(
+      function (result) {
+        var raw = Array.isArray(result) ? result : storedView(result)
+        if (!Array.isArray(raw) || orderFromStorage) return
+        orderFromStorage = true
+        applyDomOrder(raw)
+      },
+      function () {}
+    )
+}
+
+function syncOrderSetting(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.order)) return
+  var normalized = reconcileOrder(snapshot.order, DEFAULT_BLOCK_ORDER)
+  var signature = orderSettingValue(normalized)
+  if (orderSettingsTimer || awaitingOrderEcho !== null) {
+    if (signature === awaitingOrderEcho) {
+      awaitingOrderEcho = null
+      settingsOrderSig = signature
+    }
+    return
+  }
+  if (signature === settingsOrderSig) return
+  var first = settingsOrderSig === null
+  settingsOrderSig = signature
+  if ((first && orderFromStorage) || signature === orderSettingValue(blockOrder)) return
+  if (blockReorder && blockReorder.dragging()) return
+  applyDomOrder(normalized)
+  if (!first) {
+    orderFromStorage = true
+    callHost('storage.set', { key: ORDER_KEY, value: signature ? blockOrder.slice() : [] })
+  }
+}
+
+function wireReorder() {
+  var sections = $('sections')
+  if (sections && typeof createBlockReorder === 'function') {
+    blockReorder = createBlockReorder({
+      container: sections,
+      doc: document,
+      win: window,
+      getOrder: function () {
+        return blockOrder
+      },
+      getVisibleBlocks: visibleBlocks,
+      getLabel: function (id) {
+        return SECTION_BY_ID[id] ? SECTION_BY_ID[id][2] : id
+      },
+      applyDomOrder: applyDomOrder,
+      onCommit: function (nextOrder) {
+        setOrder(nextOrder)
+      },
+      onAnnounce: announceOrder
+    })
+  }
+  var resetBtn = $('btn-reset-order')
+  if (resetBtn) {
+    resetBtn.addEventListener('click', function () {
+      setOrder(DEFAULT_BLOCK_ORDER.slice())
+      flash('Layout order reset.')
+      announceOrder('Layout order reset to default.')
+    })
+  }
+  loadOrder()
+}
+
 function wireLogs() {
   $('btn-log-clear').addEventListener('click', function () {
     $('log-view').textContent = ''
     flash('Cleared this view only (not the on-disk log).')
   })
   $('btn-log-copy').addEventListener('click', function () {
-    var text = $('log-view').textContent || ''
-    var fallback = function () {
+    var logEl = $('log-view')
+    var text = logEl.textContent || ''
+    var selectLogs = function () {
+      if (typeof document.createRange !== 'function' || typeof window.getSelection !== 'function') return false
       var range = document.createRange()
-      range.selectNodeContents($('log-view'))
+      range.selectNodeContents(logEl)
       var sel = window.getSelection()
+      if (!sel) return false
       sel.removeAllRanges()
       sel.addRange(range)
-      flash('Logs selected — copy with the system shortcut.')
+      return true
+    }
+    // Why: isolated frames allow synchronous execCommand('copy') inside a user
+    // click gesture even when navigator.clipboard.writeText is blocked.
+    var copiedSync = false
+    try {
+      if (selectLogs() && typeof document.execCommand === 'function') {
+        copiedSync = !!document.execCommand('copy')
+      }
+    } catch (err) {
+      copiedSync = false
+    }
+    if (copiedSync) {
+      flash('Logs copied.')
+      return
+    }
+    var fallback = function () {
+      selectLogs()
+      flash('Logs selected \u2014 copy with the system shortcut.')
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(function () {
@@ -826,16 +1190,49 @@ function wireLogs() {
       fallback()
     }
   })
+  var saveBtn = $('btn-log-save')
+  if (saveBtn && orca && orca.files && typeof orca.files.saveAs === 'function') {
+    setClass(saveBtn, 'hidden', false)
+    saveBtn.addEventListener('click', function () {
+      var text = $('log-view').textContent || ''
+      Promise.resolve()
+        .then(function () {
+          return orca.files.saveAs({
+            suggestedName: 'discord-presence.log',
+            mimeType: 'text/plain',
+            data: text
+          })
+        })
+        .then(
+          function (result) {
+            flash(result && result.status === 'saved' ? 'Logs saved.' : 'Save cancelled.')
+          },
+          function (error) {
+            flash('Save failed: ' + errorText(error))
+          }
+        )
+    })
+  }
 }
 
-// Theme: the host event is the source; the last one is stored so the next
-// load paints in the right theme before the host speaks. Junk is ignored.
+// Theme: the host event (`{ colorScheme }`) is the source; html.light /
+// html.dark seeds initial boot synchronously before async storage resolves.
 var THEME_KEY = 'panelTheme'
 var themeFromEvent = false
 
 function themeOf(payload) {
-  var theme = typeof payload === 'string' ? payload : payload && (payload.theme || payload.mode)
+  var theme =
+    typeof payload === 'string'
+      ? payload
+      : payload && (payload.colorScheme || payload.theme || payload.mode)
   return theme === 'light' || theme === 'dark' ? theme : null
+}
+
+function seedInitialTheme() {
+  var root = document.documentElement
+  if (!root) return
+  if (hasClass(root, 'light')) setAttr(root, 'data-theme', 'light')
+  else if (hasClass(root, 'dark')) setAttr(root, 'data-theme', 'dark')
 }
 
 function applyTheme(payload) {
@@ -863,9 +1260,20 @@ function loadTheme() {
 }
 
 // Why: tests only. Non-enumerable so it never shows up when iterating window.
-Object.defineProperty(window, '__presencePanel', { value: { render: render }, enumerable: false })
+Object.defineProperty(window, '__presencePanel', {
+  value: {
+    render: render,
+    reconcileOrder: reconcileOrder,
+    mergeVisibleOrder: mergeVisibleOrder,
+    movedIds: movedIds,
+    targetIndex: targetIndex,
+    createBlockReorder: createBlockReorder
+  },
+  enumerable: false
+})
 
 buildStrip()
+seedInitialTheme()
 
 if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
   $('app').classList.add('hidden')
@@ -883,6 +1291,7 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
   })
   loadView()
   wireHidden()
+  wireReorder()
   $('btn-refresh').addEventListener('click', forceRefresh)
   $('btn-status').addEventListener('click', function () {
     run('presence.status', 'Status sent as a notification.')

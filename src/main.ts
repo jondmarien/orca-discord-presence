@@ -27,7 +27,8 @@ import {
   createAgentTable,
   parseAgentsList,
   parseAgentStatusPayload,
-  parseWorkspaceRemovedId
+  parseWorkspaceRemovedIds,
+  type AgentSlot
 } from './presence/agents'
 import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
 import {
@@ -38,6 +39,15 @@ import {
 } from './presence/bridge-token'
 import { applyConfigure } from './presence/configure'
 import { createPresenceController, type PresenceController } from './presence/controller'
+import {
+  buildWorkspaceLeaderboard,
+  parseSessionsList,
+  parseWorkspaceList,
+  resolveActiveSessionStats,
+  type SessionMetrics,
+  type WorkspaceHostKind,
+  type WorkspaceInfo
+} from './presence/leaderboards'
 import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
 import { elapsedStartMs } from './presence/activity'
@@ -70,6 +80,25 @@ const HEARTBEAT_MS = 90_000
  * sockets, so it rides the heartbeat instead of running on every event.
  */
 const DETECT_MIN_INTERVAL_MS = 60_000
+
+/**
+ * Minimum gap between `workspace.list` metadata refreshes on routine events.
+ */
+const WORKSPACE_LIST_MIN_INTERVAL_MS = 5_000
+
+/**
+ * Cap per-workspace `agents.list({ workspaceId })` fan-out to avoid rate limits.
+ */
+const MAX_WORKSPACE_AGENT_FANOUT = 20
+
+/**
+ * Minimum gap between `agent.listSessions` history polls when session stats or
+ * Leaderboards are enabled. Never called when both are off.
+ */
+const SESSIONS_MIN_INTERVAL_MS = 30_000
+
+/** Maximum sessions requested from `agent.listSessions`. */
+const SESSIONS_LIST_LIMIT = 200
 
 /**
  * Coalesce `panels.post` pushes during a chatty agent event stream.
@@ -167,9 +196,17 @@ function invalidParams(message: string): Error & { code: string } {
 type AgentStatusPayload = {
   state: string
   receivedAt: number
-  workspaceId?: string
+  workspaceId?: string | null
+  workspaceListId?: string
   terminalId?: string
+  sessionId?: string
   paneKey?: string
+  title?: string
+  mainAgent?: {
+    state?: string
+    outcome?: string
+    stateStartedAt?: number
+  }
 }
 
 /**
@@ -181,16 +218,19 @@ type AgentStatusPayload = {
  * when no workspace is focused.
  */
 type WorkspaceContext = {
+  workspaceId?: string
   displayName?: string
   branch?: string
   terminals: readonly unknown[]
 }
 
 /**
- * Host object Orca injects into `activate`. This is the subset of the
- * plugin worker API this plugin actually calls — not the full host surface.
+ * Host object Orca injects into `activate`. Aligned with Orca 1.4.278
+ * `OrcaWorkerApi` (`orca/worker`) while staying standalone for CI typechecks.
  */
 export type OrcaHost = {
+  /** Host API version when supplied by Orca (`{ major: 1, minor: 10 }` on 1.4.278). */
+  readonly api?: { readonly major: number; readonly minor: number }
   /** Write a line to the plugin log (also used by **Show Status**). */
   log: (message: string) => void
   commands: {
@@ -211,14 +251,15 @@ export type OrcaHost = {
     /**
      * True when the connected Orca exposes `method`.
      *
-     * Why: fork-only or newer host methods are guarded by this so an older
-     * Orca degrades instead of throwing.
+     * Why: newer host methods are guarded by this so an older Orca degrades
+     * cleanly instead of throwing.
      */
     has: (method: string) => boolean
     /**
-     * Invoke a host method. This plugin uses `settings.get`, `settings.set`,
-     * `workspace.readContext`, `agents.list`, `notifications.show`, and the
-     * `secrets.*` methods (bridge token).
+     * Invoke a host method (`settings.*`, `storage.*`, `secrets.*`,
+     * `workspace.readContext`, `workspace.list`, `agents.list`,
+     * `terminal.focus`, `agent.listSessions`, `statusBar.update`,
+     * `notifications.show`).
      */
     call: (method: string, args?: Record<string, unknown>) => Promise<unknown>
   }
@@ -300,6 +341,11 @@ let panels: OrcaHost['panels'] | null = null
 let deactivated = false
 let settingsChangeTimer: ReturnType<typeof setTimeout> | null = null
 let settingsSubscription: { dispose(): void } | null = null
+let workspacesById = new Map<string, WorkspaceInfo>()
+let sessionsCache: SessionMetrics[] = []
+let focusedWorkspaceId: string | undefined
+let focusedHostKind: WorkspaceHostKind | undefined
+let focusHandles = new Map<string, string>()
 
 /**
  * Public configure view (no bridge token). Used by **Configure** help/result.
@@ -323,14 +369,33 @@ function currentPanelSnapshot() {
   if (!controller || !logRing) {
     return null
   }
-  return buildPresencePanelSnapshot({
+  const currentSettings = controller.settings()
+  const nextHandles = new Map<string, string>()
+  let handleIndex = 0
+  const focusKeyOf = (slot: AgentSlot): string | undefined => {
+    if (!slot.terminalId) {
+      return undefined
+    }
+    const key = `a${handleIndex++}`
+    nextHandles.set(key, slot.terminalId)
+    return key
+  }
+  const leaderboardRows = currentSettings.showLeaderboards
+    ? buildWorkspaceLeaderboard(sessionsCache, workspacesById)
+    : []
+  const snapshot = buildPresencePanelSnapshot({
     version: PLUGIN_VERSION,
     status: controller.status(),
-    settings: controller.settings(),
+    settings: currentSettings,
     logs: logRing.lines(),
     timeline: timeline?.slots() ?? [],
-    agents: agentTable?.slots() ?? []
+    agents: agentTable?.slots() ?? [],
+    hostKind: focusedHostKind,
+    focusKeyOf,
+    leaderboardRows
   })
+  focusHandles = nextHandles
+  return snapshot
 }
 
 /**
@@ -390,6 +455,13 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   const detectClients = deps.detect ?? detectDiscordClients
   const makeDiscordClient = deps.createClient ?? createDiscordClient
   deactivated = false
+  workspacesById = new Map()
+  sessionsCache = []
+  focusedWorkspaceId = undefined
+  focusedHostKind = undefined
+  focusHandles = new Map()
+  let lastWorkspaceListAt = 0
+  let lastSessionsAt = 0
   const stored = (await orca.host.call('settings.get').catch(() => ({ settings: {} }))) as {
     settings?: unknown
   }
@@ -532,13 +604,79 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
    * Why: shared by `persist` (our own writes) and the `onDidChange` feed (edits
    * in Orca's Settings page), so both paths rebind the same way.
    */
+  async function syncWorkspaces(force = false): Promise<WorkspaceInfo[]> {
+    if (!orca.host.has('workspace.list')) {
+      return [...workspacesById.values()]
+    }
+    const nowMs = Date.now()
+    if (!force && lastWorkspaceListAt > 0 && nowMs - lastWorkspaceListAt < WORKSPACE_LIST_MIN_INTERVAL_MS) {
+      return [...workspacesById.values()]
+    }
+    lastWorkspaceListAt = nowMs
+    const listed = await orca.host.call('workspace.list', { includeStatus: true }).catch(() => null)
+    if (deactivated || !listed) {
+      return [...workspacesById.values()]
+    }
+    const rows = parseWorkspaceList(listed)
+    const next = new Map<string, WorkspaceInfo>()
+    for (const row of rows) {
+      next.set(row.id, row)
+    }
+    workspacesById = next
+    return rows
+  }
+
+  async function syncSessionsIfNeeded(force = false): Promise<void> {
+    if (settings.showSessionStats === 'off' && !settings.showLeaderboards) {
+      return
+    }
+    if (!orca.host.has('agent.listSessions')) {
+      return
+    }
+    const nowMs = Date.now()
+    if (!force && lastSessionsAt > 0 && nowMs - lastSessionsAt < SESSIONS_MIN_INTERVAL_MS) {
+      return
+    }
+    lastSessionsAt = nowMs
+    const listed = await orca.host
+      .call('agent.listSessions', { limit: SESSIONS_LIST_LIMIT })
+      .catch(() => null)
+    if (deactivated || !listed) {
+      return
+    }
+    // Why: parseSessionsList discards `session.title` immediately so titles never enter memory.
+    sessionsCache = parseSessionsList(listed)
+    let running = 0
+    let withTokens = 0
+    let withMessages = 0
+    for (const s of sessionsCache) {
+      if (s.running) running += 1
+      if (s.totalTokens > 0) withTokens += 1
+      if (s.messageCount > 0) withMessages += 1
+    }
+    diagnostics?.line('debug', 'sessions.sync', {
+      count: sessionsCache.length,
+      running,
+      withTokens,
+      withMessages
+    })
+  }
+
   async function applySettings(nextSettings: PresenceSettings, options: { rebind?: boolean } = {}) {
     // Why: both are fixed when the Discord client is built (handshake client_id,
     // candidate list), so either change recreates it.
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId
     const clientChanged = nextSettings.discordClient !== settings.discordClient
+    const sessionStatsChanged = nextSettings.showSessionStats !== settings.showSessionStats
+    const needsHistoryNow =
+      (nextSettings.showLeaderboards && !settings.showLeaderboards) ||
+      (sessionStatsChanged && nextSettings.showSessionStats !== 'off')
     settings = nextSettings
     diagnostics?.setDebugEnabled(nextSettings.debugLogging)
+    if (needsHistoryNow) {
+      await syncWorkspaces(false)
+      await syncSessionsIfNeeded(true)
+    }
     if (applicationIdChanged || clientChanged || options.rebind) {
       diagnostics?.line(
         'info',
@@ -565,6 +703,11 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       }
     } else {
       await controller?.setSettings(nextSettings)
+      if (sessionStatsChanged && nextSettings.showSessionStats !== 'off' && !deactivated) {
+        // Why: forceTransmit bypasses the 15s debounce that setSettings just reset,
+        // so selecting Tokens / Messages / Both updates Discord and preview immediately.
+        await refresh(undefined, { force: true, resume: true })
+      }
     }
     publishStatusBar()
     publishPanelSnapshot('immediate')
@@ -673,6 +816,20 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       options.context !== undefined
         ? options.context
         : ((await orca.host.call('workspace.readContext').catch(() => null)) as WorkspaceContext | null)
+    const wsId = typeof context?.workspaceId === 'string' && context.workspaceId.length > 0 ? context.workspaceId : undefined
+    focusedWorkspaceId = wsId
+    if (wsId && !workspacesById.has(wsId)) {
+      await syncWorkspaces(false)
+    }
+    const wsInfo = wsId ? workspacesById.get(wsId) : undefined
+    focusedHostKind = wsInfo?.hostKind
+    if (settings.showSessionStats !== 'off' || settings.showLeaderboards) {
+      await syncSessionsIfNeeded(false)
+    }
+    const activeStats =
+      settings.showSessionStats !== 'off'
+        ? resolveActiveSessionStats(agentTable?.slots() ?? [], sessionsCache, wsId)
+        : undefined
     if (!context) {
       diagnostics?.line('debug', 'refresh.minimal', {
         reason: 'no workspace context',
@@ -697,16 +854,19 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
         ...(context
           ? {
               displayName: context.displayName,
+              projectName: wsInfo?.project,
               branch: context.branch,
               terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
             }
           : // Why: the controller merges snapshots, so omitted keys would keep the
             // previous workspace on Discord after focus moves to nothing.
-            { displayName: undefined, branch: undefined, terminalCount: undefined }),
+            { displayName: undefined, projectName: undefined, branch: undefined, terminalCount: undefined }),
         agentState: summary.agentState,
         stateStartedAtMs: summary.stateStartedAtMs,
         sessionStartMs: session?.startMs(),
-        agentCount: summary.agentCount
+        agentCount: summary.agentCount,
+        sessionTokens: activeStats?.tokens,
+        sessionMessages: activeStats?.messages
       },
       resume ? { resume: true } : undefined
     )
@@ -896,7 +1056,8 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     }
     lastPanelRefreshAt = clock
     touchSession()
-    await syncAgentsFromList()
+    await syncAgentsFromList({ allWorkspaces: true })
+    await syncSessionsIfNeeded(true)
     // Why: a stalled Discord holds SET_ACTIVITY (and a rebind's clear) for 5s,
     // as long as the panel's request timeout. The panel sees the result on the
     // next `panels.post`. `refresh` re-reads `workspace.readContext` and force-transmits.
@@ -908,6 +1069,25 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
         })
       )
     return currentPanelSnapshot()
+  })
+  panels?.handle('presence.focus-agent', async (input) => {
+    const key = (input as { key?: unknown } | null | undefined)?.key
+    if (typeof key !== 'string' || key.length === 0) {
+      throw invalidParams('presence.focus-agent requires a non-empty key')
+    }
+    const terminalId = focusHandles.get(key)
+    if (!terminalId) {
+      return { ok: false, focused: false }
+    }
+    if (!orca.host.has('terminal.focus')) {
+      return { ok: false, focused: false }
+    }
+    try {
+      const result = (await orca.host.call('terminal.focus', { terminalId })) as { focused?: unknown } | null
+      return { ok: true, focused: Boolean(result?.focused) }
+    } catch (error) {
+      return { ok: false, focused: false, message: error instanceof Error ? error.message : String(error) }
+    }
   })
   panels?.handle('presence.run', async (input) => {
     const command = (input as { command?: unknown } | null | undefined)?.command
@@ -924,28 +1104,66 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
 
   /**
    * Upsert every agent `agents.list` reports, which is the only source of an
-   * agent's kind (`claude`, `codex`, …).
+   * agent's kind (`claude`, `codex`, …) and dispatched task title.
    *
-   * Why: `agent.status.changed` carries no kind, and `agents.list` covers only
-   * the focused workspace and can answer before a brand-new agent is listed.
-   * So a terminal whose kind is still unknown is looked up again on its next
-   * events (at most {@link KIND_LOOKUP_ATTEMPTS} times), and every focus change
-   * re-syncs. Guarded: older Orca and browser clients lack `agents.list`.
+   * On startup and panel Refresh (`allWorkspaces: true`), fans out across
+   * active workspaces from `workspace.list({ includeStatus: true })` (capped
+   * at {@link MAX_WORKSPACE_AGENT_FANOUT}) so background agents are immediately
+   * visible. On unfocused `agent.status.changed`, queries that event's
+   * `workspaceListId` directly. Falls back to `agents.list()` on older hosts.
    */
   const KIND_LOOKUP_ATTEMPTS = 5
   const kindAttempts = new Map<string, number>()
   const kindKnown = new Set<string>()
-  async function syncAgentsFromList() {
-    if (!orca.host.has('agents.list')) {
-      return
-    }
-    const listed = await orca.host.call('agents.list').catch(() => null)
-    for (const seeded of parseAgentsList(listed, Date.now())) {
+  function recordListedAgents(listed: unknown, workspaceListId?: string) {
+    for (const seeded of parseAgentsList(listed, Date.now(), workspaceListId)) {
       if (seeded.terminalId && seeded.kind) {
         kindKnown.add(seeded.terminalId)
       }
       agentTable?.upsert(seeded)
     }
+  }
+  async function syncAgentsFromList(options: { workspaceId?: string; allWorkspaces?: boolean } = {}) {
+    if (!orca.host.has('agents.list')) {
+      return
+    }
+    if (options.workspaceId) {
+      const listed = await orca.host
+        .call('agents.list', { workspaceId: options.workspaceId })
+        .catch(() => null)
+      recordListedAgents(listed, options.workspaceId)
+      return
+    }
+    if (options.allWorkspaces && orca.host.has('workspace.list')) {
+      const workspaces = await syncWorkspaces(true)
+      const active = workspaces
+        .filter((ws) => ws.statusState !== 'inactive' || ws.terminalCount > 0)
+        .slice(0, MAX_WORKSPACE_AGENT_FANOUT)
+      if (active.length > 0) {
+        let queried = 0
+        for (const ws of active) {
+          if (deactivated) {
+            return
+          }
+          try {
+            const listed = await orca.host.call('agents.list', { workspaceId: ws.id })
+            recordListedAgents(listed, ws.id)
+            queried += 1
+          } catch (error) {
+            const code = (error as { code?: unknown } | null)?.code
+            if (code === 'rate_limited') {
+              diagnostics?.line('warn', 'agents.list_rate_limited', { queried, total: active.length })
+              break
+            }
+          }
+        }
+        if (queried > 0) {
+          return
+        }
+      }
+    }
+    const listed = await orca.host.call('agents.list').catch(() => null)
+    recordListedAgents(listed, focusedWorkspaceId)
   }
 
   orca.events.on('agent.status.changed', async (payload) => {
@@ -955,31 +1173,37 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       const attempts = kindAttempts.get(terminalId) ?? 0
       if (attempts < KIND_LOOKUP_ATTEMPTS) {
         kindAttempts.set(terminalId, attempts + 1)
-        await syncAgentsFromList()
+        await syncAgentsFromList(
+          parsed?.workspaceListId ? { workspaceId: parsed.workspaceListId } : {}
+        )
       }
     }
     await refresh(parsed ?? undefined)
   })
   orca.events.on('workspace.removed', async (payload) => {
-    const workspaceId = parseWorkspaceRemovedId(payload)
-    if (workspaceId) {
-      agentTable?.removeWorkspace(workspaceId)
+    const removedIds = parseWorkspaceRemovedIds(payload)
+    if (removedIds.length > 0) {
+      agentTable?.removeWorkspace(removedIds)
+      for (const id of removedIds) {
+        workspacesById.delete(id)
+      }
     }
     await refresh()
   })
   orca.events.on('workspace.changed', async (payload) => {
     const raw = (payload as { context?: unknown } | null | undefined)?.context
     const context = raw && typeof raw === 'object' ? (raw as WorkspaceContext) : null
-    // Why: agents.list answers for the focused workspace only, so a focus change
-    // is when kinds and titles of that workspace's agents become readable.
-    await syncAgentsFromList()
+    if (context?.workspaceId) {
+      focusedWorkspaceId = context.workspaceId
+    }
+    await syncAgentsFromList(context?.workspaceId ? { workspaceId: context.workspaceId } : {})
     await refresh(undefined, { context })
   })
 
-  // Why: seed the table with agents already running when the worker starts,
-  // so presence is right before the next status event. Guarded: older Orca and
-  // browser clients lack `agents.list`.
-  await syncAgentsFromList()
+  // Why: seed the table with agents already running across Orca when the worker
+  // starts, so presence is right before the next status event.
+  await syncAgentsFromList({ allWorkspaces: true })
+  await syncSessionsIfNeeded(true)
 
   // Why: the person can edit settings in Orca's Settings page while the worker
   // runs. Re-read and apply without a reload. Debounced so a multi-key
@@ -1077,6 +1301,11 @@ export async function deactivate() {
   diagnostics?.line('info', 'deactivate')
   agentTable?.clear()
   agentTable = null
+  workspacesById.clear()
+  sessionsCache = []
+  focusedWorkspaceId = undefined
+  focusedHostKind = undefined
+  focusHandles.clear()
   await controller?.stop()
   controller = null
   diagnostics = null

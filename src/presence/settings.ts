@@ -44,7 +44,17 @@ export const ELAPSED_MODES = ['session', 'state'] as const
 export type ElapsedMode = (typeof ELAPSED_MODES)[number]
 
 /**
- * Panel sections the user may hide, in panel order. Must match
+ * Optional local agent session stats included in Discord Rich Presence.
+ */
+export const SESSION_STATS_MODES = ['off', 'tokens', 'messages', 'both'] as const
+
+/**
+ * One of {@link SESSION_STATS_MODES}.
+ */
+export type SessionStatsMode = (typeof SESSION_STATS_MODES)[number]
+
+/**
+ * Panel sections the user may hide, in canonical order. Must match
  * `PANEL_SECTIONS` in `src/panel/panel.js` (a test pins both).
  */
 export const HIDDEN_PANEL_IDS = [
@@ -57,6 +67,24 @@ export const HIDDEN_PANEL_IDS = [
   'agents',
   'toggles',
   'actions',
+  'leaderboards',
+  'logs'
+] as const
+
+/**
+ * Default top-to-bottom order of reorderable panel blocks.
+ */
+export const PANEL_ORDER_IDS = [
+  'actions',
+  'preview',
+  'strip',
+  'tiles',
+  'sink',
+  'client',
+  'detail',
+  'agents',
+  'toggles',
+  'leaderboards',
   'logs'
 ] as const
 
@@ -141,6 +169,26 @@ export type PresenceSettings = {
    * the panel's own storage so the Settings page can show and edit it.
    */
   hiddenPanels: string
+  /**
+   * Prefix the workspace name with its project/repository name at `workspace`
+   * or `full` detail. Never shown at `generic`.
+   */
+  showProject: boolean
+  /**
+   * Include local agent token and/or message counts in Discord `state`.
+   * Off by default; `agent.listSessions` is not called while both this is
+   * `off` and `showLeaderboards` is false.
+   */
+  showSessionStats: SessionStatsMode
+  /**
+   * Show the local workspace Leaderboards card in the panel (panel-only).
+   */
+  showLeaderboards: boolean
+  /**
+   * Comma list of panel block ids ({@link PANEL_ORDER_IDS}) in custom order,
+   * or `""` for the default order. Mirrors the panel's `panelOrder` storage.
+   */
+  panelOrder: string
 }
 
 /**
@@ -203,7 +251,11 @@ export const DEFAULT_SETTINGS: Readonly<PresenceSettings> = Object.freeze({
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
   showAgentCount: false,
   discordClient: 'auto',
-  hiddenPanels: ''
+  showProject: false,
+  showSessionStats: 'off',
+  showLeaderboards: false,
+  hiddenPanels: '',
+  panelOrder: ''
 })
 
 /**
@@ -231,6 +283,10 @@ function isElapsedMode(value: unknown): value is ElapsedMode {
 
 function isDetailLevel(value: unknown): value is DetailLevel {
   return typeof value === 'string' && (DETAIL_LEVELS as readonly string[]).includes(value)
+}
+
+function isSessionStatsMode(value: unknown): value is SessionStatsMode {
+  return typeof value === 'string' && (SESSION_STATS_MODES as readonly string[]).includes(value)
 }
 
 /**
@@ -286,6 +342,37 @@ export function normalizeHiddenPanels(value: unknown): string {
 }
 
 /**
+ * Normalize a custom panel block order comma list. Keeps known unique block
+ * ids in requested order, appends any missing defaults, and collapses the
+ * default order (or empty/invalid input) back to `""`.
+ */
+export function normalizePanelOrder(value: unknown): string {
+  if (typeof value !== 'string') {
+    return ''
+  }
+  const known = new Set<string>(PANEL_ORDER_IDS)
+  const seen = new Set<string>()
+  const ordered: string[] = []
+  for (const part of value.split(',')) {
+    const id = part.trim()
+    if (known.has(id) && !seen.has(id)) {
+      seen.add(id)
+      ordered.push(id)
+    }
+  }
+  if (ordered.length === 0) {
+    return ''
+  }
+  for (const id of PANEL_ORDER_IDS) {
+    if (!seen.has(id)) {
+      ordered.push(id)
+    }
+  }
+  const normalized = ordered.join(',')
+  return normalized === PANEL_ORDER_IDS.join(',') ? '' : normalized
+}
+
+/**
  * Coerce a Discord button label to 1–32 characters. Empty → default.
  *
  * @param value - Raw settings value.
@@ -330,6 +417,9 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
   if (isElapsedMode(source.elapsedMode)) {
     settings.elapsedMode = source.elapsedMode
   }
+  if (isSessionStatsMode(source.showSessionStats)) {
+    settings.showSessionStats = source.showSessionStats
+  }
   // Why: absent or malformed overrides fall back to the shipped id — never to
   // null, which would leave the plugin permanently unable to connect.
   // The shipped snowflake is always accepted. Junk ids are rejected here;
@@ -351,13 +441,18 @@ export function normalizeSettings(raw: unknown): PresenceSettings {
       ? source.discordClient.trim().slice(0, 64)
       : DEFAULT_SETTINGS.discordClient
   settings.hiddenPanels = normalizeHiddenPanels(source.hiddenPanels)
+  settings.panelOrder = normalizePanelOrder(source.panelOrder)
   return settings
 }
 
 /**
  * Settings that only shape the panel, never what Discord receives.
  */
-const PANEL_ONLY_KEYS: ReadonlySet<keyof PresenceSettings> = new Set(['hiddenPanels'])
+const PANEL_ONLY_KEYS: ReadonlySet<keyof PresenceSettings> = new Set([
+  'hiddenPanels',
+  'panelOrder',
+  'showLeaderboards'
+])
 
 /**
  * True when any setting other than panel layout differs between `a` and `b`.

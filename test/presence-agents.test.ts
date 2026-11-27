@@ -6,7 +6,8 @@ import {
   createAgentTable,
   parseAgentsList,
   parseAgentStatusPayload,
-  parseWorkspaceRemovedId
+  parseWorkspaceRemovedId,
+  parseWorkspaceRemovedIds
 } from '../src/presence/agents'
 
 type FakeTimer = {
@@ -329,6 +330,9 @@ test('same-state event keeps stateStartedAt; a state change resets it', () => {
   table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'working', receivedAt: t0, stateStartedAt: t0 - 5000 })
   table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'working', receivedAt: t0 + 10 })
   expect(table.slots()[0]?.stateStartedAt).toBe(t0 - 5000)
+  // Even if a same-state active event carries a newer stateStartedAt, keep the original start so UI rows stay stable.
+  table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'working', receivedAt: t0 + 15, stateStartedAt: t0 + 15 })
+  expect(table.slots()[0]?.stateStartedAt).toBe(t0 - 5000)
   table.upsert({ workspaceId: 'w', paneKey: 'k', terminalId: 't1', state: 'blocked', receivedAt: t0 + 20 })
   expect(table.slots()[0]?.stateStartedAt).toBe(t0 + 20)
 })
@@ -339,5 +343,85 @@ test('a list re-sync keeps the workspaceId a status event supplied', () => {
   table.upsert({ workspaceId: 'w1', paneKey: 'k', terminalId: 't1', state: 'working', receivedAt: at })
   table.upsert({ workspaceId: '', paneKey: '', terminalId: 't1', state: 'working', receivedAt: at })
   expect(table.removeWorkspace('w1')).toBe(true)
+  expect(table.slots()).toHaveLength(0)
+})
+
+test('Host API 1.7-1.9: workspaceListId, mainAgent, task.title, and sessionId fallback key', () => {
+  const parsed = parseAgentStatusPayload(
+    {
+      workspaceId: 'w-legacy',
+      workspaceListId: 'ws-list-1',
+      paneKey: 'pane-1',
+      terminalId: 't1',
+      sessionId: 'sess-1',
+      state: 'done',
+      receivedAt: 5000,
+      mainAgent: { state: 'done', outcome: 'failure', stateStartedAt: 4200 }
+    },
+    6000
+  )
+  expect(parsed).toEqual({
+    workspaceId: 'w-legacy',
+    workspaceListId: 'ws-list-1',
+    paneKey: 'pane-1',
+    terminalId: 't1',
+    sessionId: 'sess-1',
+    state: 'done',
+    receivedAt: 5000,
+    stateStartedAt: 4200,
+    outcome: 'failure'
+  })
+
+  // parseAgentsList keeps terminalId: null rows when sessionId is present, plus task.title & workspaceListId.
+  const listed = parseAgentsList(
+    {
+      agents: [
+        {
+          terminalId: null,
+          sessionId: 'sess-restored',
+          agent: 'claude',
+          state: 'working',
+          stateStartedAt: 1000,
+          task: { title: 'Audit auth middleware' }
+        },
+        { terminalId: null, sessionId: null, agent: 'codex', state: 'working' }
+      ]
+    },
+    2000,
+    'ws-list-2'
+  )
+  expect(listed).toHaveLength(1)
+  expect(listed[0]).toEqual({
+    workspaceId: '',
+    workspaceListId: 'ws-list-2',
+    paneKey: '',
+    sessionId: 'sess-restored',
+    state: 'working',
+    receivedAt: 2000,
+    stateStartedAt: 1000,
+    kind: 'claude',
+    taskTitle: 'Audit auth middleware'
+  })
+  expect(agentSlotKey(listed[0]!)).toBe('s:sess-restored')
+
+  // Reconciles s:<sessionId> into t:<terminalId> without double-counting, and removes by workspaceListId.
+  const { table, nowRef } = tableHarness()
+  const at = nowRef()
+  table.upsert({ ...listed[0]!, receivedAt: at, stateStartedAt: at - 5000 })
+  expect(table.slots()).toHaveLength(1)
+  table.upsert({
+    workspaceId: 'w-real',
+    workspaceListId: 'ws-list-2',
+    paneKey: 'p1',
+    terminalId: 't-new',
+    sessionId: 'sess-restored',
+    state: 'working',
+    receivedAt: at + 100
+  })
+  expect(table.slots()).toHaveLength(1)
+  expect(table.slots()[0]?.terminalId).toBe('t-new')
+  expect(table.slots()[0]?.taskTitle).toBe('Audit auth middleware')
+  expect(parseWorkspaceRemovedIds({ workspaceId: 'a', workspaceListId: 'ws-list-2' })).toEqual(['a', 'ws-list-2'])
+  expect(table.removeWorkspace(['ws-list-2'])).toBe(true)
   expect(table.slots()).toHaveLength(0)
 })
