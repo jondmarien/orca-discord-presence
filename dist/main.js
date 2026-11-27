@@ -3528,7 +3528,11 @@ var HEARTBEAT_MS = 90000;
 var activeWorker = null;
 async function activate(orca, deps = {}) {
   const disposer = createDisposer();
+  const worker = { stop: async () => disposer.disposeAll() };
+  activeWorker = worker;
   const settingsRuntime = await createSettingsRuntime({ orca, disposer });
+  if (disposer.isDisposed())
+    return;
   const { diagnostics, logRing } = createHostDiagnostics(orca, settingsRuntime.current(), settingsRuntime.appIdInspection);
   let latestSummary = { agentState: undefined, agentCount: 0 };
   let pushAgentRefresh = () => {};
@@ -3543,6 +3547,8 @@ async function activate(orca, deps = {}) {
     }
   });
   const persistence = await createPersistence({ host: orca.host, disposer });
+  if (disposer.isDisposed())
+    return;
   const hostSync = createHostSync({ host: orca.host, agentTable, disposer, diagnostics });
   const publishStatusBar = () => {
     const controller = binding.controller();
@@ -3616,23 +3622,23 @@ async function activate(orca, deps = {}) {
     publishStatusBar
   });
   panelRpc.register({ paletteHandlers, refresh });
+  worker.stop = async () => {
+    disposer.disposeAll();
+    await persistence.flush();
+    diagnostics.line("info", "deactivate");
+    agentTable.clear();
+    hostSync.clear();
+    panelRpc.clear();
+    await binding.stop();
+  };
   registerHostEvents(orca, agentTable, hostSync, refresh);
   await seedHostState(hostSync, settingsRuntime.current());
+  if (disposer.isDisposed())
+    return;
   settingsRuntime.watch((next) => binding.applySettings(next));
   disposer.setInterval(() => {
     binding.redetect().then(() => refresh(undefined, { force: true }));
   }, HEARTBEAT_MS);
-  activeWorker = {
-    async stop() {
-      disposer.disposeAll();
-      await persistence.flush();
-      diagnostics.line("info", "deactivate");
-      agentTable.clear();
-      hostSync.clear();
-      panelRpc.clear();
-      await binding.stop();
-    }
-  };
   binding.redetect(true).then(() => refresh(undefined, { startup: true })).then(() => panelRpc.publish("immediate"));
 }
 async function deactivate() {

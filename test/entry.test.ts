@@ -649,6 +649,30 @@ function fakeDiscordClients() {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+test('deactivation cancels activation while settings are loading', async () => {
+  const { default: activate, deactivate } = await import('../src/main')
+  let finishSettings!: (result: unknown) => void
+  const settings = new Promise<unknown>((resolve) => {
+    finishSettings = resolve
+  })
+  const commands: string[] = []
+  const fake = fakeDiscordClients()
+  const activation = activate({
+    log: () => {},
+    commands: { register: (id) => { commands.push(id) } },
+    events: { on: () => {} },
+    host: {
+      has: () => false,
+      call: async (method) => method === 'settings.get' ? settings : null
+    }
+  }, { detect: async () => [], createClient: fake.createClient })
+  await deactivate()
+  finishSettings({ settings: {} })
+  await activation
+  expect(commands).toEqual([])
+  expect(fake.created).toEqual([])
+})
+
 test('deactivation prevents a pending startup detection from publishing again', async () => {
   const fake = fakeDiscordClients()
   let finishDetection!: () => void

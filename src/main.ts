@@ -42,7 +42,10 @@ let activeWorker: { stop(): Promise<void> } | null = null
  */
 export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) {
   const disposer = createDisposer()
+  const worker = { stop: async () => disposer.disposeAll() }
+  activeWorker = worker
   const settingsRuntime = await createSettingsRuntime({ orca, disposer })
+  if (disposer.isDisposed()) return
   const { diagnostics, logRing } = createHostDiagnostics(
     orca,
     settingsRuntime.current(),
@@ -63,6 +66,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     }
   })
   const persistence = await createPersistence({ host: orca.host, disposer })
+  if (disposer.isDisposed()) return
   const hostSync = createHostSync({ host: orca.host, agentTable, disposer, diagnostics })
 
   const publishStatusBar = () => {
@@ -144,24 +148,22 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   })
   panelRpc.register({ paletteHandlers, refresh })
 
+  worker.stop = async () => {
+    disposer.disposeAll()
+    await persistence.flush()
+    diagnostics.line('info', 'deactivate')
+    agentTable.clear()
+    hostSync.clear()
+    panelRpc.clear()
+    await binding.stop()
+  }
   registerHostEvents(orca, agentTable, hostSync, refresh)
   await seedHostState(hostSync, settingsRuntime.current())
+  if (disposer.isDisposed()) return
   settingsRuntime.watch((next) => binding.applySettings(next))
   disposer.setInterval(() => {
     void binding.redetect().then(() => refresh(undefined, { force: true }))
   }, HEARTBEAT_MS)
-
-  activeWorker = {
-    async stop() {
-      disposer.disposeAll()
-      await persistence.flush()
-      diagnostics.line('info', 'deactivate')
-      agentTable.clear()
-      hostSync.clear()
-      panelRpc.clear()
-      await binding.stop()
-    }
-  }
 
   // Why: fire-and-forget so activate returns well inside the 10s worker timeout.
   void binding
