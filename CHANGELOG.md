@@ -4,10 +4,17 @@ All notable changes to this plugin. The format follows [Keep a Changelog](https:
 
 ## [1.2.1] - 2026-11-26
 
+### Highlights
+
+- The worker is split into focused modules — same behavior, less duplication and stale state.
+- The panel is built from modular TypeScript and ordered CSS into the same single-file output.
+- Cleaner shutdown and fewer redundant writes, and the header settings shortcut icon is gone.
+
 ### Changed
 
 - Split the worker into host, settings, persistence, Discord binding, host synchronization, commands, and panel RPC modules while preserving the v1.2.0 behavior and PR #33 fixes.
 - Bundled the sidebar from modular TypeScript and ordered CSS sources into the same single-file panel. The bridge transport and token storage now live under `src/bridge/`.
+- Removed the header settings shortcut icon, which only flashed a hint about Orca's Settings page.
 
 ### Fixed
 
