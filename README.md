@@ -6,12 +6,12 @@
 
 **Workspace, branch, and agent state on your Discord profile. Every identifying field is opt-in.**
 
-[![Version](https://img.shields.io/badge/v1.1.1-blue.svg)](orca-plugin.json)
+[![Version](https://img.shields.io/badge/v1.2.0-blue.svg)](orca-plugin.json)
 [![Bun](https://img.shields.io/badge/Bun-1.4+-000000?logo=bun&logoColor=white)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-`jondmarien.discord-presence` · Orca `>=1.4.248` · not affiliated with Discord
+`jondmarien.discord-presence` · Orca `>=1.4.278` · not affiliated with Discord
 
 </div>
 
@@ -23,23 +23,29 @@ Browser Discord has no IPC socket. Presence needs the desktop client (Discord, V
 
 ## Install
 
-Orca `>=1.4.248`. Enable **Settings → Plugins → Plugin system** first.
+Orca `>=1.4.278`. Enable **Settings → Plugins → Plugin system** first.
 
-- From the directory: <https://www.onorca.dev/plugins/jondmarien/orca-discord-presence>
+- From the directory: <https://orca.dev/plugins/jondmarien/orca-discord-presence>
 - From Git: `orca plugin install https://github.com/jondmarien/orca-discord-presence.git#<tag>`
 
-Approve the consent dialog. The plugin asks for:
+Approve the consent dialog (see [Permissions](#permissions) for why each capability is requested), then run **Rich Presence: Show Status** from the command palette.
 
-| Capability | Used for |
+## Permissions
+
+Every capability in `orca-plugin.json` maps to a specific feature:
+
+| Capability | Why it is requested |
 |---|---|
-| `workspace:read` | Workspace name, branch, terminal count |
-| `agent:read` | Agent list and `agent.status.changed` |
-| `storage:own` | Plugin storage |
-| `settings:own` | Your settings |
-| `secrets:own` | Bridge token |
-| `notifications:show` | Status toasts |
+| `workspace:read` | Reads the focused workspace name, git branch, and terminal count (`workspace.readContext`), plus workspace directory metadata (`workspace.list`, discarding file `path` immediately) for cross-workspace agent discovery, optional project names, and the panel's `Local` / `SSH` / `WSL/VM` badge. |
+| `workspace:write` | Used **only** when you click an agent row in the panel to jump straight to that agent's terminal (`terminal.focus`). The plugin never creates, renames, opens, closes, or edits workspaces, terminals, or files. |
+| `agent:read` | Lists running agents (`agents.list`) and listens to `agent.status.changed` so your Discord status and panel reflect live agent activity across workspaces. |
+| `history:read` | Reads numeric token and message counts from `agent.listSessions` **only** when you explicitly enable **Show session stats** or **Show Leaderboards** (both default **off**). When both are off, `agent.listSessions` is never called. Session titles are discarded immediately on read and are never stored, logged, or sent anywhere. |
+| `storage:own` | Persists the 30-minute timeline strip, session clock, panel view (`Full`/`Minimal`), theme cache, hidden sections, and custom block order in plugin-private storage. |
+| `settings:own` | Reads and writes this plugin's own declared settings. |
+| `secrets:own` | Stores the optional HTTP companion bridge bearer token in your OS keyring (when available). |
+| `notifications:show` | Displays desktop toasts for **Show Status**, **Reload RPC**, **Clear**, and invalid Application ID warnings. |
 
-Then run **Rich Presence: Show Status** from the command palette.
+See [docs/privacy.md](docs/privacy.md) for the full disclosure contract and never-transmitted list.
 
 ### Upgrading from `chron0.discord-presence`
 
@@ -84,7 +90,10 @@ Settings are in **Orca Settings** under this plugin. Defaults:
 | Show Rich Presence (`enabled`) | on | Off clears your activity |
 | Detail level (`detailLevel`) | `generic` | `off`, `generic`, `workspace`, `full` |
 | Show git branch (`showBranch`) | off | Needs `full` |
+| Show project name (`showProject`) | off | Prefixes workspace with project/repo name (`workspace` or `full`) |
 | Show agent state (`showAgentState`) | on | |
+| Show session stats (`showSessionStats`) | `off` | `off`, `tokens`, `messages`, `both`. Reads local session history only when enabled |
+| Show Leaderboards panel card (`showLeaderboards`) | off | Panel-only workspace message/token leaderboard; never sent to Discord |
 | Show terminal count (`showTerminals`) | off | |
 | Show machine name (`showMachine`) | off | Needs detail above `generic` |
 | Machine name (`machineLabel`) | empty | Empty uses the hostname |
@@ -99,7 +108,8 @@ Settings are in **Orca Settings** under this plugin. Defaults:
 | Button label (`openButtonLabel`) | `Open Orca` | 1 to 32 characters |
 | Show agent count (`showAgentCount`) | off | |
 | Show status bar item (`showStatusBar`) | on | Orca desktop app only |
-| Hidden panels (`hiddenPanels`) | empty | Panel sections to hide, comma separated: `preview`, `strip`, `tiles`, `sink`, `client`, `detail`, `agents`, `toggles`, `actions`, `logs`. The eye buttons in the panel edit it. Never sent to Discord |
+| Hidden panels (`hiddenPanels`) | empty | Panel sections to hide, comma separated: `preview`, `strip`, `tiles`, `sink`, `client`, `detail`, `agents`, `toggles`, `actions`, `leaderboards`, `logs`. The eye buttons in the panel edit it. Never sent to Discord |
+| Panel section order (`panelOrder`) | empty | Custom panel block order, comma separated. Dragging 6-dot handles (or `Alt+↑`/`Alt+↓`) edits this. Empty uses default order. Never sent to Discord |
 
 The status bar item shows the current state at a glance (`Working`, `Blocked`, `Waiting`, `Done`, or `Discord`). Clicking it shows or hides the Rich Presence panel. It follows the same privacy settings as the Discord card.
 
@@ -233,9 +243,9 @@ Authenticated requests send `Authorization: Bearer <token>`. More in [companion/
 
 ### Panel
 
-The **Rich Presence** panel (`presence`, `panel/index.html`) shows live status, a redacted settings summary, and recent log lines. It talks to the worker through `window.orca.plugin.request` and receives updates through `orca.panels.post`. Outside the Orca desktop app (for example in a browser client) it shows a static note: "Open this panel in the Orca desktop app to see live status."
+The **Rich Presence** panel (`presence`, `panel/index.html`) shows live status, a redacted settings summary, live cross-workspace agents (click any row to jump to its terminal), an optional **Leaderboards** card (`showLeaderboards`), and recent log lines with one-click **Copy** and **Save** (`orca.files.saveAs`). Every section can be hidden with its eye button or reordered by dragging its 6-dot handle (or pressing `Alt+↑`/`Alt+↓` on a focused handle; click **Reset layout** in the footer to restore defaults). Outside the Orca desktop app (for example in a browser client) it shows a static note: "Open this panel in the Orca desktop app to see live status."
 
-The panel never receives the Application ID, bridge URL, bridge token, or button URL.
+The panel never receives the Application ID, bridge URL, bridge token, button URL, workspace file paths, raw SSH hostnames, or session history titles.
 
 ### Log file
 
@@ -272,7 +282,7 @@ Roadmap and host API work: [ROADMAP.md](ROADMAP.md).
 | `connected=false` | Client not ready or socket missing | Start Discord, then **Reload RPC** (3 tries, 3 s to 15 s backoff) |
 | Another game wins | Competing RPC client | **Reload RPC**, or wait for the 90 s re-send |
 | "Playing Orca" after quit | Ghost activity | **Reload RPC**, or toggle Enable/Disable once |
-| Linux cannot find the socket | `XDG_RUNTIME_DIR` stripped from the worker env | The plugin tries `/run/user/<uid>` and Flatpak/Snap paths. Or set `ORCA_PRESENCE_DISCORD_IPC` |
+| Linux cannot find the socket | Custom runtime dir or older Orca host | Orca `>=1.4.262` forwards `XDG_RUNTIME_DIR`; the plugin also falls back to `/run/user/<uid>` and Flatpak/Snap paths, or set `ORCA_PRESENCE_DISCORD_IPC` |
 | Vesktop Flatpak, no presence | Socket inside the sandbox | Enable Rich Presence via arRPC. The plugin probes `.flatpak/dev.vencord.Vesktop/xdg-run/discord-ipc-*` |
 | Agents on one machine, Discord on another | Local IPC cannot cross machines | [Companion](#remote-presence-companion) |
 | Show Status warns `secrets unavailable` | No OS keyring | The token is kept in plugin settings. Install a keyring (for example a secret service) to move it to secrets |

@@ -226,3 +226,67 @@ test('snapshot carries the hidden panel ids from settings', () => {
   expect(build('strip,logs').hidden).toEqual(['strip', 'logs'])
   expect(build('').hidden).toEqual([])
 })
+
+test('snapshot carries taskTitle, failure/interruption outcome, opaque focusKey, hostKind, order, and leaderboards', () => {
+  const snapshot = buildPresencePanelSnapshot({
+    version: PLUGIN_VERSION,
+    status: statusWith({}),
+    settings: {
+      ...DEFAULT_SETTINGS,
+      showLeaderboards: true,
+      panelOrder: 'agents,preview,actions,strip,tiles,sink,client,detail,toggles,leaderboards,logs'
+    },
+    logs: [],
+    timeline: [],
+    hostKind: 'ssh',
+    leaderboardRows: [{ name: 'orca-discord-presence', messages: 42, tokens: 120_000 }],
+    focusKeyOf: (slot) => (slot.terminalId ? `k:${slot.terminalId === 'term-real' ? '0' : '1'}` : undefined),
+    agents: [
+      {
+        workspaceId: 'ws-secret',
+        paneKey: 'pane-secret',
+        terminalId: 'term-real',
+        rawState: 'done',
+        canonicalState: 'done',
+        receivedAt: 100,
+        kind: 'claude',
+        taskTitle: 'x'.repeat(120),
+        outcome: 'failure'
+      },
+      {
+        workspaceId: 'ws-secret',
+        paneKey: 'pane-2',
+        sessionId: 'sess-only',
+        rawState: 'done',
+        canonicalState: 'done',
+        receivedAt: 200,
+        kind: 'codex',
+        outcome: 'success'
+      }
+    ]
+  })
+  expect(snapshot.status.hostKind).toBe('ssh')
+  expect(snapshot.order[0]).toBe('agents')
+  expect(snapshot.leaderboards).toEqual({
+    enabled: true,
+    rows: [{ name: 'orca-discord-presence', messages: 42, tokens: 120_000 }]
+  })
+  expect(snapshot.agents[0]?.taskTitle).toHaveLength(80)
+  expect(snapshot.agents[0]?.outcome).toBe('failure')
+  expect(snapshot.agents[0]?.focusKey).toBe('k:0')
+  expect(snapshot.agents[1]?.outcome).toBeUndefined()
+  expect(snapshot.agents[1]?.focusKey).toBeUndefined()
+  expect(snapshotLeaksSecrets(snapshot, ['ws-secret', 'pane-secret', 'term-real', 'sess-only'])).toBe(false)
+
+  // Disabled leaderboards always emits empty rows even if rows were passed in.
+  const disabled = buildPresencePanelSnapshot({
+    version: PLUGIN_VERSION,
+    status: statusWith({}),
+    settings: { ...DEFAULT_SETTINGS, showLeaderboards: false },
+    logs: [],
+    timeline: [],
+    leaderboardRows: [{ name: 'secret-ws', messages: 10, tokens: 5000 }],
+    agents: []
+  })
+  expect(disabled.leaderboards).toEqual({ enabled: false, rows: [] })
+})

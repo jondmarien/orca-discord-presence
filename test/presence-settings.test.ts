@@ -8,10 +8,14 @@ import {
   DETAIL_LEVELS,
   ELAPSED_MODES,
   HIDDEN_PANEL_IDS,
+  PANEL_ORDER_IDS,
+  SESSION_STATS_MODES,
   SETTING_KEYS_DECLARED,
   SHIPPED_APPLICATION_ID,
+  affectsPresence,
   normalizeOpenButtonLabel,
   normalizeOpenUrl,
+  normalizePanelOrder,
   normalizeSettings,
   nextDetailLevel,
   toggleField
@@ -218,11 +222,51 @@ test('hiddenPanels keeps known section ids in panel order; junk is empty', () =>
   expect(normalizeSettings({ hiddenPanels: 42 }).hiddenPanels).toBe('')
   expect(normalizeSettings({ hiddenPanels: ['strip'] }).hiddenPanels).toBe('')
   expect(normalizeSettings({}).hiddenPanels).toBe('')
-  expect([...HIDDEN_PANEL_IDS]).toEqual(['preview', 'strip', 'tiles', 'sink', 'client', 'detail', 'agents', 'toggles', 'actions', 'logs'])
+  expect([...HIDDEN_PANEL_IDS]).toEqual([
+    'preview',
+    'strip',
+    'tiles',
+    'sink',
+    'client',
+    'detail',
+    'agents',
+    'toggles',
+    'actions',
+    'leaderboards',
+    'logs'
+  ])
 })
 
 test('hiddenPanels ids match the panel section map', () => {
   const panel = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/panel/panel.js'), 'utf8')
   const ids = [...panel.matchAll(/^\s*\['(\w+)', '[\w-]+', '[^']+'\]/gm)].map((m) => m[1])
   expect(ids).toEqual([...HIDDEN_PANEL_IDS])
+})
+
+test('v1.2.0 settings defaults, normalization, and PANEL_ONLY_KEYS', () => {
+  expect(DEFAULT_SETTINGS.showProject).toBe(false)
+  expect(DEFAULT_SETTINGS.showSessionStats).toBe('off')
+  expect(DEFAULT_SETTINGS.showLeaderboards).toBe(false)
+  expect(DEFAULT_SETTINGS.panelOrder).toBe('')
+  expect([...SESSION_STATS_MODES]).toEqual(['off', 'tokens', 'messages', 'both'])
+  expect(normalizeSettings({ showSessionStats: 'tokens' }).showSessionStats).toBe('tokens')
+  expect(normalizeSettings({ showSessionStats: 'bogus' }).showSessionStats).toBe('off')
+  expect(normalizeSettings({ showProject: true }).showProject).toBe(true)
+  expect(normalizeSettings({ showLeaderboards: true }).showLeaderboards).toBe(true)
+
+  // panelOrder preserves user order, appends missing defaults, collapses default order to ''.
+  expect(normalizePanelOrder('')).toBe('')
+  expect(normalizePanelOrder('nope,junk')).toBe('')
+  expect(normalizePanelOrder(42)).toBe('')
+  expect(normalizePanelOrder(PANEL_ORDER_IDS.join(','))).toBe('')
+  expect(normalizePanelOrder('agents, preview, agents')).toBe(
+    'agents,preview,actions,strip,tiles,sink,client,detail,toggles,leaderboards,logs'
+  )
+
+  // Panel-only settings never affect Discord presence.
+  expect(affectsPresence(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, hiddenPanels: 'logs' })).toBe(false)
+  expect(affectsPresence(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, panelOrder: 'agents,preview' })).toBe(false)
+  expect(affectsPresence(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, showLeaderboards: true })).toBe(false)
+  expect(affectsPresence(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, showProject: true })).toBe(true)
+  expect(affectsPresence(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, showSessionStats: 'tokens' })).toBe(true)
 })

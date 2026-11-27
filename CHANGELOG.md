@@ -2,6 +2,32 @@
 
 All notable changes to this plugin. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-11-26
+
+### Added
+
+- **Custom monochrome panel SVG icon:** Original Orca fin + presence broadcast mark on `contributes.panels[0]` (requires Orca `>=1.4.277`; `engines.orca` bumped to `>=1.4.278`).
+- **Draggable / reorderable panel blocks:** Every block inside the panel now has a 6-dot drag handle (pure Pointer Events with midpoint hysteresis, FLIP transitions, scroll-jump protection, `Escape` cancel, and `Alt+ArrowUp`/`Alt+ArrowDown` keyboard reordering with ARIA live announcements). Order persists in `storage:own` and mirrors to a new **Panel section order** setting (`panelOrder`, panel-only), with a subtle **Reset layout** footer button shown when customized.
+- **Independent full-width summary cards:** **Agents** and **Sending to** tiles are now independent full-width responsive cards that reorder cleanly anywhere in the panel at every width (`320px`, `240px`, `<180px`).
+- **Cross-workspace agent discovery:** Startup and panel Refresh now discover active agents across all workspaces via `workspace.list({ includeStatus: true })` and bounded `agents.list({ workspaceId })` fan-out, and unfocused `agent.status.changed` events resolve agent metadata immediately using `workspaceListId`.
+- **Host API 1.5–1.9 signals:** Accurate `mainAgent.stateStartedAt` elapsed timers and local `failure`/`interruption` panel hints; dispatched task titles (`task.title`, local panel only); subtle `Local` / `SSH` / `WSL/VM` host badge in the panel header; `sessionId` fallback slot keys (`s:<sessionId>`) for restored terminals without a `terminalId`; opt-in **Show project name** setting (`showProject`, gated at `workspace`/`full`).
+- **Click-to-focus agent rows (`workspace:write`):** Clicking an agent row in the panel jumps straight to its terminal via `terminal.focus` using an opaque worker-side handle.
+- **Opt-in Discord session stats (`history:read`):** New **Show session stats** setting (`showSessionStats`: `off`, `tokens`, `messages`, `both`, default `off`) formats compact token/message counts for the active local agent session. `agent.listSessions` is never called while both `showSessionStats` is `off` and `showLeaderboards` is `false`, and `session.title` is discarded immediately on read.
+- **Optional Leaderboards panel card (`showLeaderboards`, default `false`):** Local-only workspace table ranking top workspaces by **Messages** or **Tokens** (clickable column headers + proportional progress bars), reorderable and eye-hideable when enabled.
+- **Native Save Logs (`orca.files.saveAs`):** New **Save** button in the Logs toolbar exports logs cleanly from isolated desktop frames.
+
+### Changed
+
+- **New permissions:** Added `workspace:write` (used exclusively for click-to-focus agent rows via `terminal.focus`) and `history:read` (used exclusively for opt-in session token/message counts and the optional Leaderboards card; never queried when both are off).
+- Panel typography and focus rings follow Orca's live `--orca-font-sans`, `--orca-font-mono`, and `--orca-ring` CSS tokens.
+- Updated directory links from `onorca.dev` to `orca.dev` and added a full **Permissions** breakdown in `README.md`.
+
+### Fixed
+
+- Fixed panel live theme switching: `orca.on('theme', ...)` now reads `{ colorScheme }` (Orca's actual payload shape), boots synchronously from `html.light`/`html.dark`, and matches `:root.light`/`:root.dark` in CSS.
+- Fixed one-click **Copy** in the Logs viewer inside isolated desktop frames by running `document.execCommand('copy')` synchronously inside the click gesture before falling back to `navigator.clipboard.writeText`.
+- `workspace.removed` now cleans up agent slots matching either `workspaceId` or `workspaceListId`.
+
 ## [1.1.1] - 2026-11-12
 
 ### Changed
@@ -63,7 +89,7 @@ All notable changes to this plugin. The format follows [Keep a Changelog](https:
 
 ## [1.0.0] - 2026-11-04
 
-First release for stock Orca (`>=1.4.248`), listed on [onorca.dev](https://www.onorca.dev/plugins/jondmarien/orca-discord-presence).
+First release for stock Orca (`>=1.4.248`), listed on [orca.dev](https://orca.dev/plugins/jondmarien/orca-discord-presence).
 
 ### Changed
 

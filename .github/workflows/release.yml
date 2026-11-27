@@ -1,6 +1,6 @@
 # Cut a GitHub Release when a version tag (vX.Y.Z) is pushed.
 #
-# The Orca plugin directory (onorca.dev) lists the newest vX.Y.Z tag and installs
+# The Orca plugin directory (orca.dev) lists the newest vX.Y.Z tag and installs
 # from the Git repository, so this workflow only adds a convenience zip for
 # manual "local folder" installs. It refuses a tag that does not match the
 # version in orca-plugin.json, package.json and src/version.ts.
@@ -76,7 +76,7 @@ jobs:
 
           ### Install
 
-          - **From Orca's plugin directory:** <https://www.onorca.dev/plugins/jondmarien/orca-discord-presence>
+          - **From Orca's plugin directory:** <https://orca.dev/plugins/jondmarien/orca-discord-presence>
           - **From Git:** Orca → Settings → Plugins → Add plugin → From a Git URL…, then paste \`https://github.com/jondmarien/orca-discord-presence#${GITHUB_REF_NAME}\`
           - **From the zip:** unzip \`${ZIP_NAME}\`, then Orca → Settings → Plugins → Add plugin → Local folder, and choose the unzipped \`rich-presence-for-discord\` folder.
 

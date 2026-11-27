@@ -17,9 +17,11 @@
   /* How much state hue coloured text keeps; the rest is foreground. */
   --ink: 65%;
 }
-/* Light fallbacks for hosts that do not inject Orca variables. The theme
-   event sets data-theme; without it the OS preference decides. */
-:root[data-theme='light'] {
+/* Light fallbacks for hosts that do not inject Orca variables. The host
+   sets html.light / html.dark and the theme event sets data-theme; without
+   either, the OS preference decides. */
+:root[data-theme='light'],
+:root.light {
   color-scheme: light;
   --bg: var(--orca-background, #f5f5f5);
   --card: var(--orca-card, #ffffff);
@@ -29,11 +31,12 @@
   --muted: var(--orca-muted, #efeff1);
   --ink: 40%;
 }
-:root[data-theme='dark'] {
+:root[data-theme='dark'],
+:root.dark {
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme='dark']) {
+  :root:not([data-theme='dark']):not(.dark) {
     --bg: var(--orca-background, #f5f5f5);
     --card: var(--orca-card, #ffffff);
     --border: var(--orca-border, #e0e0e0);
@@ -53,7 +56,7 @@ body {
 }
 body {
   padding: 8px;
-  font: 13px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font: 13px/1.4 var(--orca-font-sans, system-ui, -apple-system, 'Segoe UI', sans-serif);
   color: var(--fg);
   background: var(--bg);
 }
@@ -65,8 +68,23 @@ body {
 }
 .hidden,
 .user-hidden,
+.feature-disabled,
 .collapsed {
   display: none !important;
+}
+#app[data-view='minimal'] .full-only {
+  display: none !important;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .note,
 .muted {
@@ -113,8 +131,22 @@ body {
 .g6 {
   gap: 6px;
 }
+.g4 {
+  gap: 4px;
+}
 .col.g7 {
   gap: 7px;
+}
+.host-badge {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted-fg);
+  background: var(--muted);
+  white-space: nowrap;
 }
 .between {
   justify-content: space-between;
@@ -234,6 +266,11 @@ body {
   font: inherit;
   font-size: 12px;
 }
+.select.sm {
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 6px;
+}
 .select:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -347,29 +384,39 @@ body {
   gap: 4px;
 }
 
-/* Tiles */
-.tiles {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-/* One tile hidden: the other fills the row. */
-.tiles.single {
-  grid-template-columns: 1fr;
+/* Full-width responsive summary tiles */
+.tile-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+  flex-wrap: wrap;
 }
 .tile .v {
   font-size: 18px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  line-height: 1.2;
 }
 .tile .l {
   font-size: 11px;
   color: var(--muted-fg);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+#tile-sink-sub {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  overflow-wrap: anywhere;
 }
 .mix {
   display: flex;
-  height: 6px;
-  margin-top: 6px;
+  flex: 1 1 80px;
+  min-width: 48px;
+  height: 7px;
   border-radius: 999px;
   overflow: hidden;
   background: var(--c-none);
@@ -396,9 +443,22 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-.agent-row {
   min-width: 0;
+}
+.agent-btn {
+  width: 100%;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.agent-btn:hover {
+  background: var(--muted);
 }
 .agent-label {
   display: flex;
@@ -507,8 +567,11 @@ body {
 .seg button:focus-visible,
 .icon-btn:focus-visible,
 .eye-btn:focus-visible,
+.drag-handle:focus-visible,
+.agent-btn:focus-visible,
+.lb-sort:focus-visible,
 .btn:focus-visible {
-  outline: 2px solid var(--c-working);
+  outline: 2px solid var(--orca-ring, var(--c-working));
   outline-offset: 1px;
 }
 
@@ -609,6 +672,138 @@ body {
   padding: 1px 8px;
   font-size: 11px;
 }
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted-fg);
+}
+.btn.ghost:hover {
+  color: var(--fg);
+  border-color: var(--border);
+}
+
+/* Reorderable sections and 6-dot drag handles */
+#sections {
+  position: relative;
+  overflow-anchor: none;
+}
+.drag-handle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted-fg);
+  opacity: 0.55;
+  cursor: grab;
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+.drag-handle:hover,
+.drag-handle:focus-visible {
+  opacity: 1;
+  color: var(--fg);
+}
+#sections[data-reordering],
+#sections[data-reordering] .drag-handle {
+  cursor: grabbing;
+  -webkit-user-select: none;
+  user-select: none;
+}
+[data-block][data-dragging] {
+  position: relative;
+  z-index: 10;
+  scale: 1.015;
+  border-color: var(--orca-ring, var(--c-working));
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
+}
+.order-footer {
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+/* Leaderboards card */
+.lb-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted-fg);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+.lb-col-ws {
+  font-weight: 600;
+}
+.lb-sort {
+  border: 0;
+  background: none;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-fg);
+  cursor: pointer;
+  text-align: right;
+  white-space: nowrap;
+}
+.lb-sort.on {
+  color: var(--fg);
+  background: var(--c-none);
+}
+.lb-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.lb-row-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.lb-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lb-num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-fg);
+  text-align: right;
+  white-space: nowrap;
+}
+.lb-num.active {
+  color: var(--fg);
+  font-weight: 600;
+}
+.lb-bar {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--c-none);
+  overflow: hidden;
+}
+.lb-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--orca-accent, var(--c-working));
+}
+.lb-caption {
+  font-size: 10px;
+}
 
 /* Section eyes: quiet until hovered or focused, so headers stay calm. */
 .eye-btn {
@@ -657,18 +852,23 @@ body {
 .logs-box {
   position: relative;
 }
-.logs-box > .eye-btn {
+.logs-actions {
   position: absolute;
   top: -3px;
   right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 details.logs summary {
   cursor: pointer;
   color: var(--muted-fg);
   font-size: 12px;
+  padding-right: 48px;
 }
 .log-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin: 8px 0;
 }
@@ -680,7 +880,7 @@ pre.log {
   border-radius: 6px;
   background: var(--muted);
   color: var(--fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--orca-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   font-size: 10px;
   line-height: 1.4;
   white-space: pre-wrap;
@@ -730,9 +930,6 @@ pre.log {
    container; hosts without container queries get the same steps from the
    viewport, which is the frame plus the 8px body padding on each side. */
 @container (max-width: 259px) {
-  .tiles {
-    grid-template-columns: 1fr;
-  }
   .dcard img {
     width: 48px;
     height: 48px;
@@ -758,21 +955,37 @@ pre.log {
   }
 }
 @container (max-width: 179px) {
-  .tile .v,
-  .tile .l,
-  .tile + .tile {
-    display: none;
+  .tile .v {
+    font-size: 15px;
   }
   .mix {
     height: 10px;
-    margin-top: 0;
+  }
+  /* Keep both metric sort buttons reachable at narrow widths; hide only the inactive data column. */
+  .lb-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+  }
+  .lb-col-ws {
+    flex: 1 0 100%;
+  }
+  .lb-row-top {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .lb-row-top .lb-msg {
+    display: none;
+  }
+  #leaderboards-card[data-lb-metric='messages'] .lb-row-top .lb-msg {
+    display: block;
+  }
+  #leaderboards-card[data-lb-metric='messages'] .lb-row-top .lb-tok {
+    display: none;
   }
 }
 @supports not (container-type: inline-size) {
   @media (max-width: 275px) {
-    .tiles {
-      grid-template-columns: 1fr;
-    }
     .dcard img {
       width: 48px;
       height: 48px;
@@ -798,14 +1011,11 @@ pre.log {
     }
   }
   @media (max-width: 195px) {
-    .tile .v,
-    .tile .l,
-    .tile + .tile {
-      display: none;
+    .tile .v {
+      font-size: 15px;
     }
     .mix {
       height: 10px;
-      margin-top: 0;
     }
   }
 }
@@ -814,7 +1024,8 @@ pre.log {
     --c-none: #262626;
     --track: #45464b;
   }
-  :root[data-theme='light'] {
+  :root[data-theme='light'],
+  :root.light {
     --c-none: #e4e4e7;
     --track: #c9c9ce;
   }

@@ -12,7 +12,7 @@ The **only** module that chooses identifying strings is [`src/presence/activity.
 From `DEFAULT_SETTINGS` in [`src/presence/settings.ts`](../src/presence/settings.ts):
 
 - Presence **enabled**, detail **`generic`**.
-- Branch, machine, and terminal count **off**.
+- Project name, branch, machine, terminal count, agent count, session stats (`showSessionStats: 'off'`), and Leaderboards (`showLeaderboards: false`) **off**.
 - Agent state and elapsed timer **on**.
 - Application id is the shipped public snowflake `1545653843239374848`.
 - Companion bridge **off** (`bridgeEnabled: false`, empty URL/token).
@@ -39,22 +39,27 @@ The bridge token is a shared secret between the Orca host and the companion. It 
 | Game name `Orca` | Discord application name (portal), not a plugin setting |
 | `Working in Orca` | `detailLevel === 'generic'` |
 | Workspace display name | `detailLevel` is `workspace` or `full` |
+| `project / workspace` | `detailLevel` is `workspace` or `full` **and** `showProject` is on |
 | `name — branch` | `detailLevel === 'full'` **and** `showBranch` **and** a branch exists |
-| Agent label (`working`, `blocked`, `waiting for input`, `idle`) | `showAgentState` |
+| Agent label (`working`, `blocked`, `waiting for input`, `completed`, `idle`) | `showAgentState` |
 | `N agent(s)` | `showAgentCount` and the live agent table is non-empty |
+| Compact local session stats (`142k tokens`, `38 msgs`) | `showSessionStats` (`tokens`, `messages`, or `both`) when a live local session matches |
 | One activity button (`Open Orca` + your HTTPS URL) | `showOpenButton` and a normalized `https:` `openUrl` |
 | `N terminal(s)` | `showTerminals` and `terminalCount` is a number |
 | Machine name or `machineLabel` | `showMachine` **and** `detailLevel !== 'generic'` |
 | Start timestamp (Unix seconds) | `showElapsed` and the start for `elapsedMode` is a number: the session start (`session`, default; also kept in plugin storage on this machine) or `stateStartedAtMs` (`state`) |
-| Asset keys `orca`, `state-*` | Any non-null activity |
+| Asset keys `orca-v2`, bare state keys (`working`, `blocked`, `waiting`, `completed`, `idle`) | Any non-null activity |
 
 | Never transmitted |
 |---|
 | Discord bot token / client secret (this plugin has none) |
+| Workspace paths (`workspace.list[].path` is discarded immediately on read) |
+| Agent chat titles, dispatched task titles, and session history titles (`agent.listSessions[].title` is discarded immediately on read) |
+| Leaderboards table rows (strictly local panel only) |
 | File paths, file names, or editor cursors (host API exposes none) |
 | Raw unrecognized agent states (aliased, then mapped to idle) |
 | Secrets in `openUrl` (operator responsibility; credentials-in-URL are rejected) |
-| SSH remote hostnames (`os.hostname()` is the Orca **client**) |
+| SSH remote hostnames (`os.hostname()` is the Orca client; the panel shows only a coarse `Local` / `SSH` / `WSL/VM` badge) |
 | Extra keys from hand-edited settings JSON |
 | A blank `state` string (the field is omitted instead) |
 | The bridge bearer token (not part of the activity JSON) |
@@ -65,13 +70,13 @@ Disable (`enabled: false`) or `detailLevel: 'off'` produce **no** activity; the 
 
 Host strings are canonicalized first (`running` / `active` → working, `error` / `failed` → blocked, `needs_input` → waiting, `complete` / `finished` → done). Only these labels are sent. Anything else becomes idle so a future or malformed state cannot leak:
 
-| Canonical state | Label | Asset key |
+| Canonical state | Label | Small asset key |
 |---|---|---|
-| `working` | working | `state-working` |
-| `blocked` | blocked | `state-blocked` |
-| `waiting` | waiting for input | `state-waiting` |
-| `done` | idle | `state-idle` |
-| anything else | idle | `state-idle` |
+| `working` | working | `working` |
+| `blocked` | blocked | `blocked` |
+| `waiting` | waiting for input | `waiting` |
+| `done` | completed | `completed` |
+| anything else | idle | `idle` |
 
 ## Settings hygiene
 
@@ -92,7 +97,18 @@ Settings are declared in `orca-plugin.json` `contributes.settings` and edited in
 
 ## Capabilities
 
-The consent dialog lists `workspace:read`, `agent:read`, `storage:own`, `settings:own`, `secrets:own`, and `notifications:show`. `secrets:own` is used only for the bridge token. There is no terminal write and no network capability; the only HTTP client is the opt-in companion bridge.
+The consent dialog lists 8 capabilities:
+
+- **`workspace:read`**: Reads the focused workspace name/branch/terminal count (`workspace.readContext`) and workspace directory metadata (`workspace.list`, discarding `path` immediately) for cross-workspace agent discovery, optional project names, and the panel's `Local`/`SSH`/`WSL/VM` badge.
+- **`workspace:write`**: Used **exclusively** for click-to-focus on agent rows in the panel (`terminal.focus`). The plugin never creates, renames, opens, closes, or edits workspaces, projects, terminals, or files.
+- **`agent:read`**: Reads running agents (`agents.list`) and subscribes to `agent.status.changed`.
+- **`history:read`**: Reads numeric token and message counts from `agent.listSessions` **only** when you explicitly enable **Show session stats** (`showSessionStats !== 'off'`) or **Show Leaderboards** (`showLeaderboards === true`). When both are off (the default), `agent.listSessions` is never called. Session titles are discarded immediately on read and never stored, logged, or sent.
+- **`storage:own`**: Persists the 30-minute timeline strip, session clock, panel view mode, theme cache, hidden sections, and custom block order in plugin-private storage.
+- **`settings:own`**: Reads and writes this plugin's own declared settings.
+- **`secrets:own`**: Stores the optional HTTP companion bridge bearer token in the OS keyring when available.
+- **`notifications:show`**: Shows desktop toasts for **Show Status**, **Reload RPC**, **Clear**, and invalid Application ID warnings.
+
+There is no terminal write capability and no general network capability; the only HTTP client is the opt-in companion bridge.
 
 ## Operator advice
 

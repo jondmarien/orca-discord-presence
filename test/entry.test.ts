@@ -52,7 +52,12 @@ test('manifest identity is jondmarien.discord-presence on manifest v2', () => {
     license: string
     engines: { orca: string }
     contributes: {
-      panels: Array<{ id: string; title: string; icon?: string; entry: string }>
+      panels: Array<{
+        id: string
+        title: string
+        icon?: string | { path: string; viewBox?: string; mode?: 'stroke' | 'fill' }
+        entry: string
+      }>
       commands: Array<{ id: string; title: string }>
       events: Array<{ on: string }>
     }
@@ -61,7 +66,7 @@ test('manifest identity is jondmarien.discord-presence on manifest v2', () => {
   expect('publisher' in manifest).toBe(false)
   expect(manifest.manifestVersion).toBe(2)
   expect(manifest.execution).toBe('trusted-worker')
-  expect(manifest.engines.orca).toBe('>=1.4.248')
+  expect(manifest.engines.orca).toBe('>=1.4.278')
   expect(manifest.license).toBe('MIT')
   expect(manifest.name).toBe('Rich Presence for Discord')
   expect(manifest.id).toBe('discord-presence')
@@ -71,11 +76,13 @@ test('manifest identity is jondmarien.discord-presence on manifest v2', () => {
   expect(manifest.capabilities.map((cap) => cap.kind).sort()).toEqual(
     [
       'agent:read',
+      'history:read',
       'notifications:show',
       'secrets:own',
       'settings:own',
       'storage:own',
-      'workspace:read'
+      'workspace:read',
+      'workspace:write'
     ].sort()
   )
   expect(manifest.contributes.events.map((event) => event.on)).toEqual([
@@ -83,9 +90,17 @@ test('manifest identity is jondmarien.discord-presence on manifest v2', () => {
     'workspace.removed',
     'workspace.changed'
   ])
-  expect(manifest.contributes.panels).toEqual([
-    { id: 'presence', title: 'Rich Presence', icon: 'bot', entry: 'panel/index.html' }
-  ])
+  expect(manifest.contributes.panels).toHaveLength(1)
+  const panel = manifest.contributes.panels[0]!
+  expect(panel.id).toBe('presence')
+  expect(panel.title).toBe('Rich Presence')
+  expect(panel.entry).toBe('panel/index.html')
+  expect(typeof panel.icon).toBe('object')
+  const icon = panel.icon as { path: string; viewBox?: string; mode?: 'stroke' | 'fill' }
+  expect(icon.path.startsWith('M')).toBe(true)
+  expect(icon.path.length).toBeLessThanOrEqual(4096)
+  expect(icon.viewBox).toBe('0 0 24 24')
+  expect(icon.mode).toBe('stroke')
   expect(manifest.contributes.commands).toHaveLength(16)
   expect(manifest.contributes.commands.every((command) => command.title.startsWith('Rich Presence: '))).toBe(
     true
@@ -1187,5 +1202,210 @@ test('presence.refresh returns before a stalled Discord answers SET_ACTIVITY', a
     expect(sends).toBeGreaterThan(before)
   } finally {
     await run.finish()
+  }
+})
+
+test('cross-workspace startup discovery fans out active workspaces, skips inactive, handles focus-agent & gates listSessions', async () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-v120-'))
+  const previous = process.env.ORCA_PRESENCE_LOG_FILE
+  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const { default: activate, deactivate } = await import('../src/main')
+  const panelHandlers = new Map<string, (input: unknown) => unknown>()
+  const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
+  const hostCalls: Array<[string, Record<string, unknown> | undefined]> = []
+  let listSessionsCalls = 0
+  const focusedTerminals: string[] = []
+
+  const runScenario = async (settingsOverride: Record<string, unknown>) => {
+    panelHandlers.clear()
+    eventHandlers.clear()
+    hostCalls.length = 0
+    listSessionsCalls = 0
+    focusedTerminals.length = 0
+    const orca: OrcaHost = {
+      api: { major: 1, minor: 10 },
+      log: () => {},
+      commands: { register: () => {} },
+      events: {
+        on: (event, handler) => {
+          eventHandlers.set(event, handler)
+        }
+      },
+      panels: {
+        handle: (name, fn) => {
+          panelHandlers.set(name, fn)
+          return { dispose: () => {} }
+        },
+        post: () => {}
+      },
+      host: {
+        has: (method) =>
+          [
+            'workspace.list',
+            'agents.list',
+            'terminal.focus',
+            'agent.listSessions',
+            'storage.get',
+            'storage.set'
+          ].includes(method),
+        call: async (method, args) => {
+          hostCalls.push([method, args])
+          if (method === 'settings.get') return { settings: settingsOverride }
+          if (method === 'workspace.list') {
+            return {
+              workspaces: [
+                {
+                  id: 'ws-active',
+                  kind: 'worktree',
+                  name: 'feat-v12',
+                  project: 'orca-discord-presence',
+                  path: '/secret/disk/path/feat-v12',
+                  branch: 'feat/v12',
+                  hostId: 'ssh:secret-host.corp',
+                  status: { state: 'working', unread: false, terminalCount: 2, lastActivityAt: 100 }
+                },
+                {
+                  id: 'ws-idle',
+                  kind: 'worktree',
+                  name: 'old-branch',
+                  project: 'orca-discord-presence',
+                  path: '/secret/disk/path/old',
+                  branch: 'old',
+                  hostId: 'local',
+                  status: { state: 'inactive', unread: false, terminalCount: 0, lastActivityAt: null }
+                }
+              ],
+              truncated: false
+            }
+          }
+          if (method === 'agents.list') {
+            if (args?.workspaceId === 'ws-active') {
+              return {
+                agents: [
+                  {
+                    terminalId: 'term-bg-1',
+                    sessionId: 'sess-1',
+                    agent: 'claude',
+                    state: 'working',
+                    stateStartedAt: Date.now() - 5_000,
+                    task: { title: 'Implement v1.2.0' }
+                  },
+                  {
+                    terminalId: null,
+                    sessionId: 'sess-restored',
+                    agent: 'codex',
+                    state: 'waiting',
+                    stateStartedAt: Date.now() - 2_000
+                  }
+                ]
+              }
+            }
+            if (args?.workspaceId === 'ws-unfocused') {
+              return {
+                agents: [
+                  { terminalId: 'term-unfocused', agent: 'antigravity', state: 'working', stateStartedAt: Date.now() }
+                ]
+              }
+            }
+            return { agents: [] }
+          }
+          if (method === 'workspace.readContext') {
+            return {
+              workspaceId: 'ws-active',
+              displayName: 'feat-v12',
+              branch: 'feat/v12',
+              terminals: [{ id: 'term-bg-1' }]
+            }
+          }
+          if (method === 'terminal.focus') {
+            focusedTerminals.push(String(args?.terminalId ?? ''))
+            return { focused: true }
+          }
+          if (method === 'agent.listSessions') {
+            listSessionsCalls += 1
+            return {
+              sessions: [
+                {
+                  sessionId: 'sess-1',
+                  agent: 'claude',
+                  title: 'PRIVATE PROMPT TEXT MUST NEVER APPEAR',
+                  workspaceId: 'ws-active',
+                  hostId: 'local',
+                  branch: 'feat/v12',
+                  createdAt: 10,
+                  updatedAt: 20,
+                  messageCount: 38,
+                  totalTokens: 142_000,
+                  running: true
+                }
+              ],
+              truncated: false
+            }
+          }
+          return null
+        }
+      }
+    }
+    await activate(orca)
+  }
+
+  try {
+    // 1. Default settings: agent.listSessions must NEVER be called!
+    await runScenario({})
+    expect(listSessionsCalls).toBe(0)
+    // Only ws-active was queried (ws-idle skipped).
+    const agentListCalls = hostCalls.filter(([m]) => m === 'agents.list')
+    expect(agentListCalls).toEqual([['agents.list', { workspaceId: 'ws-active' }]])
+
+    const snap = (await panelHandlers.get('presence.snapshot')?.({})) as PresencePanelSnapshot
+    expect(snap.agents).toHaveLength(2)
+    expect(snap.leaderboards).toEqual({ enabled: false, rows: [] })
+    expect(JSON.stringify(snap)).not.toContain('/secret/disk/path')
+    expect(JSON.stringify(snap)).not.toContain('secret-host.corp')
+    expect(JSON.stringify(snap)).not.toContain('term-bg-1')
+
+    // Click-to-focus resolves opaque handle to real terminalId; null-terminal row has no focusKey.
+    const clickable = snap.agents.find((a) => a.kind === 'claude')
+    const unclickable = snap.agents.find((a) => a.kind === 'codex')
+    expect(clickable?.focusKey).toBeDefined()
+    expect(clickable?.taskTitle).toBe('Implement v1.2.0')
+    expect(unclickable?.focusKey).toBeUndefined()
+    const focusRes = (await panelHandlers.get('presence.focus-agent')?.({ key: clickable?.focusKey })) as {
+      ok: boolean
+      focused: boolean
+    }
+    expect(focusRes).toEqual({ ok: true, focused: true })
+    expect(focusedTerminals).toEqual(['term-bg-1'])
+
+    // Unfocused agent.status.changed queries agents.list({ workspaceId: workspaceListId }).
+    await eventHandlers.get('agent.status.changed')?.({
+      workspaceId: 'legacy-unfocused',
+      workspaceListId: 'ws-unfocused',
+      paneKey: 'p1',
+      terminalId: 'term-unfocused',
+      state: 'working',
+      receivedAt: Date.now()
+    })
+    expect(hostCalls).toContainEqual(['agents.list', { workspaceId: 'ws-unfocused' }])
+    await deactivate()
+
+    // 2. With showLeaderboards: true, agent.listSessions runs, aggregates safely, and strips session.title!
+    await runScenario({ showLeaderboards: true })
+    expect(listSessionsCalls).toBe(1)
+    const lbSnap = (await panelHandlers.get('presence.snapshot')?.({})) as PresencePanelSnapshot
+    expect(lbSnap.leaderboards).toEqual({
+      enabled: true,
+      rows: [{ name: 'feat-v12', messages: 38, tokens: 142_000 }]
+    })
+    expect(JSON.stringify(lbSnap)).not.toContain('PRIVATE PROMPT TEXT')
+    await deactivate()
+  } finally {
+    await deactivate()
+    if (previous === undefined) {
+      delete process.env.ORCA_PRESENCE_LOG_FILE
+    } else {
+      process.env.ORCA_PRESENCE_LOG_FILE = previous
+    }
+    rmSync(dir, { recursive: true, force: true })
   }
 })

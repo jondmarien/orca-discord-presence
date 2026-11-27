@@ -4,7 +4,7 @@
   "execution": "trusted-worker",
   "id": "discord-presence",
   "name": "Rich Presence for Discord",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "icon": "assets/icon.png",
   "cover": {
     "path": "assets/cover.webp",
@@ -31,7 +31,7 @@
   "homepage": "https://github.com/jondmarien/orca-discord-presence",
   "license": "MIT",
   "engines": {
-    "orca": ">=1.4.248"
+    "orca": ">=1.4.278"
   },
   "pluginApi": 1,
   "main": "dist/main.js",
@@ -40,7 +40,11 @@
       {
         "id": "presence",
         "title": "Rich Presence",
-        "icon": "bot",
+        "icon": {
+          "path": "M4 17.5C5.2 12 8 7.2 12 5C11.3 9.2 12.6 12.5 15.5 15M3 18.5C6.5 16.5 10.5 16.5 14 18.5C16.5 19.8 19 19.5 21 18.2M15.5 8.5A4.2 4.2 0 0 1 18.5 12.5M17.2 5.2A8 8 0 0 1 21.5 12.5",
+          "viewBox": "0 0 24 24",
+          "mode": "stroke"
+        },
         "entry": "panel/index.html"
       }
     ],
@@ -274,9 +278,49 @@
         "default": false
       },
       {
+        "key": "showProject",
+        "title": "Show project name",
+        "description": "Prefix the workspace name with its project/repository name. Needs detail level Workspace or Full.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "showSessionStats",
+        "title": "Show session stats",
+        "description": "Include local agent token or message counts on Discord. Off by default; reads session history only when enabled.",
+        "type": "string",
+        "default": "off",
+        "enum": [
+          "off",
+          "tokens",
+          "messages",
+          "both"
+        ],
+        "enumLabels": [
+          "Off",
+          "Token count",
+          "Message count",
+          "Tokens and messages"
+        ]
+      },
+      {
+        "key": "showLeaderboards",
+        "title": "Show Leaderboards panel card",
+        "description": "Show a local workspace message and token leaderboard in the panel. Panel-only; never sent to Discord.",
+        "type": "boolean",
+        "default": false
+      },
+      {
         "key": "hiddenPanels",
         "title": "Hidden panels",
-        "description": "Panel sections to hide, comma separated: preview, strip, tiles, sink, client, detail, agents, toggles, actions, logs. The eye buttons in the panel edit this.",
+        "description": "Panel sections to hide, comma separated: preview, strip, tiles, sink, client, detail, agents, toggles, actions, leaderboards, logs. The eye buttons in the panel edit this.",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "key": "panelOrder",
+        "title": "Panel section order",
+        "description": "Custom order of panel sections, comma separated: actions, preview, strip, tiles, sink, client, detail, agents, toggles, leaderboards, logs. Empty uses the default order.",
         "type": "string",
         "default": ""
       }
@@ -298,7 +342,13 @@
       "kind": "workspace:read"
     },
     {
+      "kind": "workspace:write"
+    },
+    {
       "kind": "agent:read"
+    },
+    {
+      "kind": "history:read"
     },
     {
       "kind": "storage:own"

@@ -321,3 +321,70 @@ test('session mode without a session omits timestamps', () => {
   const activity = buildActivity(SNAPSHOT, settingsWith({ elapsedMode: 'session' }), NOW_MS)
   expect(activity?.timestamps).toBeUndefined()
 })
+
+test('showProject prefixes workspace at workspace/full and never leaks at generic', () => {
+  const withProject = { ...SNAPSHOT, projectName: 'acme-core', displayName: 'feat-auth' }
+  expect(
+    buildActivity(withProject, settingsWith({ detailLevel: 'generic', showProject: true }), NOW_MS)?.details
+  ).toBe('Working in Orca')
+  expect(
+    buildActivity(withProject, settingsWith({ detailLevel: 'workspace', showProject: false }), NOW_MS)?.details
+  ).toBe('feat-auth')
+  expect(
+    buildActivity(withProject, settingsWith({ detailLevel: 'workspace', showProject: true }), NOW_MS)?.details
+  ).toBe('acme-core / feat-auth')
+  expect(
+    buildActivity(withProject, settingsWith({ detailLevel: 'full', showProject: true, showBranch: true }), NOW_MS)
+      ?.details
+  ).toBe('acme-core / feat-auth — feat/refund-flow')
+  // Identical project and workspace name does not repeat.
+  expect(
+    buildActivity(
+      { ...SNAPSHOT, projectName: 'acme-payments', displayName: 'acme-payments' },
+      settingsWith({ detailLevel: 'workspace', showProject: true }),
+      NOW_MS
+    )?.details
+  ).toBe('acme-payments')
+})
+
+test('showSessionStats formats tokens and messages compactly and omits zeros', () => {
+  const statsSnap = { ...SNAPSHOT, sessionTokens: 142_300, sessionMessages: 38 }
+  expect(
+    buildActivity(statsSnap, settingsWith({ showSessionStats: 'off' }), NOW_MS)?.state
+  ).toBe('working')
+  expect(
+    buildActivity(statsSnap, settingsWith({ showSessionStats: 'tokens' }), NOW_MS)?.state
+  ).toBe('working · 142k tokens')
+  expect(
+    buildActivity(statsSnap, settingsWith({ showSessionStats: 'messages' }), NOW_MS)?.state
+  ).toBe('working · 38 msgs')
+  expect(
+    buildActivity(statsSnap, settingsWith({ showSessionStats: 'both' }), NOW_MS)?.state
+  ).toBe('working · 142k tokens · 38 msgs')
+  expect(
+    buildActivity({ ...SNAPSHOT, sessionTokens: 0, sessionMessages: 1 }, settingsWith({ showSessionStats: 'both' }), NOW_MS)?.state
+  ).toBe('working · 1 msg')
+})
+
+test('taskTitle and outcome never leak into Discord activity or agent summary', () => {
+  const table = createAgentTable({ now: () => 1_000_000 })
+  table.upsert({
+    workspaceId: 'w',
+    paneKey: 'p',
+    terminalId: 't1',
+    state: 'done',
+    receivedAt: 1_000_000,
+    kind: 'claude',
+    taskTitle: 'Confidential task: prod migration',
+    outcome: 'failure'
+  })
+  const summary = table.summarize()
+  const activity = buildActivity(
+    { ...SNAPSHOT, ...summary },
+    settingsWith({ detailLevel: 'full', showAgentCount: true }),
+    NOW_MS
+  )
+  expect(JSON.stringify(activity)).not.toContain('Confidential task')
+  expect(JSON.stringify(activity)).not.toContain('failure')
+  expect(JSON.stringify(summary)).not.toContain('Confidential task')
+})

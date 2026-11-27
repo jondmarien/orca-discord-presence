@@ -11,6 +11,7 @@
  */
 
 import { canonicalizeAgentState } from './agent-state'
+import { formatCompactCount } from './leaderboards'
 import type { PresenceSettings } from './settings'
 
 /**
@@ -27,6 +28,8 @@ const DISCORD_TEXT_MAX = 128
 export type PresenceSnapshot = {
   /** Workspace display name from `workspace.readContext`. */
   displayName?: string
+  /** Repository / project name from `workspace.list`. Used only when `showProject` is on and detail is not `generic`. */
+  projectName?: string
   /** Current git branch, when the host provides one. */
   branch?: string
   /** Number of terminals in the workspace context (`terminals.length`). */
@@ -50,6 +53,10 @@ export type PresenceSnapshot = {
    * `showAgentCount` is on.
    */
   agentCount?: number
+  /** Active local agent session token count (used only when `showSessionStats` asks for tokens). */
+  sessionTokens?: number
+  /** Active local agent session message count (used only when `showSessionStats` asks for messages). */
+  sessionMessages?: number
 }
 
 /**
@@ -156,7 +163,14 @@ function buildDetails(snapshot: PresenceSnapshot, settings: PresenceSettings): s
   if (settings.detailLevel === 'generic') {
     return 'Working in Orca'
   }
-  const name = snapshot.displayName || 'Orca'
+  const project = settings.showProject && snapshot.projectName ? snapshot.projectName.trim() : ''
+  const workspace = snapshot.displayName?.trim() || ''
+  let name: string
+  if (project && workspace && project !== workspace) {
+    name = `${project} / ${workspace}`
+  } else {
+    name = workspace || project || 'Orca'
+  }
   if (settings.detailLevel === 'workspace' || !settings.showBranch || !snapshot.branch) {
     return name
   }
@@ -164,7 +178,7 @@ function buildDetails(snapshot: PresenceSnapshot, settings: PresenceSettings): s
 }
 
 /**
- * Build the optional `state` line (agent · terminals · machine).
+ * Build the optional `state` line (agent · terminals · session stats · machine).
  *
  * Machine identity is workspace-level information: never at `generic`,
  * even if `showMachine` is true.
@@ -179,6 +193,20 @@ function buildState(snapshot: PresenceSnapshot, settings: PresenceSettings): str
   }
   if (settings.showTerminals && typeof snapshot.terminalCount === 'number') {
     parts.push(`${snapshot.terminalCount} terminal${snapshot.terminalCount === 1 ? '' : 's'}`)
+  }
+  if (
+    (settings.showSessionStats === 'tokens' || settings.showSessionStats === 'both') &&
+    typeof snapshot.sessionTokens === 'number' &&
+    snapshot.sessionTokens > 0
+  ) {
+    parts.push(`${formatCompactCount(snapshot.sessionTokens)} tokens`)
+  }
+  if (
+    (settings.showSessionStats === 'messages' || settings.showSessionStats === 'both') &&
+    typeof snapshot.sessionMessages === 'number' &&
+    snapshot.sessionMessages > 0
+  ) {
+    parts.push(`${formatCompactCount(snapshot.sessionMessages)} ${snapshot.sessionMessages === 1 ? 'msg' : 'msgs'}`)
   }
   // Machine identity is workspace-level information: never at 'generic'.
   if (settings.showMachine && settings.detailLevel !== 'generic') {

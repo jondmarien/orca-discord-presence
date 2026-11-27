@@ -19,11 +19,12 @@
   <body>
     <p class="note hidden" id="static-note"></p>
 
-    <div id="app" class="frame">
+    <div id="app" class="frame" data-view="full">
       <header class="row between" id="status-bar">
         <div class="row">
           <span class="dot" id="dot" aria-hidden="true"></span>
           <b id="indicator-label">Waiting for worker snapshot</b>
+          <span class="host-badge hidden" id="host-badge"></span>
         </div>
         <div class="row">
           <div class="seg sm" id="view-switch" role="group" aria-label="Panel view">
@@ -44,14 +45,7 @@
         <button type="button" class="btn sm" id="tray-show-all">Show all</button>
         <div class="row g6" id="hidden-chips"></div>
       </div>
-
-      <div class="row g6" id="actions-row">
-        <button type="button" class="btn" id="btn-reload">Reload</button>
-        <button type="button" class="btn" id="btn-clear">Clear</button>
-        <button type="button" class="btn" id="btn-toggle">Pause</button>
-        <button type="button" class="btn push" id="btn-status">Status</button>
-        <button type="button" class="eye-btn" id="eye-actions" data-hide="actions" aria-pressed="false" aria-label="Hide actions" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      </div>
+      <div class="sr-only" id="order-live" aria-live="polite"></div>
 
       <section class="hero hidden" id="min-hero" data-state="idle" aria-label="Current state">
         <div class="row"><span class="pulse" aria-hidden="true"></span><span class="live">Live on Discord</span></div>
@@ -61,90 +55,152 @@
         <img id="min-img" src="../assets/state-idle.png" alt="" width="132" height="132" />
       </section>
 
-      <div class="col" id="full-a">
-      <section class="dcard" aria-label="Discord profile preview">
-        <div class="row between head"><div class="kicker">Playing a game</div><button type="button" class="eye-btn" id="eye-preview" data-hide="preview" aria-pressed="false" aria-label="Hide Discord preview" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-        <div class="row top">
-          <img id="dcard-img" src="../assets/state-idle.png" alt="" width="64" height="64" />
-          <div class="dtext">
-            <div class="t1">Orca</div>
-            <div class="t2" id="dcard-details">Waiting for first update</div>
-            <div class="t3" id="dcard-state"></div>
-            <div class="t4 hidden" id="dcard-timer"></div>
+      <div class="col" id="sections">
+        <div class="row g6 full-only" id="actions-row" data-block="actions">
+          <button type="button" class="drag-handle" data-drag-handle="actions" aria-label="Reorder Actions" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button>
+          <button type="button" class="btn" id="btn-reload">Reload</button>
+          <button type="button" class="btn" id="btn-clear">Clear</button>
+          <button type="button" class="btn" id="btn-toggle">Pause</button>
+          <button type="button" class="btn push" id="btn-status">Status</button>
+          <button type="button" class="eye-btn" id="eye-actions" data-hide="actions" aria-pressed="false" aria-label="Hide actions" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        </div>
+
+        <section class="dcard full-only" id="preview-card" data-block="preview" aria-label="Discord profile preview">
+          <div class="row between head">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="preview" aria-label="Reorder Discord preview" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><div class="kicker">Playing a game</div></span>
+            <button type="button" class="eye-btn" id="eye-preview" data-hide="preview" aria-pressed="false" aria-label="Hide Discord preview" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
           </div>
+          <div class="row top">
+            <img id="dcard-img" src="../assets/state-idle.png" alt="" width="64" height="64" />
+            <div class="dtext">
+              <div class="t1">Orca</div>
+              <div class="t2" id="dcard-details">Waiting for first update</div>
+              <div class="t3" id="dcard-state"></div>
+              <div class="t4 hidden" id="dcard-timer"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card" id="strip-card" data-block="strip" aria-label="Last 30 minutes">
+          <div class="row between mb6">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="strip" aria-label="Reorder Last 30 min" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Last 30 min</span></span>
+            <span class="row g6"><span class="muted small">now →</span><button type="button" class="eye-btn" id="eye-strip" data-hide="strip" aria-pressed="false" aria-label="Hide Last 30 min" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span>
+          </div>
+          <div class="strip" id="strip"></div>
+          <div class="leg">
+            <span><i class="dot" data-state="working"></i>working</span>
+            <span><i class="dot" data-state="waiting"></i>waiting</span>
+            <span><i class="dot" data-state="blocked"></i>blocked</span>
+            <span><i class="dot" data-state="completed"></i>completed</span>
+            <span><i class="dot" data-state="idle"></i>idle</span>
+          </div>
+        </section>
+
+        <section class="card tile full-only" id="tile-agents-card" data-block="tiles" aria-label="Agents summary">
+          <div class="row between">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="tiles" aria-label="Reorder Agents tile" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><div class="l">Agents</div></span>
+            <button type="button" class="eye-btn" id="eye-tiles" data-hide="tiles" aria-pressed="false" aria-label="Hide Agents tile" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="tile-body">
+            <div class="v" id="tile-agents">0</div>
+            <div class="mix" id="tile-mix"></div>
+          </div>
+        </section>
+
+        <section class="card tile full-only" id="tile-sink-card" data-block="sink" aria-label="Sending to">
+          <div class="row between">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="sink" aria-label="Reorder Sending to" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><div class="l">Sending to</div></span>
+            <button type="button" class="eye-btn" id="eye-sink" data-hide="sink" aria-pressed="false" aria-label="Hide Sending to" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="tile-body">
+            <div class="v" id="tile-sink">Off</div>
+            <div class="l" id="tile-sink-sub">Not connected</div>
+          </div>
+        </section>
+
+        <section class="card hidden full-only" id="client-card" data-block="client" aria-label="Discord client">
+          <div class="row between mb6">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="client" aria-label="Reorder Discord client" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Discord client</span></span>
+            <button type="button" class="eye-btn" id="eye-client" data-hide="client" aria-pressed="false" aria-label="Hide Discord client" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <select class="select" id="client-select" aria-label="Discord client"></select>
+          <p class="muted small hidden" id="client-note"></p>
+        </section>
+
+        <section class="card" id="detail-card" data-block="detail" aria-label="Detail level">
+          <div class="row between mb6">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="detail" aria-label="Reorder Detail level" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Detail level</span></span>
+            <button type="button" class="eye-btn" id="eye-detail" data-hide="detail" aria-pressed="false" aria-label="Hide Detail level" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="seg" id="detail-seg" role="group" aria-label="Detail level"></div>
+        </section>
+
+        <section class="card col full-only" id="agents-card" data-block="agents" aria-label="Agents">
+          <div class="row between">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="agents" aria-label="Reorder Agents" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Agents</span></span>
+            <button type="button" class="eye-btn" id="eye-agents" data-hide="agents" aria-pressed="false" aria-label="Hide Agents" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="col g6" id="agents-list"></div>
+          <div class="muted small" id="agents-empty">No agents yet</div>
+        </section>
+
+        <section class="card col g7 full-only" id="toggles-card" data-block="toggles" aria-label="Show on Discord">
+          <div class="row between">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="toggles" aria-label="Reorder Show on Discord" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Show on Discord</span></span>
+            <button type="button" class="eye-btn" id="eye-toggles" data-hide="toggles" aria-pressed="false" aria-label="Hide Show on Discord" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="row between"><span>Agent state</span><input type="checkbox" class="sw" id="sw-showAgentState" role="switch" /></div>
+          <div class="row between"><span>Agent count</span><input type="checkbox" class="sw" id="sw-showAgentCount" role="switch" /></div>
+          <div class="row between"><span>Elapsed timer</span><input type="checkbox" class="sw" id="sw-showElapsed" role="switch" /></div>
+          <div class="row between"><span>Project name</span><input type="checkbox" class="sw" id="sw-showProject" role="switch" /></div>
+          <div class="row between"><span>Branch</span><input type="checkbox" class="sw" id="sw-showBranch" role="switch" /></div>
+          <div class="row between"><span>Terminal count</span><input type="checkbox" class="sw" id="sw-showTerminals" role="switch" /></div>
+          <div class="row between"><span>Machine name</span><input type="checkbox" class="sw" id="sw-showMachine" role="switch" /></div>
+          <div class="row between">
+            <span>Session stats</span>
+            <select class="select sm" id="sel-showSessionStats" aria-label="Show session stats">
+              <option value="off">Off</option>
+              <option value="tokens">Tokens</option>
+              <option value="messages">Messages</option>
+              <option value="both">Both</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="card col g6 full-only feature-disabled" id="leaderboards-card" data-block="leaderboards" aria-label="Leaderboards">
+          <div class="row between">
+            <span class="row g4"><button type="button" class="drag-handle" data-drag-handle="leaderboards" aria-label="Reorder Leaderboards" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button><span class="h">Leaderboards</span></span>
+            <button type="button" class="eye-btn" id="eye-leaderboards" data-hide="leaderboards" aria-pressed="false" aria-label="Hide Leaderboards" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <div class="lb-head" id="lb-head">
+            <span class="lb-col-ws">Workspace</span>
+            <button type="button" class="lb-sort" id="lb-sort-messages" data-lb-sort="messages" aria-pressed="false">Messages</button>
+            <button type="button" class="lb-sort on" id="lb-sort-tokens" data-lb-sort="tokens" aria-pressed="true">Tokens</button>
+          </div>
+          <div class="col g6" id="lb-rows"></div>
+          <div class="muted small" id="lb-empty">No local session history yet</div>
+          <div class="muted small lb-caption">Local &amp; WSL history</div>
+        </section>
+
+        <div class="logs-box full-only" id="logs-box" data-block="logs">
+          <div class="logs-actions">
+            <button type="button" class="drag-handle" data-drag-handle="logs" aria-label="Reorder Logs" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown" title="Drag to reorder · Alt+↑/↓"><svg viewBox="0 0 12 16" width="10" height="14" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="3" r="1.2"/><circle cx="8.5" cy="3" r="1.2"/><circle cx="3.5" cy="8" r="1.2"/><circle cx="8.5" cy="8" r="1.2"/><circle cx="3.5" cy="13" r="1.2"/><circle cx="8.5" cy="13" r="1.2"/></svg></button>
+            <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <details class="logs">
+            <summary id="logs-summary">Logs</summary>
+            <div class="log-toolbar">
+              <button type="button" class="btn" id="btn-log-clear">Clear view</button>
+              <button type="button" class="btn" id="btn-log-copy">Copy</button>
+              <button type="button" class="btn hidden" id="btn-log-save">Save</button>
+            </div>
+            <pre class="log" id="log-view">No log lines yet. Click Status to generate some.</pre>
+          </details>
         </div>
-      </section>
       </div>
 
-      <section class="card" id="strip-card" aria-label="Last 30 minutes">
-        <div class="row between mb6">
-          <span class="h">Last 30 min</span>
-          <span class="row g6"><span class="muted small">now →</span><button type="button" class="eye-btn" id="eye-strip" data-hide="strip" aria-pressed="false" aria-label="Hide Last 30 min" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span>
-        </div>
-        <div class="strip" id="strip"></div>
-        <div class="leg">
-          <span><i class="dot" data-state="working"></i>working</span>
-          <span><i class="dot" data-state="waiting"></i>waiting</span>
-          <span><i class="dot" data-state="blocked"></i>blocked</span>
-          <span><i class="dot" data-state="completed"></i>completed</span>
-          <span><i class="dot" data-state="idle"></i>idle</span>
-        </div>
-      </section>
-
-      <div class="tiles" id="full-b">
-        <div class="card tile" id="tile-agents-card">
-          <div class="row between"><div class="l">Agents</div><button type="button" class="eye-btn" id="eye-tiles" data-hide="tiles" aria-pressed="false" aria-label="Hide Agents tile" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-          <div class="v" id="tile-agents">0</div>
-          <div class="mix" id="tile-mix"></div>
-        </div>
-        <div class="card tile" id="tile-sink-card">
-          <div class="row between"><div class="l">Sending to</div><button type="button" class="eye-btn" id="eye-sink" data-hide="sink" aria-pressed="false" aria-label="Hide Sending to" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-          <div class="v" id="tile-sink">Off</div>
-          <div class="l" id="tile-sink-sub">Not connected</div>
-        </div>
-      </div>
-
-      <div class="col" id="full-d">
-      <section class="card hidden" id="client-card" aria-label="Discord client">
-        <div class="row between mb6"><span class="h">Discord client</span><button type="button" class="eye-btn" id="eye-client" data-hide="client" aria-pressed="false" aria-label="Hide Discord client" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-        <select class="select" id="client-select" aria-label="Discord client"></select>
-        <p class="muted small hidden" id="client-note"></p>
-      </section>
-      </div>
-
-      <section class="card" id="detail-card" aria-label="Detail level">
-        <div class="row between mb6"><span class="h">Detail level</span><button type="button" class="eye-btn" id="eye-detail" data-hide="detail" aria-pressed="false" aria-label="Hide Detail level" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-        <div class="seg" id="detail-seg" role="group" aria-label="Detail level"></div>
-      </section>
-
-      <div class="col" id="full-c">
-      <section class="card col" id="agents-card" aria-label="Agents">
-        <div class="row between"><span class="h">Agents</span><button type="button" class="eye-btn" id="eye-agents" data-hide="agents" aria-pressed="false" aria-label="Hide Agents" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-        <div class="col g6" id="agents-list"></div>
-        <div class="muted small" id="agents-empty">No agents yet</div>
-      </section>
-
-      <section class="card col g7" id="toggles-card" aria-label="Show on Discord">
-        <div class="row between"><span class="h">Show on Discord</span><button type="button" class="eye-btn" id="eye-toggles" data-hide="toggles" aria-pressed="false" aria-label="Hide Show on Discord" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
-        <div class="row between"><span>Agent state</span><input type="checkbox" class="sw" id="sw-showAgentState" role="switch" /></div>
-        <div class="row between"><span>Agent count</span><input type="checkbox" class="sw" id="sw-showAgentCount" role="switch" /></div>
-        <div class="row between"><span>Elapsed timer</span><input type="checkbox" class="sw" id="sw-showElapsed" role="switch" /></div>
-        <div class="row between"><span>Branch</span><input type="checkbox" class="sw" id="sw-showBranch" role="switch" /></div>
-        <div class="row between"><span>Terminal count</span><input type="checkbox" class="sw" id="sw-showTerminals" role="switch" /></div>
-        <div class="row between"><span>Machine name</span><input type="checkbox" class="sw" id="sw-showMachine" role="switch" /></div>
-      </section>
-
-      <div class="logs-box" id="logs-box">
-        <button type="button" class="eye-btn" id="eye-logs" data-hide="logs" aria-pressed="false" aria-label="Hide Logs" title="Hide"><svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      <details class="logs">
-        <summary id="logs-summary">Logs</summary>
-        <div class="log-toolbar">
-          <button type="button" class="btn" id="btn-log-clear">Clear view</button>
-          <button type="button" class="btn" id="btn-log-copy">Copy</button>
-        </div>
-        <pre class="log" id="log-view">No log lines yet. Click Status to generate some.</pre>
-      </details>
-      </div>
+      <div class="order-footer hidden" id="order-footer">
+        <button type="button" class="btn sm ghost" id="btn-reset-order">Reset layout</button>
       </div>
     </div>
 

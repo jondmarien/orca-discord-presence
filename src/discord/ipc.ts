@@ -117,8 +117,8 @@ export function discordIpcCandidates({ platform, env, uid }: IpcPathInput): stri
       (_unused, index) => `\\\\?\\pipe\\discord-ipc-${index}`
     )
   }
-  // Why: the plugin worker env allowlist drops XDG_RUNTIME_DIR, so the
-  // conventional Linux location has to be rebuilt from the uid.
+  // Why: Orca >=1.4.262 forwards XDG_RUNTIME_DIR, while `/run/user/<uid>`
+  // stays as a defensive fallback for older hosts or minimal environments.
   const prefixes = [
     env.XDG_RUNTIME_DIR,
     typeof uid === 'number' ? `/run/user/${uid}` : undefined,

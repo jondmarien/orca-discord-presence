@@ -55,22 +55,18 @@ Until these land, presence is workspace and agent status only.
 
 ---
 
-## Next release: 1.1.0
-
-Once [stablyai/orca#38406](https://github.com/stablyai/orca/pull/38406) merges and ships in an Orca release, build 1.1.0: the question state plus the held Minimal-view screenshot on `jondmarien/minimal-shot`.
-
----
-
 ## Checklist
 
 - [x] Companion bridge, default off, OS-agnostic ([#6](https://github.com/jondmarien/orca-discord-presence/pull/6))
 - [x] Clear, opt-in button, configure, multi-agent summary ([#15](https://github.com/jondmarien/orca-discord-presence/issues/15))
 - [x] Manifest v2, stock `workspace.*` events and `agents.list`, native settings, bridge token in secrets, panel on `plugin.request` / `panels.post`
-- [x] Listing on onorca.dev
-- [ ] Question state (needs [stablyai/orca#38406](https://github.com/stablyai/orca/pull/38406)), ships in 1.1.0
+- [x] Listing on orca.dev
+- [x] Session elapsed timer and status bar item (v1.0.2) (spec: `docs/superpowers/specs/2026-11-06-session-timer-and-status-bar-design.md`)
+- [x] Fix overlapping Discord connects that stalled SET_ACTIVITY; non-blocking panel Refresh; "updates failing" state (v1.0.3)
+- [x] Responsive panel with hide/show section tray and theme sync (v1.1.0 / v1.1.1)
+- [x] Custom inline SVG panel icon (resolved in Orca `1.4.277`, [stablyai/orca#28300](https://github.com/stablyai/orca/issues/28300)), cross-workspace agents, draggable panel blocks, click-to-focus agent rows, opt-in session stats, and optional Leaderboards card (v1.2.0)
+- [ ] Question state (needs [stablyai/orca#38406](https://github.com/stablyai/orca/pull/38406))
 - [ ] Focus (needs [stablyai/orca#38415](https://github.com/stablyai/orca/pull/38415)) — [#7](https://github.com/jondmarien/orca-discord-presence/issues/7)
 - [ ] Paired panels (needs [stablyai/orca#38342](https://github.com/stablyai/orca/issues/38342))
 - [ ] Client relay (needs [stablyai/orca#38343](https://github.com/stablyai/orca/issues/38343))
-- [x] Session elapsed timer and status bar item (v1.0.2) (spec: `docs/superpowers/specs/2026-11-06-session-timer-and-status-bar-design.md`)
-- [x] Fix overlapping Discord connects that stalled SET_ACTIVITY; non-blocking panel Refresh; "updates failing" state (v1.0.3)
 - [ ] Editor gutter icon with hover (needs a new Orca editor decoration API; no upstream issue yet)

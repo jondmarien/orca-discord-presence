@@ -10,13 +10,22 @@ Thanks for helping. Bug reports, fixes and ideas are all welcome.
 
 ## Setup
 
-You need [Bun](https://bun.sh) and, for a manual check, the Orca desktop app (`>=1.4.248`) with Discord desktop running.
+You need [Bun](https://bun.sh) and, for a manual check, the Orca desktop app (`>=1.4.278`) with Discord desktop running.
 
 ```bash
 bun install
 bun test
 bun run typecheck
 bun run build
+```
+
+When the `orca` CLI is installed locally, you can also generate author typings, validate/lint the manifest, and capture panel screenshots:
+
+```bash
+bun run orca:types      # orca plugin types . (writes gitignored .orca/types/)
+bun run orca:validate   # orca plugin validate . --json
+bun run orca:check      # orca plugin check . --json
+orca plugin dev watch --shot
 ```
 
 The tests use a fake Discord IPC server, so Discord does not need to be running for them.
@@ -63,7 +72,7 @@ This plugin sends data to Discord, so privacy rules are strict. [docs/privacy.md
 
 1. Bump the version in `package.json`, `orca-plugin.json`, `src/version.ts` and the README badge, then rebuild.
 2. Move the `Unreleased` changelog entries under the new version.
-3. Merge to `main`, then tag the merge commit `vX.Y.Z`. The `release.yml` workflow checks that the versions match and creates the GitHub Release. onorca.dev picks up the new tag on its own.
+3. Merge to `main`, then tag the merge commit `vX.Y.Z`. The `release.yml` workflow checks that the versions match and creates the GitHub Release. orca.dev picks up the new tag on its own.
 
 ## License
 

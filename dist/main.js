@@ -668,6 +668,9 @@ function agentSlotKey(event) {
   if (typeof event.terminalId === "string" && event.terminalId.length > 0) {
     return `t:${event.terminalId}`;
   }
+  if (typeof event.sessionId === "string" && event.sessionId.length > 0) {
+    return `s:${event.sessionId}`;
+  }
   return `p:${event.workspaceId}\x1F${event.paneKey}`;
 }
 function parseAgentStatusPayload(payload, nowMs) {
@@ -685,22 +688,46 @@ function parseAgentStatusPayload(payload, nowMs) {
     state: source.state,
     receivedAt
   };
+  if (typeof source.workspaceListId === "string" && source.workspaceListId.trim().length > 0) {
+    event.workspaceListId = source.workspaceListId.trim();
+  }
   if (typeof source.terminalId === "string" && source.terminalId.length > 0) {
     event.terminalId = source.terminalId;
+  }
+  if (typeof source.sessionId === "string" && source.sessionId.trim().length > 0) {
+    event.sessionId = source.sessionId.trim();
   }
   if (typeof source.title === "string" && source.title.trim().length > 0) {
     event.title = source.title;
   }
+  if (source.mainAgent && typeof source.mainAgent === "object") {
+    const main = source.mainAgent;
+    const statesMatch = typeof main.state !== "string" || canonicalizeAgentState(main.state) === canonicalizeAgentState(source.state);
+    if (statesMatch) {
+      if (typeof main.stateStartedAt === "number" && Number.isFinite(main.stateStartedAt)) {
+        event.stateStartedAt = main.stateStartedAt;
+      }
+      if (typeof main.outcome === "string" && main.outcome.trim().length > 0) {
+        event.outcome = main.outcome.trim();
+      }
+    }
+  }
   return event;
 }
-function parseWorkspaceRemovedId(payload) {
+function parseWorkspaceRemovedIds(payload) {
   if (!payload || typeof payload !== "object") {
-    return null;
+    return [];
   }
-  const id = payload.workspaceId;
-  return typeof id === "string" && id.trim().length > 0 ? id.trim() : null;
+  const source = payload;
+  const ids = [];
+  for (const raw of [source.workspaceId, source.workspaceListId]) {
+    if (typeof raw === "string" && raw.trim().length > 0 && !ids.includes(raw.trim())) {
+      ids.push(raw.trim());
+    }
+  }
+  return ids;
 }
-function parseAgentsList(result, nowMs) {
+function parseAgentsList(result, nowMs, workspaceListId) {
   if (!result || typeof result !== "object") {
     return [];
   }
@@ -708,13 +735,16 @@ function parseAgentsList(result, nowMs) {
   if (!Array.isArray(rows)) {
     return [];
   }
+  const normalizedWorkspaceListId = typeof workspaceListId === "string" && workspaceListId.trim().length > 0 ? workspaceListId.trim() : undefined;
   const events = [];
   for (const row of rows) {
     if (!row || typeof row !== "object") {
       continue;
     }
     const source = row;
-    if (typeof source.terminalId !== "string" || source.terminalId.length === 0) {
+    const terminalId = typeof source.terminalId === "string" && source.terminalId.length > 0 ? source.terminalId : undefined;
+    const sessionId = typeof source.sessionId === "string" && source.sessionId.trim().length > 0 ? source.sessionId.trim() : undefined;
+    if (!terminalId && !sessionId) {
       continue;
     }
     if (typeof source.state !== "string") {
@@ -725,8 +755,10 @@ function parseAgentsList(result, nowMs) {
     const finished = canonical === "done" || canonical === "idle";
     const event = {
       workspaceId: "",
+      ...normalizedWorkspaceListId ? { workspaceListId: normalizedWorkspaceListId } : {},
       paneKey: "",
-      terminalId: source.terminalId,
+      ...terminalId ? { terminalId } : {},
+      ...sessionId ? { sessionId } : {},
       state: source.state,
       receivedAt: finished ? startedAt ?? nowMs : nowMs
     };
@@ -738,6 +770,12 @@ function parseAgentsList(result, nowMs) {
     }
     if (typeof source.title === "string" && source.title.trim().length > 0) {
       event.title = source.title;
+    }
+    if (source.task && typeof source.task === "object") {
+      const taskTitle = source.task.title;
+      if (typeof taskTitle === "string" && taskTitle.trim().length > 0) {
+        event.taskTitle = taskTitle.trim();
+      }
     }
     events.push(event);
   }
@@ -827,34 +865,60 @@ function createAgentTable({
   return {
     upsert(event) {
       const canonicalState = canonicalizeAgentState(event.state);
-      const key = agentSlotKey(event);
-      const kind = event.kind ?? map.get(key)?.kind;
-      const title = event.title ?? map.get(key)?.title;
-      const previous = map.get(key);
+      let key = agentSlotKey(event);
+      let previous = map.get(key);
+      if (event.terminalId && event.sessionId) {
+        const sessionKey = `s:${event.sessionId}`;
+        const priorSession = map.get(sessionKey);
+        if (priorSession) {
+          previous = previous ?? priorSession;
+          map.delete(sessionKey);
+        }
+      } else if (!event.terminalId && event.sessionId) {
+        for (const [existingKey, existingSlot] of map) {
+          if (existingKey.startsWith("t:") && existingSlot.sessionId === event.sessionId) {
+            key = existingKey;
+            previous = existingSlot;
+            break;
+          }
+        }
+      }
+      const kind = event.kind ?? previous?.kind;
+      const title = event.title ?? previous?.title;
+      const taskTitle = event.taskTitle ?? previous?.taskTitle;
+      const sessionId = event.sessionId ?? previous?.sessionId;
+      const terminalId = event.terminalId ?? previous?.terminalId;
       const workspaceId = event.workspaceId || previous?.workspaceId || "";
-      const newerStart = event.stateStartedAt !== undefined && previous?.stateStartedAt !== undefined && event.stateStartedAt > previous.stateStartedAt;
-      const stateStartedAt = previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined && !newerStart ? previous.stateStartedAt : event.stateStartedAt ?? event.receivedAt;
+      const workspaceListId = event.workspaceListId || previous?.workspaceListId;
       const finished = canonicalState === "done" || canonicalState === "idle";
+      const newerStart = finished && event.stateStartedAt !== undefined && previous?.stateStartedAt !== undefined && event.stateStartedAt > previous.stateStartedAt;
+      const stateStartedAt = previous?.canonicalState === canonicalState && previous.stateStartedAt !== undefined && !newerStart ? previous.stateStartedAt : event.stateStartedAt ?? event.receivedAt;
       const keepReceived = finished && previous?.canonicalState === canonicalState && !newerStart;
-      const receivedAt = keepReceived ? previous.receivedAt : event.receivedAt;
+      const receivedAt = keepReceived && previous ? previous.receivedAt : event.receivedAt;
+      const outcome = finished ? event.outcome ?? (previous?.canonicalState === canonicalState ? previous.outcome : undefined) : undefined;
       map.set(key, {
         workspaceId,
-        paneKey: event.paneKey,
-        ...event.terminalId ? { terminalId: event.terminalId } : {},
+        ...workspaceListId ? { workspaceListId } : {},
+        paneKey: event.paneKey || previous?.paneKey || "",
+        ...terminalId ? { terminalId } : {},
+        ...sessionId ? { sessionId } : {},
         rawState: event.state,
         canonicalState,
         receivedAt,
         stateStartedAt,
         ...kind ? { kind } : {},
-        ...title ? { title } : {}
+        ...title ? { title } : {},
+        ...taskTitle ? { taskTitle } : {},
+        ...outcome ? { outcome } : {}
       });
       prune();
       schedulePrune();
     },
     removeWorkspace(workspaceId) {
+      const targets = new Set(Array.isArray(workspaceId) ? workspaceId : [workspaceId]);
       let changed = false;
       for (const [key, slot] of map) {
-        if (slot.workspaceId === workspaceId) {
+        if (slot.workspaceId && targets.has(slot.workspaceId) || slot.workspaceListId && targets.has(slot.workspaceListId)) {
           map.delete(key);
           changed = true;
         }
@@ -1083,6 +1147,7 @@ async function migrateSettingsToken(host, settingsToken) {
 // src/presence/settings.ts
 var DETAIL_LEVELS = ["off", "generic", "workspace", "full"];
 var ELAPSED_MODES = ["session", "state"];
+var SESSION_STATS_MODES = ["off", "tokens", "messages", "both"];
 var HIDDEN_PANEL_IDS = [
   "preview",
   "strip",
@@ -1093,6 +1158,20 @@ var HIDDEN_PANEL_IDS = [
   "agents",
   "toggles",
   "actions",
+  "leaderboards",
+  "logs"
+];
+var PANEL_ORDER_IDS = [
+  "actions",
+  "preview",
+  "strip",
+  "tiles",
+  "sink",
+  "client",
+  "detail",
+  "agents",
+  "toggles",
+  "leaderboards",
   "logs"
 ];
 var SHIPPED_APPLICATION_ID = "1545653843239374848";
@@ -1120,7 +1199,11 @@ var DEFAULT_SETTINGS = Object.freeze({
   openButtonLabel: DEFAULT_OPEN_BUTTON_LABEL,
   showAgentCount: false,
   discordClient: "auto",
-  hiddenPanels: ""
+  showProject: false,
+  showSessionStats: "off",
+  showLeaderboards: false,
+  hiddenPanels: "",
+  panelOrder: ""
 });
 var SETTING_KEYS_DECLARED = Object.keys(DEFAULT_SETTINGS).filter((key) => key !== "bridgeToken" && key !== "discordClient");
 var BOOLEAN_FIELDS = Object.keys(DEFAULT_SETTINGS).filter((key) => typeof DEFAULT_SETTINGS[key] === "boolean");
@@ -1129,6 +1212,9 @@ function isElapsedMode(value) {
 }
 function isDetailLevel(value) {
   return typeof value === "string" && DETAIL_LEVELS.includes(value);
+}
+function isSessionStatsMode(value) {
+  return typeof value === "string" && SESSION_STATS_MODES.includes(value);
 }
 function normalizeLabel(value) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().slice(0, 64) : null;
@@ -1162,6 +1248,31 @@ function normalizeHiddenPanels(value) {
   const requested = new Set(value.split(",").map((id) => id.trim()));
   return HIDDEN_PANEL_IDS.filter((id) => requested.has(id)).join(",");
 }
+function normalizePanelOrder(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const known = new Set(PANEL_ORDER_IDS);
+  const seen = new Set;
+  const ordered = [];
+  for (const part of value.split(",")) {
+    const id = part.trim();
+    if (known.has(id) && !seen.has(id)) {
+      seen.add(id);
+      ordered.push(id);
+    }
+  }
+  if (ordered.length === 0) {
+    return "";
+  }
+  for (const id of PANEL_ORDER_IDS) {
+    if (!seen.has(id)) {
+      ordered.push(id);
+    }
+  }
+  const normalized = ordered.join(",");
+  return normalized === PANEL_ORDER_IDS.join(",") ? "" : normalized;
+}
 function normalizeOpenButtonLabel(value) {
   if (typeof value !== "string") {
     return DEFAULT_OPEN_BUTTON_LABEL;
@@ -1186,6 +1297,9 @@ function normalizeSettings(raw) {
   if (isElapsedMode(source.elapsedMode)) {
     settings.elapsedMode = source.elapsedMode;
   }
+  if (isSessionStatsMode(source.showSessionStats)) {
+    settings.showSessionStats = source.showSessionStats;
+  }
   settings.applicationId = inspectApplicationId(source.applicationId, SHIPPED_APPLICATION_ID).applicationId;
   settings.machineLabel = normalizeLabel(source.machineLabel) ?? DEFAULT_SETTINGS.machineLabel;
   settings.bridgeUrl = normalizeBridgeUrl(source.bridgeUrl);
@@ -1194,9 +1308,14 @@ function normalizeSettings(raw) {
   settings.openButtonLabel = normalizeOpenButtonLabel(source.openButtonLabel === undefined ? DEFAULT_SETTINGS.openButtonLabel : source.openButtonLabel);
   settings.discordClient = typeof source.discordClient === "string" && source.discordClient.trim().length > 0 ? source.discordClient.trim().slice(0, 64) : DEFAULT_SETTINGS.discordClient;
   settings.hiddenPanels = normalizeHiddenPanels(source.hiddenPanels);
+  settings.panelOrder = normalizePanelOrder(source.panelOrder);
   return settings;
 }
-var PANEL_ONLY_KEYS = new Set(["hiddenPanels"]);
+var PANEL_ONLY_KEYS = new Set([
+  "hiddenPanels",
+  "panelOrder",
+  "showLeaderboards"
+]);
 function affectsPresence(a, b) {
   return Object.keys(DEFAULT_SETTINGS).some((key) => !PANEL_ONLY_KEYS.has(key) && a[key] !== b[key]);
 }
@@ -1304,6 +1423,193 @@ function applyConfigure(current, args) {
   return { ok: true, settings: next, changed };
 }
 
+// src/presence/leaderboards.ts
+function classifyHostKind(hostId) {
+  if (typeof hostId !== "string" || hostId.length === 0 || hostId === "local") {
+    return "local";
+  }
+  if (hostId.startsWith("ssh:")) {
+    return "ssh";
+  }
+  if (hostId.startsWith("runtime:")) {
+    return "wsl";
+  }
+  return "local";
+}
+function parseWorkspaceList(result) {
+  if (!result || typeof result !== "object") {
+    return [];
+  }
+  const rows = result.workspaces;
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  const parsed = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const source = row;
+    const id = typeof source.id === "string" ? source.id.trim() : "";
+    const name = typeof source.name === "string" ? source.name.trim() : "";
+    if (!id || !name) {
+      continue;
+    }
+    const project = typeof source.project === "string" && source.project.trim().length > 0 ? source.project.trim() : undefined;
+    const hostId = typeof source.hostId === "string" && source.hostId.length > 0 ? source.hostId : null;
+    const status = source.status && typeof source.status === "object" ? source.status : null;
+    const statusState = typeof status?.state === "string" ? status.state : undefined;
+    const terminalCount = typeof status?.terminalCount === "number" && Number.isFinite(status.terminalCount) && status.terminalCount >= 0 ? Math.floor(status.terminalCount) : 0;
+    parsed.push({
+      id,
+      name,
+      ...project ? { project } : {},
+      hostId,
+      hostKind: classifyHostKind(hostId),
+      ...statusState ? { statusState } : {},
+      terminalCount
+    });
+  }
+  return parsed;
+}
+function parseSessionsList(result) {
+  if (!result || typeof result !== "object") {
+    return [];
+  }
+  const rows = result.sessions;
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  const parsed = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const source = row;
+    const sessionId = typeof source.sessionId === "string" ? source.sessionId.trim() : "";
+    if (!sessionId) {
+      continue;
+    }
+    const workspaceId = typeof source.workspaceId === "string" && source.workspaceId.trim().length > 0 ? source.workspaceId.trim() : null;
+    const messageCount = typeof source.messageCount === "number" && Number.isFinite(source.messageCount) && source.messageCount > 0 ? Math.floor(source.messageCount) : 0;
+    const totalTokens = typeof source.totalTokens === "number" && Number.isFinite(source.totalTokens) && source.totalTokens > 0 ? Math.floor(source.totalTokens) : 0;
+    const updatedAt = typeof source.updatedAt === "number" && Number.isFinite(source.updatedAt) ? source.updatedAt : 0;
+    parsed.push({
+      sessionId,
+      workspaceId,
+      messageCount,
+      totalTokens,
+      updatedAt,
+      running: source.running === true
+    });
+  }
+  return parsed;
+}
+function formatCompactCount(count) {
+  const n = Math.max(0, Math.floor(count));
+  if (n < 1000) {
+    return String(n);
+  }
+  if (n < 1e4) {
+    const k = Math.round(n / 100) / 10;
+    return k >= 10 ? `${Math.round(k)}k` : `${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
+  }
+  if (n < 1e6) {
+    const k = Math.round(n / 1000);
+    return k >= 1000 ? "1M" : `${k}k`;
+  }
+  const m = Math.round(n / 1e5) / 10;
+  return `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+}
+function resolveActiveSessionStats(slots, sessions, focusedWorkspaceId) {
+  if (sessions.length === 0) {
+    return;
+  }
+  const bySessionId = new Map;
+  for (const session of sessions) {
+    bySessionId.set(session.sessionId, session);
+  }
+  const activeIds = new Set;
+  const focusedIds = new Set;
+  for (const slot of slots) {
+    if (typeof slot.sessionId === "string" && bySessionId.has(slot.sessionId)) {
+      activeIds.add(slot.sessionId);
+      if (focusedWorkspaceId && (slot.workspaceId === focusedWorkspaceId || slot.workspaceListId === focusedWorkspaceId)) {
+        focusedIds.add(slot.sessionId);
+      }
+    }
+  }
+  for (const session of sessions) {
+    if (session.running) {
+      activeIds.add(session.sessionId);
+      if (focusedWorkspaceId && session.workspaceId === focusedWorkspaceId) {
+        focusedIds.add(session.sessionId);
+      }
+    }
+  }
+  const sumIds = (ids) => {
+    let tokens = 0;
+    let messages = 0;
+    for (const id of ids) {
+      const s = bySessionId.get(id);
+      if (!s)
+        continue;
+      tokens += s.totalTokens;
+      messages += s.messageCount;
+    }
+    return { tokens, messages };
+  };
+  const focusedTotals = focusedIds.size > 0 ? sumIds(focusedIds) : { tokens: 0, messages: 0 };
+  const allTotals = activeIds.size > 0 ? sumIds(activeIds) : { tokens: 0, messages: 0 };
+  const tokens = focusedTotals.tokens > 0 ? focusedTotals.tokens : allTotals.tokens;
+  const messages = focusedTotals.messages > 0 ? focusedTotals.messages : allTotals.messages;
+  if (tokens <= 0 && messages <= 0) {
+    return;
+  }
+  return { tokens, messages };
+}
+function buildWorkspaceLeaderboard(sessions, workspaces, maxRows = 10) {
+  const totals = new Map;
+  for (const session of sessions) {
+    if (!session.workspaceId) {
+      continue;
+    }
+    if (session.messageCount <= 0 && session.totalTokens <= 0) {
+      continue;
+    }
+    const ws = workspaces.get(session.workspaceId);
+    if (!ws || !ws.name) {
+      continue;
+    }
+    const existing = totals.get(session.workspaceId);
+    if (existing) {
+      existing.messages += session.messageCount;
+      existing.tokens += session.totalTokens;
+    } else {
+      totals.set(session.workspaceId, {
+        name: ws.name,
+        messages: session.messageCount,
+        tokens: session.totalTokens
+      });
+    }
+  }
+  const all = [...totals.values()];
+  if (all.length === 0) {
+    return [];
+  }
+  const byTokens = [...all].sort((a, b) => b.tokens - a.tokens || b.messages - a.messages || a.name.localeCompare(b.name));
+  const byMessages = [...all].sort((a, b) => b.messages - a.messages || b.tokens - a.tokens || a.name.localeCompare(b.name));
+  const keep = new Set;
+  const half = Math.max(5, Math.ceil(maxRows / 2));
+  for (const row of byTokens.slice(0, half)) {
+    keep.add(row);
+  }
+  for (const row of byMessages.slice(0, half)) {
+    keep.add(row);
+  }
+  return [...keep].sort((a, b) => b.tokens - a.tokens || b.messages - a.messages || a.name.localeCompare(b.name)).slice(0, maxRows);
+}
+
 // src/presence/activity.ts
 var DISCORD_TEXT_MAX = 128;
 var DISCORD_ASSET_SUFFIX = "-v2";
@@ -1332,7 +1638,14 @@ function buildDetails(snapshot, settings) {
   if (settings.detailLevel === "generic") {
     return "Working in Orca";
   }
-  const name = snapshot.displayName || "Orca";
+  const project = settings.showProject && snapshot.projectName ? snapshot.projectName.trim() : "";
+  const workspace = snapshot.displayName?.trim() || "";
+  let name;
+  if (project && workspace && project !== workspace) {
+    name = `${project} / ${workspace}`;
+  } else {
+    name = workspace || project || "Orca";
+  }
   if (settings.detailLevel === "workspace" || !settings.showBranch || !snapshot.branch) {
     return name;
   }
@@ -1348,6 +1661,12 @@ function buildState(snapshot, settings) {
   }
   if (settings.showTerminals && typeof snapshot.terminalCount === "number") {
     parts.push(`${snapshot.terminalCount} terminal${snapshot.terminalCount === 1 ? "" : "s"}`);
+  }
+  if ((settings.showSessionStats === "tokens" || settings.showSessionStats === "both") && typeof snapshot.sessionTokens === "number" && snapshot.sessionTokens > 0) {
+    parts.push(`${formatCompactCount(snapshot.sessionTokens)} tokens`);
+  }
+  if ((settings.showSessionStats === "messages" || settings.showSessionStats === "both") && typeof snapshot.sessionMessages === "number" && snapshot.sessionMessages > 0) {
+    parts.push(`${formatCompactCount(snapshot.sessionMessages)} ${snapshot.sessionMessages === 1 ? "msg" : "msgs"}`);
   }
   if (settings.showMachine && settings.detailLevel !== "generic") {
     const machine = settings.machineLabel ?? snapshot.machineName;
@@ -1678,7 +1997,7 @@ function createPresenceController({
         holdClear = false;
       }
       snapshot = { ...snapshot, ...nextSnapshot };
-      if (holdClear) {
+      if (options?.silent || holdClear) {
         return;
       }
       if (!currentSettings.enabled || currentSettings.detailLevel === "off") {
@@ -1852,13 +2171,25 @@ function panelTitle(title) {
   }
   return text.length > PANEL_TITLE_MAX ? `${text.slice(0, PANEL_TITLE_MAX - 1)}…` : text;
 }
-function summarizePanelAgents(slots) {
-  return slots.map((slot) => ({
-    kind: slot.kind && slot.kind.length > 0 ? slot.kind : "agent",
-    ...panelTitle(slot.title) ? { title: panelTitle(slot.title) } : {},
-    state: slot.canonicalState,
-    sinceMs: slot.stateStartedAt ?? slot.receivedAt
-  })).sort((a, b) => AGENT_ROW_PRIORITY[b.state] - AGENT_ROW_PRIORITY[a.state] || a.sinceMs - b.sinceMs);
+function panelOutcome(outcome) {
+  return outcome === "failure" || outcome === "interruption" ? outcome : undefined;
+}
+function summarizePanelAgents(slots, options = {}) {
+  return [...slots].sort((a, b) => AGENT_ROW_PRIORITY[b.canonicalState] - AGENT_ROW_PRIORITY[a.canonicalState] || (a.stateStartedAt ?? a.receivedAt) - (b.stateStartedAt ?? b.receivedAt)).map((slot) => {
+    const title = panelTitle(slot.title);
+    const taskTitle = panelTitle(slot.taskTitle);
+    const outcome = panelOutcome(slot.outcome);
+    const focusKey = options.focusKeyOf?.(slot);
+    return {
+      kind: slot.kind && slot.kind.length > 0 ? slot.kind : "agent",
+      ...title ? { title } : {},
+      ...taskTitle && taskTitle !== title ? { taskTitle } : {},
+      state: slot.canonicalState,
+      sinceMs: slot.stateStartedAt ?? slot.receivedAt,
+      ...outcome ? { outcome } : {},
+      ...focusKey ? { focusKey } : {}
+    };
+  });
 }
 function summarizePanelActivityCard(activity) {
   if (!activity || typeof activity.details !== "string") {
@@ -1873,7 +2204,18 @@ function summarizePanelActivityCard(activity) {
   };
 }
 function buildPresencePanelSnapshot(input) {
-  const { version, status, settings, logs, timeline, agents, now = new Date } = input;
+  const {
+    version,
+    status,
+    settings,
+    logs,
+    timeline,
+    agents,
+    hostKind,
+    focusKeyOf,
+    leaderboardRows = [],
+    now = new Date
+  } = input;
   return {
     version,
     generatedAt: now.toISOString(),
@@ -1889,11 +2231,13 @@ function buildPresencePanelSnapshot(input) {
       bridgeEnabled: status.bridgeEnabled,
       debugLogging: settings.debugLogging,
       lastActivity: summarizePanelActivity(status.lastActivity),
-      logFile: status.logFile
+      logFile: status.logFile,
+      ...hostKind ? { hostKind } : {}
     },
     fields: {
       enabled: settings.enabled,
       showBranch: settings.showBranch,
+      showProject: settings.showProject,
       showAgentState: settings.showAgentState,
       showTerminals: settings.showTerminals,
       showMachine: settings.showMachine,
@@ -1902,14 +2246,21 @@ function buildPresencePanelSnapshot(input) {
       debugLogging: settings.debugLogging,
       showOpenButton: settings.showOpenButton,
       showAgentCount: settings.showAgentCount,
+      showSessionStats: settings.showSessionStats,
+      showLeaderboards: settings.showLeaderboards,
       discordClient: settings.discordClient
     },
     timeline: [...timeline],
-    agents: summarizePanelAgents(agents),
+    agents: summarizePanelAgents(agents, { focusKeyOf }),
     activityCard: summarizePanelActivityCard(status.lastActivity),
     logs: logs.map(redactPanelLogLine),
     logHint: status.logFile && status.logFile.trim() ? status.logFile : CONVENTIONAL_LOG_HINT,
-    hidden: settings.hiddenPanels ? settings.hiddenPanels.split(",") : []
+    hidden: settings.hiddenPanels ? settings.hiddenPanels.split(",") : [],
+    order: settings.panelOrder ? settings.panelOrder.split(",") : [],
+    leaderboards: {
+      enabled: settings.showLeaderboards,
+      rows: settings.showLeaderboards ? leaderboardRows.map(({ name, messages, tokens }) => ({ name, messages, tokens })) : []
+    }
   };
 }
 
@@ -2107,11 +2458,17 @@ function isState(value) {
 }
 
 // src/version.ts
-var PLUGIN_VERSION = "1.1.1";
+var PLUGIN_VERSION = "1.2.0";
 
 // src/main.ts
 var HEARTBEAT_MS = 90000;
 var DETECT_MIN_INTERVAL_MS = 60000;
+var WORKSPACE_LIST_MIN_INTERVAL_MS = 5000;
+var MAX_WORKSPACE_AGENT_FANOUT = 20;
+var WORKSPACE_AGENT_CONCURRENCY = 5;
+var STARTUP_SYNC_BUDGET_MS = 2500;
+var SESSIONS_MIN_INTERVAL_MS = 30000;
+var SESSIONS_LIST_LIMIT = 200;
 var PANEL_POST_DEBOUNCE_MS = 2000;
 var SETTINGS_CHANGE_DEBOUNCE_MS = 250;
 var TRANSMITTING_TOAST_MAX = 180;
@@ -2194,6 +2551,13 @@ var panels = null;
 var deactivated = false;
 var settingsChangeTimer = null;
 var settingsSubscription = null;
+var workspacesById = new Map;
+var sessionsCache = [];
+var focusedWorkspaceId;
+var focusedHostKind;
+var focusHandles = new Map;
+var terminalToFocusKey = new Map;
+var nextFocusHandleId = 1;
 function publicConfigureView(settings) {
   return {
     applicationId: settings.applicationId,
@@ -2208,13 +2572,30 @@ function currentPanelSnapshot() {
   if (!controller || !logRing) {
     return null;
   }
+  const currentSettings = controller.settings();
+  const focusKeyOf = (slot) => {
+    if (!slot.terminalId) {
+      return;
+    }
+    let key = terminalToFocusKey.get(slot.terminalId);
+    if (!key) {
+      key = `a${nextFocusHandleId++}`;
+      terminalToFocusKey.set(slot.terminalId, key);
+      focusHandles.set(key, slot.terminalId);
+    }
+    return key;
+  };
+  const leaderboardRows = currentSettings.showLeaderboards ? buildWorkspaceLeaderboard(sessionsCache, workspacesById) : [];
   return buildPresencePanelSnapshot({
     version: PLUGIN_VERSION,
     status: controller.status(),
-    settings: controller.settings(),
+    settings: currentSettings,
     logs: logRing.lines(),
     timeline: timeline?.slots() ?? [],
-    agents: agentTable?.slots() ?? []
+    agents: agentTable?.slots() ?? [],
+    hostKind: focusedHostKind,
+    focusKeyOf,
+    leaderboardRows
   });
 }
 function publishPanelSnapshot(mode) {
@@ -2250,6 +2631,15 @@ async function activate(orca, deps = {}) {
   const detectClients = deps.detect ?? detectDiscordClients;
   const makeDiscordClient = deps.createClient ?? createDiscordClient;
   deactivated = false;
+  workspacesById = new Map;
+  sessionsCache = [];
+  focusedWorkspaceId = undefined;
+  focusedHostKind = undefined;
+  focusHandles = new Map;
+  terminalToFocusKey = new Map;
+  nextFocusHandleId = 1;
+  let lastWorkspaceListAt = 0;
+  let lastSessionsAt = 0;
   const stored = await orca.host.call("settings.get").catch(() => ({ settings: {} }));
   const rawSettings = stored?.settings && typeof stored.settings === "object" ? stored.settings : {};
   const appId = inspectApplicationId(rawSettings.applicationId, SHIPPED_APPLICATION_ID);
@@ -2355,11 +2745,73 @@ async function activate(orca, deps = {}) {
   session.restore(storedSession?.value);
   lastStatusBar = null;
   controller = createController(settings);
+  async function syncWorkspaces(force = false) {
+    if (!orca.host.has("workspace.list")) {
+      return [...workspacesById.values()];
+    }
+    const nowMs = Date.now();
+    if (!force && lastWorkspaceListAt > 0 && nowMs - lastWorkspaceListAt < WORKSPACE_LIST_MIN_INTERVAL_MS) {
+      return [...workspacesById.values()];
+    }
+    lastWorkspaceListAt = nowMs;
+    const listed = await orca.host.call("workspace.list", { includeStatus: true }).catch(() => null);
+    if (deactivated || !listed) {
+      return [...workspacesById.values()];
+    }
+    const rows = parseWorkspaceList(listed);
+    const next = new Map;
+    for (const row of rows) {
+      next.set(row.id, row);
+    }
+    workspacesById = next;
+    return rows;
+  }
+  async function syncSessionsIfNeeded(force = false) {
+    if (settings.showSessionStats === "off" && !settings.showLeaderboards) {
+      return;
+    }
+    if (!orca.host.has("agent.listSessions")) {
+      return;
+    }
+    const nowMs = Date.now();
+    if (!force && lastSessionsAt > 0 && nowMs - lastSessionsAt < SESSIONS_MIN_INTERVAL_MS) {
+      return;
+    }
+    lastSessionsAt = nowMs;
+    const listed = await orca.host.call("agent.listSessions", { limit: SESSIONS_LIST_LIMIT }).catch(() => null);
+    if (deactivated || !listed) {
+      return;
+    }
+    sessionsCache = parseSessionsList(listed);
+    let running = 0;
+    let withTokens = 0;
+    let withMessages = 0;
+    for (const s of sessionsCache) {
+      if (s.running)
+        running += 1;
+      if (s.totalTokens > 0)
+        withTokens += 1;
+      if (s.messageCount > 0)
+        withMessages += 1;
+    }
+    diagnostics?.line("debug", "sessions.sync", {
+      count: sessionsCache.length,
+      running,
+      withTokens,
+      withMessages
+    });
+  }
   async function applySettings(nextSettings, options = {}) {
     const applicationIdChanged = nextSettings.applicationId !== settings.applicationId;
     const clientChanged = nextSettings.discordClient !== settings.discordClient;
+    const sessionStatsChanged = nextSettings.showSessionStats !== settings.showSessionStats;
+    const needsHistoryNow = nextSettings.showLeaderboards && !settings.showLeaderboards || sessionStatsChanged && nextSettings.showSessionStats !== "off";
     settings = nextSettings;
     diagnostics?.setDebugEnabled(nextSettings.debugLogging);
+    if (needsHistoryNow) {
+      await syncWorkspaces(false);
+      await syncSessionsIfNeeded(true);
+    }
     if (applicationIdChanged || clientChanged || options.rebind) {
       diagnostics?.line("info", applicationIdChanged ? "discord.app_id_rebind" : "discord.client_rebind", applicationIdChanged ? { applicationId: nextSettings.applicationId } : { client: nextSettings.discordClient });
       const userChanged = applicationIdChanged || clientChanged;
@@ -2372,6 +2824,10 @@ async function activate(orca, deps = {}) {
         await refresh(undefined, { force: true });
       }
     } else {
+      if (sessionStatsChanged && !deactivated) {
+        const activeStats = nextSettings.showSessionStats !== "off" ? resolveActiveSessionStats(agentTable?.slots() ?? [], sessionsCache, focusedWorkspaceId) : undefined;
+        await controller?.update({ sessionTokens: activeStats?.tokens, sessionMessages: activeStats?.messages }, { silent: true });
+      }
       await controller?.setSettings(nextSettings);
     }
     publishStatusBar();
@@ -2438,6 +2894,17 @@ async function activate(orca, deps = {}) {
     };
     latestSummary = summary;
     const context = options.context !== undefined ? options.context : await orca.host.call("workspace.readContext").catch(() => null);
+    const wsId = typeof context?.workspaceId === "string" && context.workspaceId.length > 0 ? context.workspaceId : undefined;
+    focusedWorkspaceId = wsId;
+    if (wsId && !workspacesById.has(wsId) || options.force || settings.showLeaderboards) {
+      await syncWorkspaces(false);
+    }
+    const wsInfo = wsId ? workspacesById.get(wsId) : undefined;
+    focusedHostKind = wsInfo?.hostKind;
+    if (settings.showSessionStats !== "off" || settings.showLeaderboards) {
+      await syncSessionsIfNeeded(false);
+    }
+    const activeStats = settings.showSessionStats !== "off" ? resolveActiveSessionStats(agentTable?.slots() ?? [], sessionsCache, wsId) : undefined;
     if (!context) {
       diagnostics?.line("debug", "refresh.minimal", {
         reason: "no workspace context",
@@ -2458,13 +2925,16 @@ async function activate(orca, deps = {}) {
       machineName: os2.hostname(),
       ...context ? {
         displayName: context.displayName,
+        projectName: wsInfo?.project,
         branch: context.branch,
         terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
-      } : { displayName: undefined, branch: undefined, terminalCount: undefined },
+      } : { displayName: undefined, projectName: undefined, branch: undefined, terminalCount: undefined },
       agentState: summary.agentState,
       stateStartedAtMs: summary.stateStartedAtMs,
       sessionStartMs: session?.startMs(),
-      agentCount: summary.agentCount
+      agentCount: summary.agentCount,
+      sessionTokens: activeStats?.tokens,
+      sessionMessages: activeStats?.messages
     }, resume ? { resume: true } : undefined);
     if (options.force) {
       await controller?.forceTransmit(resume);
@@ -2621,11 +3091,31 @@ async function activate(orca, deps = {}) {
     }
     lastPanelRefreshAt = clock;
     touchSession();
-    await syncAgentsFromList();
+    await syncAgentsFromList({ allWorkspaces: true });
+    await syncSessionsIfNeeded(true);
     redetect(true).then(() => refresh(undefined, { force: true })).catch((error) => diagnostics?.line("error", "panel.refresh_failed", {
       reason: error instanceof Error ? error.message : String(error)
     }));
     return currentPanelSnapshot();
+  });
+  panels?.handle("presence.focus-agent", async (input) => {
+    const key = input?.key;
+    if (typeof key !== "string" || key.length === 0) {
+      throw invalidParams("presence.focus-agent requires a non-empty key");
+    }
+    const terminalId = focusHandles.get(key);
+    if (!terminalId) {
+      return { ok: false, focused: false };
+    }
+    if (!orca.host.has("terminal.focus")) {
+      return { ok: false, focused: false };
+    }
+    try {
+      const result = await orca.host.call("terminal.focus", { terminalId });
+      return { ok: true, focused: Boolean(result?.focused) };
+    } catch (error) {
+      return { ok: false, focused: false, message: error instanceof Error ? error.message : String(error) };
+    }
   });
   panels?.handle("presence.run", async (input) => {
     const command = input?.command;
@@ -2642,17 +3132,60 @@ async function activate(orca, deps = {}) {
   const KIND_LOOKUP_ATTEMPTS = 5;
   const kindAttempts = new Map;
   const kindKnown = new Set;
-  async function syncAgentsFromList() {
-    if (!orca.host.has("agents.list")) {
-      return;
-    }
-    const listed = await orca.host.call("agents.list").catch(() => null);
-    for (const seeded of parseAgentsList(listed, Date.now())) {
+  function recordListedAgents(listed, workspaceListId) {
+    for (const seeded of parseAgentsList(listed, Date.now(), workspaceListId)) {
       if (seeded.terminalId && seeded.kind) {
         kindKnown.add(seeded.terminalId);
       }
       agentTable?.upsert(seeded);
     }
+  }
+  async function syncAgentsFromList(options = {}) {
+    if (!orca.host.has("agents.list")) {
+      return;
+    }
+    if (options.workspaceId) {
+      const listed = await orca.host.call("agents.list", { workspaceId: options.workspaceId }).catch(() => null);
+      recordListedAgents(listed, options.workspaceId);
+      return;
+    }
+    if (options.allWorkspaces && orca.host.has("workspace.list")) {
+      const workspaces = await syncWorkspaces(true);
+      const active = workspaces.filter((ws) => ws.statusState !== "inactive" || ws.terminalCount > 0).slice(0, MAX_WORKSPACE_AGENT_FANOUT);
+      if (active.length > 0) {
+        let queried = 0;
+        let rateLimited = false;
+        for (let i = 0;i < active.length && !rateLimited; i += WORKSPACE_AGENT_CONCURRENCY) {
+          if (deactivated) {
+            return;
+          }
+          const batch = active.slice(i, i + WORKSPACE_AGENT_CONCURRENCY);
+          await Promise.all(batch.map(async (ws) => {
+            if (deactivated || rateLimited) {
+              return;
+            }
+            try {
+              const listed = await orca.host.call("agents.list", { workspaceId: ws.id });
+              recordListedAgents(listed, ws.id);
+              queried += 1;
+            } catch (error) {
+              const code = error?.code;
+              if (code === "rate_limited") {
+                rateLimited = true;
+              }
+            }
+          }));
+        }
+        if (rateLimited) {
+          diagnostics?.line("warn", "agents.list_rate_limited", { queried, total: active.length });
+        }
+        if (queried > 0) {
+          return;
+        }
+      }
+    }
+    const listed = await orca.host.call("agents.list").catch(() => null);
+    recordListedAgents(listed, focusedWorkspaceId);
   }
   orca.events.on("agent.status.changed", async (payload) => {
     const parsed = parseAgentStatusPayload(payload, Date.now());
@@ -2661,25 +3194,45 @@ async function activate(orca, deps = {}) {
       const attempts = kindAttempts.get(terminalId) ?? 0;
       if (attempts < KIND_LOOKUP_ATTEMPTS) {
         kindAttempts.set(terminalId, attempts + 1);
-        await syncAgentsFromList();
+        await syncAgentsFromList(parsed?.workspaceListId ? { workspaceId: parsed.workspaceListId } : {});
       }
     }
     await refresh(parsed ?? undefined);
   });
   orca.events.on("workspace.removed", async (payload) => {
-    const workspaceId = parseWorkspaceRemovedId(payload);
-    if (workspaceId) {
-      agentTable?.removeWorkspace(workspaceId);
+    const removedIds = parseWorkspaceRemovedIds(payload);
+    if (removedIds.length > 0) {
+      agentTable?.removeWorkspace(removedIds);
+      for (const id of removedIds) {
+        workspacesById.delete(id);
+      }
     }
     await refresh();
   });
   orca.events.on("workspace.changed", async (payload) => {
     const raw = payload?.context;
     const context = raw && typeof raw === "object" ? raw : null;
-    await syncAgentsFromList();
+    if (context?.workspaceId) {
+      focusedWorkspaceId = context.workspaceId;
+    }
+    await syncAgentsFromList(context?.workspaceId ? { workspaceId: context.workspaceId } : {});
     await refresh(undefined, { context });
   });
-  await syncAgentsFromList();
+  const startupSeed = Promise.all([
+    syncAgentsFromList({ allWorkspaces: true }),
+    syncSessionsIfNeeded(true)
+  ]).catch(() => {});
+  let startupTimer = null;
+  await Promise.race([
+    startupSeed,
+    new Promise((resolve) => {
+      startupTimer = setTimeout(resolve, STARTUP_SYNC_BUDGET_MS);
+      startupTimer.unref?.();
+    })
+  ]);
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+  }
   if (orca.settings?.onDidChange) {
     settingsSubscription = orca.settings.onDidChange(() => {
       if (settingsChangeTimer) {
@@ -2747,6 +3300,13 @@ async function deactivate() {
   diagnostics?.line("info", "deactivate");
   agentTable?.clear();
   agentTable = null;
+  workspacesById.clear();
+  sessionsCache = [];
+  focusedWorkspaceId = undefined;
+  focusedHostKind = undefined;
+  focusHandles.clear();
+  terminalToFocusKey.clear();
+  nextFocusHandleId = 1;
   await controller?.stop();
   controller = null;
   diagnostics = null;

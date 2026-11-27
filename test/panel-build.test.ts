@@ -61,7 +61,11 @@ class FakeElement {
   getAttribute(name: string) {
     return this.attrs.get(name) ?? null
   }
+  removeAttribute(name: string) {
+    this.attrs.delete(name)
+  }
   appendChild(child: FakeElement) {
+    this.children = this.children.filter((c) => c !== child)
     this.children.push(child)
     return child
   }
@@ -242,18 +246,37 @@ function fullSnapshot(timeline: Array<string[] | null>) {
 function mountPanel(
   hostCall?: (name: string, input: Record<string, unknown>) => Promise<unknown>,
   pluginRequest?: (name: string, input: unknown, opts: unknown) => Promise<unknown>,
-  options: { timers?: boolean } = {}
+  options: {
+    timers?: boolean
+    rootClass?: string
+    saveAs?: (opts: Record<string, unknown>) => Promise<unknown>
+    execCommand?: (cmd: string) => boolean
+  } = {}
 ) {
   const html = buildPanelHtml()
   const { byId, document } = makeDom(html)
+  if (options.rootClass) document.documentElement.className = options.rootClass
+  if (options.execCommand) {
+    ;(document as Record<string, unknown>).execCommand = options.execCommand
+    ;(document as Record<string, unknown>).createRange = () => ({ selectNodeContents() {} })
+  }
   const hostEvents = new Map<string, (payload: unknown) => void>()
   const orca = {
     plugin: { request: pluginRequest ?? (() => new Promise(() => {})), on() {} },
     host: { has: () => false, ...(hostCall ? { call: hostCall } : {}) },
+    ...(options.saveAs ? { files: { saveAs: options.saveAs } } : {}),
     on: (name: string, fn: (payload: unknown) => void) => void hostEvents.set(name, fn)
   }
   const timers = options.timers ? { setTimeout, clearTimeout } : {}
-  const sandbox = vm.createContext({ document, navigator: {}, orca, setInterval: () => 0, ...timers })
+  const selection = options.execCommand ? { getSelection: () => ({ removeAllRanges() {}, addRange() {} }) } : {}
+  const sandbox = vm.createContext({
+    document,
+    navigator: {},
+    orca,
+    setInterval: () => 0,
+    ...selection,
+    ...timers
+  })
   vm.runInContext('globalThis.window = globalThis', sandbox)
   vm.runInContext(scriptOf(html), sandbox)
   const hook = (sandbox as { __presencePanel?: { render(s: unknown): void } }).__presencePanel
@@ -303,14 +326,24 @@ test('full view renders card, tiles and agent rows', () => {
 })
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
-const FULL_ONLY = ['full-a', 'full-b', 'full-c']
+const FULL_ONLY = [
+  'actions-row',
+  'preview-card',
+  'tile-agents-card',
+  'tile-sink-card',
+  'client-card',
+  'agents-card',
+  'toggles-card',
+  'leaderboards-card',
+  'logs-box'
+]
 const hidden = (byId: Map<string, FakeElement>, id: string) => byId.get(id)?.className.split(/\s+/).includes('hidden')
 
 test('junk panelView falls back to full', async () => {
   for (const stored of ['sideways', 42, null, { value: 'sideways' }, undefined]) {
     const { byId } = mountPanel(async (name) => (name === 'storage.get' ? stored : undefined))
     await settle()
-    expect(FULL_ONLY.some((id) => hidden(byId, id))).toBe(false)
+    expect(byId.get('app')?.getAttribute('data-view')).toBe('full')
     expect(hidden(byId, 'min-hero')).toBe(true)
   }
   // Storage unavailable: the call rejects.
@@ -318,7 +351,7 @@ test('junk panelView falls back to full', async () => {
     throw new Error('storage unavailable')
   })
   await settle()
-  expect(FULL_ONLY.some((id) => hidden(failing.byId, id))).toBe(false)
+  expect(failing.byId.get('app')?.getAttribute('data-view')).toBe('full')
   // Positive control: a stored 'minimal' wins.
   const minimal = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
   await settle()
@@ -338,13 +371,19 @@ test('view switch persists the choice with storage.set', async () => {
   expect(calls).toContainEqual(['storage.set', { key: 'panelView', value: 'minimal' }])
 })
 
-test('minimal view hides full-only sections', async () => {
+test('minimal view hides full-only sections via data-view without clobbering .hidden', async () => {
+  const html = buildPanelHtml()
+  const css = stylesOf(html)
+  expect(hasRule(css, "#app[data-view='minimal'] .full-only", 'display: none !important')).toBe(true)
+  for (const id of FULL_ONLY) {
+    expect(html).toMatch(new RegExp(`class="[^"]*\\bfull-only\\b[^"]*"[^>]*id="${id}"`))
+  }
   const { byId, hook } = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
   hook?.render(fullSnapshot(Array.from({ length: 30 }, () => ['working'])))
   await settle()
-  for (const id of FULL_ONLY) expect(hidden(byId, id)).toBe(true)
+  expect(byId.get('app')?.getAttribute('data-view')).toBe('minimal')
   expect(hidden(byId, 'min-hero')).toBe(false)
-  // Shared: strip and detail control stay.
+  // Shared: strip and detail control stay visible (not marked full-only).
   expect(hidden(byId, 'strip-card')).toBe(false)
   expect(hidden(byId, 'detail-card')).toBe(false)
   expect(byId.get('min-state')?.textContent).toBe('Working')
@@ -550,10 +589,12 @@ test('client select shows the saved choice, a not-running option, and the fallba
 })
 
 test('client card is full-view only', async () => {
+  const html = buildPanelHtml()
+  expect(html).toMatch(/class="[^"]*\bfull-only\b[^"]*"[^>]*id="client-card"/)
   const { byId, hook } = mountPanel(async (name) => (name === 'storage.get' ? 'minimal' : undefined))
   await settle()
   hook?.render(fullSnapshot([]))
-  expect(hidden(byId, 'full-d')).toBe(true)
+  expect(byId.get('app')?.getAttribute('data-view')).toBe('minimal')
 })
 
 test('client picker writes discordClient and reverts on rejection', async () => {
@@ -630,7 +671,7 @@ test('refresh button sits in the shared header, calls presence.refresh, and is d
   expect(buildPanelHtml()).toContain('aria-label="Refresh"')
   expect(buildPanelHtml()).toContain('title="Refresh now"')
   // Header is outside the full/minimal sections, so both views show it.
-  for (const view of ['full-a', 'min-hero']) expect(byId.get(view)).toBeDefined()
+  for (const view of ['preview-card', 'min-hero']) expect(byId.get(view)).toBeDefined()
   hook?.render(fullSnapshot([]))
   button.dispatch('click')
   expect(button.disabled).toBe(true)
@@ -655,7 +696,7 @@ test('refresh button reports a failed request', async () => {
 })
 
 const SECTION_ELEMENTS: Record<string, string> = {
-  preview: 'full-a',
+  preview: 'preview-card',
   strip: 'strip-card',
   tiles: 'tile-agents-card',
   sink: 'tile-sink-card',
@@ -664,6 +705,7 @@ const SECTION_ELEMENTS: Record<string, string> = {
   agents: 'agents-card',
   toggles: 'toggles-card',
   actions: 'actions-row',
+  leaderboards: 'leaderboards-card',
   logs: 'logs-box'
 }
 const userHidden = (byId: Map<string, FakeElement>, section: string) =>
@@ -732,22 +774,19 @@ test('tray show-all restores every section', async () => {
   expect(userHidden(byId, 'agents')).toBe(false)
 })
 
-test('agents and sending-to tiles hide independently; survivor fills the row', async () => {
+test('agents and sending-to tiles are independent full-width cards that hide independently', async () => {
   const { byId } = mountPanel(hiddenHost(undefined))
   await settle()
   byId.get('eye-tiles')?.dispatch('click')
   await settle()
   expect(userHidden(byId, 'tiles')).toBe(true)
   expect(userHidden(byId, 'sink')).toBe(false)
-  expect(byId.get('full-b')?.className.split(/\s+/).includes('single')).toBe(true)
   byId.get('eye-sink')?.dispatch('click')
   await settle()
   expect(userHidden(byId, 'sink')).toBe(true)
-  expect(byId.get('full-b')?.className.split(/\s+/).includes('collapsed')).toBe(true)
   byId.get('tray-show-all')?.dispatch('click')
   expect(userHidden(byId, 'tiles')).toBe(false)
   expect(userHidden(byId, 'sink')).toBe(false)
-  expect(byId.get('full-b')?.className.split(/\s+/).includes('single')).toBe(false)
 })
 
 test('minimal tray offers only minimal sections; show-all keeps full-only hidden', async () => {
@@ -836,12 +875,144 @@ test('panel chrome has no hard-coded dark colours and ships light fallbacks', ()
   }
   for (const [name, value] of Object.entries(light)) {
     expect(hasRule(css, ":root[data-theme='light']", `${name}: ${value}`)).toBe(true)
-    expect(hasRule(css, ":root:not([data-theme='dark'])", `${name}: ${value}`)).toBe(true)
+    expect(hasRule(css, ':root.light', `${name}: ${value}`)).toBe(true)
+    expect(hasRule(css, ":root:not([data-theme='dark']):not(.dark)", `${name}: ${value}`)).toBe(true)
   }
+  expect(hasRule(css, ':root.dark', 'color-scheme: dark')).toBe(true)
   expect(css).toContain('@media (prefers-color-scheme: light)')
   for (const selector of ['.dcard', '.hero', 'pre.log', '.sw']) {
     expect(hasRule(css, selector, 'var(--')).toBe(true)
   }
+})
+
+test('Orca typography and ring tokens are wired in panel CSS', () => {
+  const css = stylesOf(buildPanelHtml())
+  expect(css).toContain('--orca-font-sans')
+  expect(css).toContain('--orca-font-mono')
+  expect(css).toContain('--orca-ring')
+  expect(hasRule(css, '#sections', 'overflow-anchor: none')).toBe(true)
+})
+
+test('theme event reads { colorScheme } and html.light/dark seeds initial data-theme', async () => {
+  const calls: string[] = []
+  const { hostEvents, root } = mountPanel(
+    async (name, input) => {
+      calls.push(JSON.stringify([name, input]))
+      return undefined
+    },
+    undefined,
+    { rootClass: 'light' }
+  )
+  // Initial boot seeds data-theme synchronously from html.light before storage resolves.
+  expect(root.getAttribute('data-theme')).toBe('light')
+  hostEvents.get('theme')?.({ colorScheme: 'dark' })
+  expect(root.getAttribute('data-theme')).toBe('dark')
+  await settle()
+  expect(calls).toContain(JSON.stringify(['storage.set', { key: 'panelTheme', value: 'dark' }]))
+  hostEvents.get('theme')?.({ colorScheme: 'light' })
+  expect(root.getAttribute('data-theme')).toBe('light')
+})
+
+test('log copy uses synchronous execCommand first and Save button uses orca.files.saveAs', async () => {
+  const copied: string[] = []
+  const saved: Array<Record<string, unknown>> = []
+  const { byId } = mountPanel(undefined, undefined, {
+    execCommand: (cmd) => {
+      copied.push(cmd)
+      return true
+    },
+    saveAs: async (opts) => {
+      saved.push(opts)
+      return { status: 'saved' }
+    }
+  })
+  byId.get('log-view')!.textContent = 'line 1\nline 2'
+  byId.get('btn-log-copy')?.dispatch('click')
+  expect(copied).toEqual(['copy'])
+  expect(byId.get('flash')?.textContent).toBe('Logs copied.')
+
+  expect(hidden(byId, 'btn-log-save')).toBe(false)
+  byId.get('btn-log-save')?.dispatch('click')
+  await settle()
+  expect(saved).toEqual([
+    { suggestedName: 'discord-presence.log', mimeType: 'text/plain', data: 'line 1\nline 2' }
+  ])
+  expect(byId.get('flash')?.textContent).toBe('Logs saved.')
+
+  // Without orca.files.saveAs, the Save button stays hidden.
+  const withoutSave = mountPanel()
+  expect(withoutSave.byId.get('btn-log-save')).toBeDefined()
+  expect(buildPanelHtml()).toContain('class="btn hidden" id="btn-log-save"')
+})
+
+test('clickable agent row requests presence.focus-agent; taskTitle and outcome render cleanly', async () => {
+  const requests: Array<[string, unknown]> = []
+  const { byId, hook } = mountPanel(undefined, async (name, input) => {
+    requests.push([name, input])
+    return { ok: true, focused: true }
+  })
+  const snap = fullSnapshot([])
+  snap.agents = [
+    {
+      kind: 'claude',
+      taskTitle: 'Ship v1.2.0',
+      state: 'done',
+      outcome: 'failure',
+      focusKey: 'a0',
+      sinceMs: Date.now() - 60_000
+    } as never,
+    {
+      kind: 'codex',
+      state: 'working',
+      sinceMs: Date.now() - 10_000
+    }
+  ]
+  ;(snap.status as Record<string, unknown>).hostKind = 'ssh'
+  hook?.render(snap)
+  expect(hidden(byId, 'host-badge')).toBe(false)
+  expect(byId.get('host-badge')?.textContent).toBe('SSH')
+  const [first, second] = byId.get('agents-list')?.children ?? []
+  expect(first?.className).toContain('agent-btn')
+  expect(first?.children[1]?.textContent).toContain('completed (failed)')
+  expect(second?.className).not.toContain('agent-btn')
+  first?.dispatch('click')
+  await settle()
+  expect(requests).toContainEqual(['presence.focus-agent', { key: 'a0' }])
+})
+
+test('leaderboards card stays disabled by default, hides from tray, and sorts when enabled', async () => {
+  const { byId, hook } = mountPanel(hiddenHost(['leaderboards', 'strip']))
+  await settle()
+  const offSnap = {
+    ...fullSnapshot([]),
+    leaderboards: { enabled: false, rows: [] }
+  }
+  hook?.render(offSnap)
+  expect(byId.get('leaderboards-card')?.className).toContain('feature-disabled')
+  // Disabled leaderboards is omitted from the hidden tray.
+  expect(byId.get('hidden-chips')?.children.map((c) => c.textContent)).toEqual(['Last 30 min'])
+
+  const onSnap = {
+    ...fullSnapshot([]),
+    fields: { ...fullSnapshot([]).fields, showLeaderboards: true },
+    leaderboards: {
+      enabled: true,
+      rows: [
+        { name: 'alpha', messages: 90, tokens: 50_000 },
+        { name: 'beta', messages: 20, tokens: 200_000 }
+      ]
+    }
+  }
+  hook?.render(onSnap)
+  expect(byId.get('leaderboards-card')?.className).not.toContain('feature-disabled')
+  expect(byId.get('hidden-chips')?.children.map((c) => c.textContent)).toEqual(['Last 30 min', 'Leaderboards'])
+  // Default sort: tokens desc -> beta first.
+  const firstRowName = () => byId.get('lb-rows')?.children[0]?.children[0]?.children[0]?.textContent
+  expect(firstRowName()).toBe('beta')
+  // Click Messages header -> alpha first.
+  byId.get('lb-sort-messages')?.dispatch('click')
+  expect(firstRowName()).toBe('alpha')
+  expect(byId.get('lb-sort-messages')?.getAttribute('aria-pressed')).toBe('true')
 })
 
 test('theme event sets data-theme and is remembered for the next load', async () => {
