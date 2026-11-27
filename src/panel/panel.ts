@@ -116,9 +116,6 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
   }
 } else {
   setText('panel-version', `v${PLUGIN_VERSION}`)
-  $('btn-settings')?.addEventListener('click', () => {
-    flash('In Orca, open Settings → Plugins → Rich Presence for Discord.')
-  })
   const star = $('btn-star') as HTMLButtonElement | null
   if (star && orca.shell?.openExternal) {
     star.addEventListener('click', () => {

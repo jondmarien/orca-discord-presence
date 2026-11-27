@@ -300,8 +300,6 @@ test('footer shows the version and opens GitHub only after a click', () => {
   expect(opened).toEqual([])
   byId.get('btn-star')?.dispatch('click')
   expect(opened).toEqual(['https://github.com/jondmarien/orca-discord-presence'])
-  byId.get('btn-settings')?.dispatch('click')
-  expect(byId.get('flash')?.textContent).toContain('Settings → Plugins → Rich Presence for Discord')
 })
 
 test('full view renders timeline cells', () => {
