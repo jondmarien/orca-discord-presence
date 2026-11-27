@@ -82,3 +82,27 @@ test('host-sync deduplicates in-flight agent.listSessions, gates when disabled, 
   agentTable.clear()
   disposer.disposeAll()
 })
+
+test('focused workspace metadata revalidates after the throttle on forced refresh', async () => {
+  let clock = 10_000
+  let workspaceName = 'Alpha'
+  let calls = 0
+  const disposer = createDisposer()
+  const agentTable = createAgentTable({ now: () => clock })
+  const host: OrcaHost['host'] = {
+    has: (method) => method === 'workspace.list',
+    call: async () => {
+      calls += 1
+      return { workspaces: [{ id: 'w1', name: workspaceName, project: workspaceName, hostId: 'local' }] }
+    }
+  }
+  const sync = createHostSync({ host, agentTable, disposer, now: () => clock })
+  expect((await sync.resolveFocusedWorkspace('w1'))?.project).toBe('Alpha')
+  workspaceName = 'Beta'
+  clock += 5_001
+  expect((await sync.resolveFocusedWorkspace('w1', true))?.project).toBe('Beta')
+  expect(sync.workspaces().get('w1')?.name).toBe('Beta')
+  await sync.resolveFocusedWorkspace('w1', true)
+  expect(calls).toBe(2)
+  disposer.disposeAll()
+})

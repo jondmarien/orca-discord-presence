@@ -13,6 +13,7 @@
  */
 
 import { createAgentTable } from './presence/agents'
+import { resolveActiveSessionStats } from './presence/leaderboards'
 import type { PresenceSettings } from './presence/settings'
 import { formatStatusTransmitting, registerCommands, type PanelCommandId } from './worker/commands'
 import { createDiscordBinding } from './worker/discord-binding'
@@ -90,6 +91,8 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       await hostSync.syncWorkspaces(false)
       await hostSync.syncSessionsIfNeeded(settingsRuntime.current(), true)
     },
+    getSessionStats: () =>
+      resolveActiveSessionStats(agentTable.slots(), hostSync.sessions(), hostSync.focusedWorkspaceId()),
     onRepublish: async (opts) => refresh(undefined, opts),
     onAfterApply: () => {
       publishStatusBar()
@@ -117,6 +120,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     settingsRuntime,
     persistence,
     binding,
+    disposer,
     panelRpc,
     diagnostics,
     onSummary: (summary) => {

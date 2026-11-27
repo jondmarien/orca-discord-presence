@@ -20,6 +20,7 @@ import {
 } from '../discord/detect'
 import { defaultDiscordIpcCandidates } from '../discord/ipc'
 import { createBridgeTransport } from '../bridge/transport'
+import type { ActiveSessionStats } from '../presence/leaderboards'
 import { createPresenceController, type PresenceController } from '../presence/controller'
 import type { DiagnosticSink } from '../presence/log'
 import type { PresenceSettings } from '../presence/settings'
@@ -52,6 +53,7 @@ export function createDiscordBinding({
   detectMinIntervalMs = DETECT_MIN_INTERVAL_MS,
   onHealthChange,
   onNeedsHistory,
+  getSessionStats,
   onRepublish,
   onAfterApply
 }: {
@@ -65,6 +67,7 @@ export function createDiscordBinding({
   detectMinIntervalMs?: number
   onHealthChange: () => void
   onNeedsHistory: () => Promise<void>
+  getSessionStats?: () => ActiveSessionStats | undefined
   onRepublish: (options: { force?: boolean; resume?: boolean }) => Promise<void>
   onAfterApply: () => void
 }): DiscordBinding {
@@ -144,12 +147,15 @@ export function createDiscordBinding({
         await onRepublish({ force: true })
       }
     } else {
-      await controller.setSettings(nextSettings)
-      if (sessionStatsChanged && nextSettings.showSessionStats !== 'off' && !disposer.isDisposed()) {
-        // Why: forceTransmit bypasses the 15s debounce that setSettings just reset,
-        // so selecting Tokens / Messages / Both updates Discord and preview immediately.
-        await onRepublish({ force: true, resume: true })
+      if (sessionStatsChanged) {
+        const stats = nextSettings.showSessionStats === 'off' ? undefined : getSessionStats?.()
+        // Merge counts before setSettings sends, so this edit emits one activity.
+        await controller.update(
+          { sessionTokens: stats?.tokens, sessionMessages: stats?.messages },
+          { silent: true }
+        )
       }
+      await controller.setSettings(nextSettings)
     }
     onAfterApply()
   }

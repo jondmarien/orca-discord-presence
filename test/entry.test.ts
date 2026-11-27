@@ -649,6 +649,24 @@ function fakeDiscordClients() {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+test('deactivation prevents a pending startup detection from publishing again', async () => {
+  const fake = fakeDiscordClients()
+  let finishDetection!: () => void
+  const detect = () => new Promise<[]>(resolve => {
+    finishDetection = () => resolve([])
+  })
+  const run = await activateWithSecrets({
+    protection: 'unavailable',
+    settings: {},
+    deps: { detect, createClient: fake.createClient }
+  })
+  await run.finish()
+  finishDetection()
+  await wait(20)
+  expect(fake.created).toHaveLength(1)
+  expect(fake.sets).toEqual([])
+})
+
 test('a failed token save applies no other configure field and does not rebuild the controller', async () => {
   const fake = fakeDiscordClients()
   const run = await activateWithSecrets({

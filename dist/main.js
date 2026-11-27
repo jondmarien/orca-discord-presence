@@ -345,6 +345,193 @@ function createAgentTable({
   };
 }
 
+// src/presence/leaderboards.ts
+function classifyHostKind(hostId) {
+  if (typeof hostId !== "string" || hostId.length === 0 || hostId === "local") {
+    return "local";
+  }
+  if (hostId.startsWith("ssh:")) {
+    return "ssh";
+  }
+  if (hostId.startsWith("runtime:")) {
+    return "wsl";
+  }
+  return "local";
+}
+function parseWorkspaceList(result) {
+  if (!result || typeof result !== "object") {
+    return [];
+  }
+  const rows = result.workspaces;
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  const parsed = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const source = row;
+    const id = typeof source.id === "string" ? source.id.trim() : "";
+    const name = typeof source.name === "string" ? source.name.trim() : "";
+    if (!id || !name) {
+      continue;
+    }
+    const project = typeof source.project === "string" && source.project.trim().length > 0 ? source.project.trim() : undefined;
+    const hostId = typeof source.hostId === "string" && source.hostId.length > 0 ? source.hostId : null;
+    const status = source.status && typeof source.status === "object" ? source.status : null;
+    const statusState = typeof status?.state === "string" ? status.state : undefined;
+    const terminalCount = typeof status?.terminalCount === "number" && Number.isFinite(status.terminalCount) && status.terminalCount >= 0 ? Math.floor(status.terminalCount) : 0;
+    parsed.push({
+      id,
+      name,
+      ...project ? { project } : {},
+      hostId,
+      hostKind: classifyHostKind(hostId),
+      ...statusState ? { statusState } : {},
+      terminalCount
+    });
+  }
+  return parsed;
+}
+function parseSessionsList(result) {
+  if (!result || typeof result !== "object") {
+    return [];
+  }
+  const rows = result.sessions;
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  const parsed = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") {
+      continue;
+    }
+    const source = row;
+    const sessionId = typeof source.sessionId === "string" ? source.sessionId.trim() : "";
+    if (!sessionId) {
+      continue;
+    }
+    const workspaceId = typeof source.workspaceId === "string" && source.workspaceId.trim().length > 0 ? source.workspaceId.trim() : null;
+    const messageCount = typeof source.messageCount === "number" && Number.isFinite(source.messageCount) && source.messageCount > 0 ? Math.floor(source.messageCount) : 0;
+    const totalTokens = typeof source.totalTokens === "number" && Number.isFinite(source.totalTokens) && source.totalTokens > 0 ? Math.floor(source.totalTokens) : 0;
+    const updatedAt = typeof source.updatedAt === "number" && Number.isFinite(source.updatedAt) ? source.updatedAt : 0;
+    parsed.push({
+      sessionId,
+      workspaceId,
+      messageCount,
+      totalTokens,
+      updatedAt,
+      running: source.running === true
+    });
+  }
+  return parsed;
+}
+function formatCompactCount(count) {
+  const n = Math.max(0, Math.floor(count));
+  if (n < 1000) {
+    return String(n);
+  }
+  if (n < 1e4) {
+    const k = Math.round(n / 100) / 10;
+    return k >= 10 ? `${Math.round(k)}k` : `${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
+  }
+  if (n < 1e6) {
+    const k = Math.round(n / 1000);
+    return k >= 1000 ? "1M" : `${k}k`;
+  }
+  const m = Math.round(n / 1e5) / 10;
+  return `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+}
+function resolveActiveSessionStats(slots, sessions, focusedWorkspaceId) {
+  if (sessions.length === 0) {
+    return;
+  }
+  const bySessionId = new Map;
+  for (const session of sessions) {
+    bySessionId.set(session.sessionId, session);
+  }
+  const activeIds = new Set;
+  const focusedIds = new Set;
+  for (const slot of slots) {
+    if (typeof slot.sessionId === "string" && bySessionId.has(slot.sessionId)) {
+      activeIds.add(slot.sessionId);
+      if (focusedWorkspaceId && (slot.workspaceId === focusedWorkspaceId || slot.workspaceListId === focusedWorkspaceId)) {
+        focusedIds.add(slot.sessionId);
+      }
+    }
+  }
+  for (const session of sessions) {
+    if (session.running) {
+      activeIds.add(session.sessionId);
+      if (focusedWorkspaceId && session.workspaceId === focusedWorkspaceId) {
+        focusedIds.add(session.sessionId);
+      }
+    }
+  }
+  const sumIds = (ids) => {
+    let tokens = 0;
+    let messages = 0;
+    for (const id of ids) {
+      const s = bySessionId.get(id);
+      if (!s)
+        continue;
+      tokens += s.totalTokens;
+      messages += s.messageCount;
+    }
+    return { tokens, messages };
+  };
+  const focusedTotals = focusedIds.size > 0 ? sumIds(focusedIds) : { tokens: 0, messages: 0 };
+  const allTotals = activeIds.size > 0 ? sumIds(activeIds) : { tokens: 0, messages: 0 };
+  const tokens = focusedTotals.tokens > 0 ? focusedTotals.tokens : allTotals.tokens;
+  const messages = focusedTotals.messages > 0 ? focusedTotals.messages : allTotals.messages;
+  if (tokens <= 0 && messages <= 0) {
+    return;
+  }
+  return { tokens, messages };
+}
+function buildWorkspaceLeaderboard(sessions, workspaces, maxRows = 10) {
+  const totals = new Map;
+  for (const session of sessions) {
+    if (!session.workspaceId) {
+      continue;
+    }
+    if (session.messageCount <= 0 && session.totalTokens <= 0) {
+      continue;
+    }
+    const ws = workspaces.get(session.workspaceId);
+    if (!ws || !ws.name) {
+      continue;
+    }
+    const existing = totals.get(session.workspaceId);
+    if (existing) {
+      existing.messages += session.messageCount;
+      existing.tokens += session.totalTokens;
+    } else {
+      totals.set(session.workspaceId, {
+        name: ws.name,
+        messages: session.messageCount,
+        tokens: session.totalTokens
+      });
+    }
+  }
+  const all = [...totals.values()];
+  if (all.length === 0) {
+    return [];
+  }
+  const byTokens = [...all].sort((a, b) => b.tokens - a.tokens || b.messages - a.messages || a.name.localeCompare(b.name));
+  const byMessages = [...all].sort((a, b) => b.messages - a.messages || b.tokens - a.tokens || a.name.localeCompare(b.name));
+  const keep = new Set;
+  const half = Math.max(5, Math.ceil(maxRows / 2));
+  for (const row of byTokens.slice(0, half)) {
+    keep.add(row);
+  }
+  for (const row of byMessages.slice(0, half)) {
+    keep.add(row);
+  }
+  return [...keep].sort((a, b) => b.tokens - a.tokens || b.messages - a.messages || a.name.localeCompare(b.name)).slice(0, maxRows);
+}
+
 // src/discord/app-id.ts
 var APPLICATION_ID_RE = /^\d{17,20}$/;
 function isPlausibleApplicationId(value) {
@@ -1554,193 +1741,6 @@ function summarizeClients(input) {
   };
 }
 
-// src/presence/leaderboards.ts
-function classifyHostKind(hostId) {
-  if (typeof hostId !== "string" || hostId.length === 0 || hostId === "local") {
-    return "local";
-  }
-  if (hostId.startsWith("ssh:")) {
-    return "ssh";
-  }
-  if (hostId.startsWith("runtime:")) {
-    return "wsl";
-  }
-  return "local";
-}
-function parseWorkspaceList(result) {
-  if (!result || typeof result !== "object") {
-    return [];
-  }
-  const rows = result.workspaces;
-  if (!Array.isArray(rows)) {
-    return [];
-  }
-  const parsed = [];
-  for (const row of rows) {
-    if (!row || typeof row !== "object") {
-      continue;
-    }
-    const source = row;
-    const id = typeof source.id === "string" ? source.id.trim() : "";
-    const name = typeof source.name === "string" ? source.name.trim() : "";
-    if (!id || !name) {
-      continue;
-    }
-    const project = typeof source.project === "string" && source.project.trim().length > 0 ? source.project.trim() : undefined;
-    const hostId = typeof source.hostId === "string" && source.hostId.length > 0 ? source.hostId : null;
-    const status = source.status && typeof source.status === "object" ? source.status : null;
-    const statusState = typeof status?.state === "string" ? status.state : undefined;
-    const terminalCount = typeof status?.terminalCount === "number" && Number.isFinite(status.terminalCount) && status.terminalCount >= 0 ? Math.floor(status.terminalCount) : 0;
-    parsed.push({
-      id,
-      name,
-      ...project ? { project } : {},
-      hostId,
-      hostKind: classifyHostKind(hostId),
-      ...statusState ? { statusState } : {},
-      terminalCount
-    });
-  }
-  return parsed;
-}
-function parseSessionsList(result) {
-  if (!result || typeof result !== "object") {
-    return [];
-  }
-  const rows = result.sessions;
-  if (!Array.isArray(rows)) {
-    return [];
-  }
-  const parsed = [];
-  for (const row of rows) {
-    if (!row || typeof row !== "object") {
-      continue;
-    }
-    const source = row;
-    const sessionId = typeof source.sessionId === "string" ? source.sessionId.trim() : "";
-    if (!sessionId) {
-      continue;
-    }
-    const workspaceId = typeof source.workspaceId === "string" && source.workspaceId.trim().length > 0 ? source.workspaceId.trim() : null;
-    const messageCount = typeof source.messageCount === "number" && Number.isFinite(source.messageCount) && source.messageCount > 0 ? Math.floor(source.messageCount) : 0;
-    const totalTokens = typeof source.totalTokens === "number" && Number.isFinite(source.totalTokens) && source.totalTokens > 0 ? Math.floor(source.totalTokens) : 0;
-    const updatedAt = typeof source.updatedAt === "number" && Number.isFinite(source.updatedAt) ? source.updatedAt : 0;
-    parsed.push({
-      sessionId,
-      workspaceId,
-      messageCount,
-      totalTokens,
-      updatedAt,
-      running: source.running === true
-    });
-  }
-  return parsed;
-}
-function formatCompactCount(count) {
-  const n = Math.max(0, Math.floor(count));
-  if (n < 1000) {
-    return String(n);
-  }
-  if (n < 1e4) {
-    const k = Math.round(n / 100) / 10;
-    return k >= 10 ? `${Math.round(k)}k` : `${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
-  }
-  if (n < 1e6) {
-    const k = Math.round(n / 1000);
-    return k >= 1000 ? "1M" : `${k}k`;
-  }
-  const m = Math.round(n / 1e5) / 10;
-  return `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
-}
-function resolveActiveSessionStats(slots, sessions, focusedWorkspaceId) {
-  if (sessions.length === 0) {
-    return;
-  }
-  const bySessionId = new Map;
-  for (const session of sessions) {
-    bySessionId.set(session.sessionId, session);
-  }
-  const activeIds = new Set;
-  const focusedIds = new Set;
-  for (const slot of slots) {
-    if (typeof slot.sessionId === "string" && bySessionId.has(slot.sessionId)) {
-      activeIds.add(slot.sessionId);
-      if (focusedWorkspaceId && (slot.workspaceId === focusedWorkspaceId || slot.workspaceListId === focusedWorkspaceId)) {
-        focusedIds.add(slot.sessionId);
-      }
-    }
-  }
-  for (const session of sessions) {
-    if (session.running) {
-      activeIds.add(session.sessionId);
-      if (focusedWorkspaceId && session.workspaceId === focusedWorkspaceId) {
-        focusedIds.add(session.sessionId);
-      }
-    }
-  }
-  const sumIds = (ids) => {
-    let tokens = 0;
-    let messages = 0;
-    for (const id of ids) {
-      const s = bySessionId.get(id);
-      if (!s)
-        continue;
-      tokens += s.totalTokens;
-      messages += s.messageCount;
-    }
-    return { tokens, messages };
-  };
-  const focusedTotals = focusedIds.size > 0 ? sumIds(focusedIds) : { tokens: 0, messages: 0 };
-  const allTotals = activeIds.size > 0 ? sumIds(activeIds) : { tokens: 0, messages: 0 };
-  const tokens = focusedTotals.tokens > 0 ? focusedTotals.tokens : allTotals.tokens;
-  const messages = focusedTotals.messages > 0 ? focusedTotals.messages : allTotals.messages;
-  if (tokens <= 0 && messages <= 0) {
-    return;
-  }
-  return { tokens, messages };
-}
-function buildWorkspaceLeaderboard(sessions, workspaces, maxRows = 10) {
-  const totals = new Map;
-  for (const session of sessions) {
-    if (!session.workspaceId) {
-      continue;
-    }
-    if (session.messageCount <= 0 && session.totalTokens <= 0) {
-      continue;
-    }
-    const ws = workspaces.get(session.workspaceId);
-    if (!ws || !ws.name) {
-      continue;
-    }
-    const existing = totals.get(session.workspaceId);
-    if (existing) {
-      existing.messages += session.messageCount;
-      existing.tokens += session.totalTokens;
-    } else {
-      totals.set(session.workspaceId, {
-        name: ws.name,
-        messages: session.messageCount,
-        tokens: session.totalTokens
-      });
-    }
-  }
-  const all = [...totals.values()];
-  if (all.length === 0) {
-    return [];
-  }
-  const byTokens = [...all].sort((a, b) => b.tokens - a.tokens || b.messages - a.messages || a.name.localeCompare(b.name));
-  const byMessages = [...all].sort((a, b) => b.messages - a.messages || b.tokens - a.tokens || a.name.localeCompare(b.name));
-  const keep = new Set;
-  const half = Math.max(5, Math.ceil(maxRows / 2));
-  for (const row of byTokens.slice(0, half)) {
-    keep.add(row);
-  }
-  for (const row of byMessages.slice(0, half)) {
-    keep.add(row);
-  }
-  return [...keep].sort((a, b) => b.tokens - a.tokens || b.messages - a.messages || a.name.localeCompare(b.name)).slice(0, maxRows);
-}
-
 // src/presence/activity.ts
 var DISCORD_TEXT_MAX = 128;
 var DISCORD_ASSET_SUFFIX = "-v2";
@@ -2273,6 +2273,7 @@ function createDiscordBinding({
   detectMinIntervalMs = DETECT_MIN_INTERVAL_MS,
   onHealthChange,
   onNeedsHistory,
+  getSessionStats,
   onRepublish,
   onAfterApply
 }) {
@@ -2326,10 +2327,11 @@ function createDiscordBinding({
         await onRepublish({ force: true });
       }
     } else {
-      await controller.setSettings(nextSettings);
-      if (sessionStatsChanged && nextSettings.showSessionStats !== "off" && !disposer.isDisposed()) {
-        await onRepublish({ force: true, resume: true });
+      if (sessionStatsChanged) {
+        const stats = nextSettings.showSessionStats === "off" ? undefined : getSessionStats?.();
+        await controller.update({ sessionTokens: stats?.tokens, sessionMessages: stats?.messages }, { silent: true });
       }
+      await controller.setSettings(nextSettings);
     }
     onAfterApply();
   }
@@ -2798,9 +2800,9 @@ function createHostSync({
       }
       pruneKindCache();
     },
-    async resolveFocusedWorkspace(wsId) {
+    async resolveFocusedWorkspace(wsId, revalidate = false) {
       focusedWorkspaceId = wsId;
-      if (wsId && !workspacesById.has(wsId)) {
+      if (wsId && !workspacesById.has(wsId) || revalidate) {
         await syncWorkspaces(false);
       }
       const info = wsId ? workspacesById.get(wsId) : undefined;
@@ -2812,6 +2814,7 @@ function createHostSync({
         focusedWorkspaceId = wsId;
       }
     },
+    focusedWorkspaceId: () => focusedWorkspaceId,
     focusedHostKind: () => focusedHostKind,
     workspaces: () => workspacesById,
     sessions: () => sessionsCache,
@@ -2871,12 +2874,15 @@ function createRefreshRunner({
   settingsRuntime,
   persistence,
   binding,
+  disposer,
   panelRpc,
   diagnostics,
   onSummary,
   publishStatusBar
 }) {
   return async (agentEvent, options = {}) => {
+    if (disposer.isDisposed())
+      return;
     if (agentEvent) {
       const parsed = parseAgentStatusPayload(agentEvent, Date.now());
       if (parsed)
@@ -2885,10 +2891,16 @@ function createRefreshRunner({
     const summary = agentTable.summarize();
     onSummary(summary);
     const context = options.context !== undefined ? options.context : await orca.host.call("workspace.readContext").catch(() => null);
+    if (disposer.isDisposed())
+      return;
     const wsId = typeof context?.workspaceId === "string" && context.workspaceId.length > 0 ? context.workspaceId : undefined;
-    const wsInfo = await hostSync.resolveFocusedWorkspace(wsId);
     const currentSettings = settingsRuntime.current();
+    const wsInfo = await hostSync.resolveFocusedWorkspace(wsId, Boolean(options.force || currentSettings.showLeaderboards));
+    if (disposer.isDisposed())
+      return;
     await hostSync.syncSessionsIfNeeded(currentSettings, false);
+    if (disposer.isDisposed())
+      return;
     const slots = agentTable.slots();
     const activeStats = currentSettings.showSessionStats !== "off" ? resolveActiveSessionStats(slots, hostSync.sessions(), wsId) : undefined;
     if (!context) {
@@ -2919,6 +2931,8 @@ function createRefreshRunner({
       sessionTokens: activeStats?.tokens,
       sessionMessages: activeStats?.messages
     }, resume ? { resume: true } : undefined);
+    if (disposer.isDisposed())
+      return;
     if (options.force) {
       await binding.controller().forceTransmit(resume);
     }
@@ -3555,6 +3569,7 @@ async function activate(orca, deps = {}) {
       await hostSync.syncWorkspaces(false);
       await hostSync.syncSessionsIfNeeded(settingsRuntime.current(), true);
     },
+    getSessionStats: () => resolveActiveSessionStats(agentTable.slots(), hostSync.sessions(), hostSync.focusedWorkspaceId()),
     onRepublish: async (opts) => refresh(undefined, opts),
     onAfterApply: () => {
       publishStatusBar();
@@ -3580,6 +3595,7 @@ async function activate(orca, deps = {}) {
     settingsRuntime,
     persistence,
     binding,
+    disposer,
     panelRpc,
     diagnostics,
     onSummary: (summary) => {

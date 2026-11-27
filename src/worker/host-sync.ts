@@ -59,8 +59,9 @@ export type HostSync = {
   /** Evict terminal IDs from kind caches once they are no longer in `agentTable`. */
   pruneKindCache: () => void
   removeWorkspaces: (ids: readonly string[]) => void
-  resolveFocusedWorkspace: (wsId: string | undefined) => Promise<WorkspaceInfo | undefined>
+  resolveFocusedWorkspace: (wsId: string | undefined, revalidate?: boolean) => Promise<WorkspaceInfo | undefined>
   setFocusedWorkspaceId: (wsId: string | undefined) => void
+  focusedWorkspaceId: () => string | undefined
   focusedHostKind: () => WorkspaceHostKind | undefined
   workspaces: () => ReadonlyMap<string, WorkspaceInfo>
   sessions: () => readonly SessionMetrics[]
@@ -262,9 +263,9 @@ export function createHostSync({
       }
       pruneKindCache()
     },
-    async resolveFocusedWorkspace(wsId) {
+    async resolveFocusedWorkspace(wsId, revalidate = false) {
       focusedWorkspaceId = wsId
-      if (wsId && !workspacesById.has(wsId)) {
+      if ((wsId && !workspacesById.has(wsId)) || revalidate) {
         await syncWorkspaces(false)
       }
       const info = wsId ? workspacesById.get(wsId) : undefined
@@ -276,6 +277,7 @@ export function createHostSync({
         focusedWorkspaceId = wsId
       }
     },
+    focusedWorkspaceId: () => focusedWorkspaceId,
     focusedHostKind: () => focusedHostKind,
     workspaces: () => workspacesById,
     sessions: () => sessionsCache,
@@ -354,6 +356,7 @@ export function createRefreshRunner({
   settingsRuntime,
   persistence,
   binding,
+  disposer,
   panelRpc,
   diagnostics,
   onSummary,
@@ -365,12 +368,14 @@ export function createRefreshRunner({
   settingsRuntime: SettingsRuntime
   persistence: WorkerPersistence
   binding: DiscordBinding
+  disposer: Disposer
   panelRpc: PanelRpc
   diagnostics: DiagnosticSink
   onSummary: (summary: LatestAgentSummary) => void
   publishStatusBar: () => void
 }): RefreshFn {
   return async (agentEvent, options = {}) => {
+    if (disposer.isDisposed()) return
     if (agentEvent) {
       const parsed = parseAgentStatusPayload(agentEvent, Date.now())
       if (parsed) agentTable.upsert(parsed)
@@ -383,11 +388,17 @@ export function createRefreshRunner({
       options.context !== undefined
         ? options.context
         : ((await orca.host.call('workspace.readContext').catch(() => null)) as WorkspaceContext | null)
+    if (disposer.isDisposed()) return
     const wsId =
       typeof context?.workspaceId === 'string' && context.workspaceId.length > 0 ? context.workspaceId : undefined
-    const wsInfo = await hostSync.resolveFocusedWorkspace(wsId)
     const currentSettings = settingsRuntime.current()
+    const wsInfo = await hostSync.resolveFocusedWorkspace(
+      wsId,
+      Boolean(options.force || currentSettings.showLeaderboards)
+    )
+    if (disposer.isDisposed()) return
     await hostSync.syncSessionsIfNeeded(currentSettings, false)
+    if (disposer.isDisposed()) return
     const slots = agentTable.slots()
     const activeStats =
       currentSettings.showSessionStats !== 'off'
@@ -430,6 +441,7 @@ export function createRefreshRunner({
       },
       resume ? { resume: true } : undefined
     )
+    if (disposer.isDisposed()) return
     if (options.force) {
       await binding.controller().forceTransmit(resume)
     }

@@ -90,3 +90,32 @@ test('auto-rebind on chosen client takeover inherits Clear hold; user setting ch
   await binding.stop()
   disposer.disposeAll()
 })
+
+test('enabling session stats publishes counts in one activity write', async () => {
+  const fake = fakeClientFactory()
+  const disposer = createDisposer()
+  const runtime = await createSettingsRuntime({ orca: minimalOrca(), disposer, env: {} })
+  let historyCalls = 0
+  let republishes = 0
+  const binding = createDiscordBinding({
+    settingsRuntime: runtime,
+    disposer,
+    log: () => {},
+    detectClients: async () => [],
+    makeDiscordClient: fake.makeDiscordClient as never,
+    onHealthChange: () => {},
+    onNeedsHistory: async () => { historyCalls += 1 },
+    getSessionStats: () => ({ tokens: 123, messages: 4 }),
+    onRepublish: async () => { republishes += 1 },
+    onAfterApply: () => {}
+  })
+  await binding.controller().update({ displayName: 'repo', agentState: 'working' })
+  fake.sets.length = 0
+  await binding.applySettings({ ...runtime.current(), showSessionStats: 'tokens' })
+  expect(historyCalls).toBe(1)
+  expect(fake.sets).toHaveLength(1)
+  expect(republishes).toBe(0)
+  expect(JSON.stringify(binding.controller().status().lastActivity)).toContain('123')
+  await binding.stop()
+  disposer.disposeAll()
+})
