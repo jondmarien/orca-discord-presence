@@ -129,8 +129,8 @@ function createFrameDecoder(onFrame, onError = () => {}) {
       if (broken) {
         return;
       }
-      const next = typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk);
-      buffered = Buffer.concat([buffered, next]);
+      const next = typeof chunk === "string" ? Buffer.from(chunk) : Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      buffered = buffered.length === 0 ? next : Buffer.concat([buffered, next]);
       for (;; ) {
         if (buffered.length < 8) {
           return;
@@ -597,6 +597,13 @@ function summarizeClients(input) {
 }
 
 // src/presence/agent-state.ts
+var AGENT_STATE_PRIORITY = {
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  done: 1,
+  idle: 0
+};
 var AGENT_STATE_ALIASES = {
   working: "working",
   running: "working",
@@ -657,13 +664,6 @@ function isActivityFresh(lastSeenAtMs, nowMs, windowMs) {
 }
 
 // src/presence/agents.ts
-var PRIORITY = {
-  blocked: 4,
-  waiting: 3,
-  working: 2,
-  done: 1,
-  idle: 0
-};
 function agentSlotKey(event) {
   if (typeof event.terminalId === "string" && event.terminalId.length > 0) {
     return `t:${event.terminalId}`;
@@ -796,7 +796,7 @@ function summarizeSlots(slots) {
   let winner = "idle";
   let winnerPriority = -1;
   for (const slot of slots) {
-    const priority = PRIORITY[slot.canonicalState];
+    const priority = AGENT_STATE_PRIORITY[slot.canonicalState];
     if (priority > winnerPriority) {
       winner = slot.canonicalState;
       winnerPriority = priority;
@@ -1753,8 +1753,13 @@ function formatLogLine(level, event, detail = {}) {
   }
   return parts.join(" ");
 }
+var ensuredDirs = new Set;
 function appendCappedLog(filePath, line, maxBytes = MAX_LOG_BYTES) {
-  mkdirSync(dirname(filePath), { recursive: true });
+  const dir = dirname(filePath);
+  if (!ensuredDirs.has(dir)) {
+    mkdirSync(dir, { recursive: true });
+    ensuredDirs.add(dir);
+  }
   let size = 0;
   try {
     size = statSync(filePath).size;
@@ -1769,7 +1774,16 @@ function appendCappedLog(filePath, line, maxBytes = MAX_LOG_BYTES) {
       renameSync(filePath, `${filePath}.1`);
     } catch {}
   }
-  appendFileSync(filePath, payload, "utf8");
+  try {
+    appendFileSync(filePath, payload, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      mkdirSync(dir, { recursive: true });
+      appendFileSync(filePath, payload, "utf8");
+    } else {
+      throw error;
+    }
+  }
 }
 function createDiagnosticSink({
   hostLog,
@@ -1876,27 +1890,33 @@ function createPresenceController({
       await tryClearBridge(url, token);
     }
   }
-  async function transmit(force = false) {
+  function clearPendingTimer() {
+    if (pendingTimer) {
+      clearTimer(pendingTimer);
+      pendingTimer = null;
+    }
+  }
+  async function transmit(force = false, prepared) {
     const before = `${localFailing}|${bridgeFailing}`;
     try {
-      await transmitOnce(force);
+      await transmitOnce(force, prepared);
     } finally {
       if (`${localFailing}|${bridgeFailing}` !== before) {
         onHealthChange();
       }
     }
   }
-  async function transmitOnce(force) {
+  async function transmitOnce(force, prepared) {
     pendingTimer = null;
     if (!snapshot) {
       return;
     }
-    const activity = buildActivity(snapshot, currentSettings, now());
+    const activity = prepared ? prepared.activity : buildActivity(snapshot, currentSettings, now());
     if (!activity) {
       await clearPresence();
       return;
     }
-    const serialized = JSON.stringify(activity);
+    const serialized = prepared ? prepared.serialized : JSON.stringify(activity);
     if (!force && serialized === lastSentSerialized) {
       return;
     }
@@ -1978,13 +1998,13 @@ function createPresenceController({
       await forgetBridge(false);
     }
   }
-  async function schedule() {
+  async function schedule(prepared) {
     if (pendingTimer) {
       return;
     }
     const elapsed = now() - lastSentAt;
     if (elapsed >= MIN_UPDATE_INTERVAL_MS) {
-      await transmit();
+      await transmit(false, prepared);
       return;
     }
     pendingTimer = setTimer(() => {
@@ -2010,7 +2030,12 @@ function createPresenceController({
         return;
       }
       const candidate = buildActivity(snapshot, currentSettings, now());
-      if (candidate && JSON.stringify(candidate) === lastSentSerialized) {
+      if (candidate) {
+        const serialized = JSON.stringify(candidate);
+        if (serialized === lastSentSerialized) {
+          return;
+        }
+        await schedule({ activity: candidate, serialized });
         return;
       }
       await schedule();
@@ -2024,10 +2049,7 @@ function createPresenceController({
       const previousBridge = lastSink === "bridge" && lastBridgeUrl != null ? { url: lastBridgeUrl, token: lastBridgeToken ?? "" } : null;
       currentSettings = nextSettings;
       if (!currentSettings.enabled || currentSettings.detailLevel === "off") {
-        if (pendingTimer) {
-          clearTimer(pendingTimer);
-          pendingTimer = null;
-        }
+        clearPendingTimer();
         await clearPresence();
         return;
       }
@@ -2051,29 +2073,20 @@ function createPresenceController({
       if (holdClear) {
         return;
       }
-      if (pendingTimer) {
-        clearTimer(pendingTimer);
-        pendingTimer = null;
-      }
+      clearPendingTimer();
       lastSentSerialized = null;
       emit("info", "discord.force_transmit");
       await transmit(true);
     },
     async clear() {
-      if (pendingTimer) {
-        clearTimer(pendingTimer);
-        pendingTimer = null;
-      }
+      clearPendingTimer();
       holdClear = true;
       emit("info", "discord.clear_hold");
       await clearPresence();
     },
     async reload() {
       holdClear = false;
-      if (pendingTimer) {
-        clearTimer(pendingTimer);
-        pendingTimer = null;
-      }
+      clearPendingTimer();
       lastSentSerialized = null;
       stopped = false;
       emit("info", "discord.reload");
@@ -2109,10 +2122,7 @@ function createPresenceController({
         return;
       }
       stopped = true;
-      if (pendingTimer) {
-        clearTimer(pendingTimer);
-        pendingTimer = null;
-      }
+      clearPendingTimer();
       await clearPresence();
       await client.close();
     }
@@ -2156,13 +2166,6 @@ function summarizePanelActivity(activity) {
     state: typeof activity.state === "string" ? activity.state : null
   };
 }
-var AGENT_ROW_PRIORITY = {
-  blocked: 4,
-  waiting: 3,
-  working: 2,
-  done: 1,
-  idle: 0
-};
 var PANEL_TITLE_MAX = 80;
 function panelTitle(title) {
   const text = typeof title === "string" ? title.trim() : "";
@@ -2175,7 +2178,7 @@ function panelOutcome(outcome) {
   return outcome === "failure" || outcome === "interruption" ? outcome : undefined;
 }
 function summarizePanelAgents(slots, options = {}) {
-  return [...slots].sort((a, b) => AGENT_ROW_PRIORITY[b.canonicalState] - AGENT_ROW_PRIORITY[a.canonicalState] || (a.stateStartedAt ?? a.receivedAt) - (b.stateStartedAt ?? b.receivedAt)).map((slot) => {
+  return [...slots].sort((a, b) => AGENT_STATE_PRIORITY[b.canonicalState] - AGENT_STATE_PRIORITY[a.canonicalState] || (a.stateStartedAt ?? a.receivedAt) - (b.stateStartedAt ?? b.receivedAt)).map((slot) => {
     const title = panelTitle(slot.title);
     const taskTitle = panelTitle(slot.taskTitle);
     const outcome = panelOutcome(slot.outcome);
@@ -2351,19 +2354,19 @@ function renderStatusBar({
 // src/presence/timeline.ts
 var TIMELINE_MINUTES = 30;
 var MINUTE_MS = 60000;
-var PRIORITY2 = {
-  blocked: 4,
-  waiting: 3,
-  working: 2,
-  completed: 1,
-  idle: 0
+var PRIORITY = {
+  blocked: AGENT_STATE_PRIORITY.blocked,
+  waiting: AGENT_STATE_PRIORITY.waiting,
+  working: AGENT_STATE_PRIORITY.working,
+  completed: AGENT_STATE_PRIORITY.done,
+  idle: AGENT_STATE_PRIORITY.idle
 };
 function timelineStateFor(agentState) {
   return agentState === undefined ? "idle" : agentState === "done" ? "completed" : agentState;
 }
 var TIMELINE_STATES = new Set(["working", "waiting", "blocked", "completed", "idle"]);
 function orderStates(states) {
-  const unique = [...new Set(states)].sort((a, b) => PRIORITY2[b] - PRIORITY2[a]);
+  const unique = [...new Set(states)].sort((a, b) => PRIORITY[b] - PRIORITY[a]);
   const active = unique.filter((state) => state !== "idle");
   return active.length > 0 ? active : ["idle"];
 }

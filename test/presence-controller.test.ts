@@ -416,10 +416,21 @@ test('a panel-layout-only settings change keeps a clear hold and sends nothing',
   await controller.update({ displayName: 'repo', agentState: 'working', terminalCount: 1 })
   await controller.clear()
   const sent = activities.length
-  await controller.setSettings({ ...controller.settings(), hiddenPanels: 'strip,logs' })
+  await controller.setSettings({
+    ...controller.settings(),
+    hiddenPanels: 'strip,logs',
+    panelOrder: 'agents,preview',
+    showLeaderboards: true
+  })
   expect(controller.status().heldClear).toBe(true)
   expect(activities.length).toBe(sent)
   expect(controller.settings().hiddenPanels).toBe('strip,logs')
+  expect(controller.settings().panelOrder).toBe('agents,preview')
+  expect(controller.settings().showLeaderboards).toBe(true)
+  // showSessionStats affects Discord activity, so enabling it lifts the clear hold and transmits.
+  await controller.setSettings({ ...controller.settings(), showSessionStats: 'tokens' })
+  expect(controller.status().heldClear).toBe(false)
+  expect(activities.length).toBe(sent + 1)
 })
 
 test('disabling the bridge after a remote publish clears the companion', async () => {

@@ -151,14 +151,8 @@ export type PresenceController = {
    * Re-`SET_ACTIVITY` even when the rendered JSON is unchanged.
    *
    * Why: Discord (or another IPC client) can replace our activity after we
-   * recorded a successful send. The 90 s heartbeat and **Show Status** use
-   * this so a later client does not leave a stale “already sent” skip.
-   */
-  /**
-   * Re-`SET_ACTIVITY` even when the rendered JSON is unchanged.
-   *
-   * `resume` (Show Status) lifts a Clear hold. The 90 s heartbeat must
-   * call this without `resume` so a transient clear stays clear.
+   * recorded a successful send. `resume` (Show Status) lifts a Clear hold;
+   * the 90 s heartbeat calls this without `resume` so a transient clear stays clear.
    */
   forceTransmit: (resume?: boolean) => Promise<void>
   /**
@@ -275,15 +269,25 @@ export function createPresenceController({
     }
   }
 
+  function clearPendingTimer() {
+    if (pendingTimer) {
+      clearTimer(pendingTimer)
+      pendingTimer = null
+    }
+  }
+
   /**
    * Publish policy: prefer local Discord IPC when the handshake succeeds.
    * Otherwise POST to the companion when {@link resolveBridgeTarget} is set.
    * Never dual-publish — if we switch from bridge to local, clear the remote.
    */
-  async function transmit(force = false) {
+  async function transmit(
+    force = false,
+    prepared?: { activity: DiscordActivity; serialized: string }
+  ) {
     const before = `${localFailing}|${bridgeFailing}`
     try {
-      await transmitOnce(force)
+      await transmitOnce(force, prepared)
     } finally {
       if (`${localFailing}|${bridgeFailing}` !== before) {
         onHealthChange()
@@ -291,17 +295,20 @@ export function createPresenceController({
     }
   }
 
-  async function transmitOnce(force: boolean) {
+  async function transmitOnce(
+    force: boolean,
+    prepared?: { activity: DiscordActivity; serialized: string }
+  ) {
     pendingTimer = null
     if (!snapshot) {
       return
     }
-    const activity = buildActivity(snapshot, currentSettings, now())
+    const activity = prepared ? prepared.activity : buildActivity(snapshot, currentSettings, now())
     if (!activity) {
       await clearPresence()
       return
     }
-    const serialized = JSON.stringify(activity)
+    const serialized = prepared ? prepared.serialized : JSON.stringify(activity)
     if (!force && serialized === lastSentSerialized) {
       return
     }
@@ -386,13 +393,13 @@ export function createPresenceController({
     }
   }
 
-  async function schedule() {
+  async function schedule(prepared?: { activity: DiscordActivity; serialized: string }) {
     if (pendingTimer) {
       return
     }
     const elapsed = now() - lastSentAt
     if (elapsed >= MIN_UPDATE_INTERVAL_MS) {
-      await transmit()
+      await transmit(false, prepared)
       return
     }
     pendingTimer = setTimer(() => {
@@ -421,7 +428,12 @@ export function createPresenceController({
       // Cheap pre-check: skip scheduling when the rendered activity is
       // unchanged, so a chatty event stream costs nothing.
       const candidate = buildActivity(snapshot, currentSettings, now())
-      if (candidate && JSON.stringify(candidate) === lastSentSerialized) {
+      if (candidate) {
+        const serialized = JSON.stringify(candidate)
+        if (serialized === lastSentSerialized) {
+          return
+        }
+        await schedule({ activity: candidate, serialized })
         return
       }
       await schedule()
@@ -440,10 +452,7 @@ export function createPresenceController({
           : null
       currentSettings = nextSettings
       if (!currentSettings.enabled || currentSettings.detailLevel === 'off') {
-        if (pendingTimer) {
-          clearTimer(pendingTimer)
-          pendingTimer = null
-        }
+        clearPendingTimer()
         await clearPresence()
         return
       }
@@ -468,29 +477,20 @@ export function createPresenceController({
       if (holdClear) {
         return
       }
-      if (pendingTimer) {
-        clearTimer(pendingTimer)
-        pendingTimer = null
-      }
+      clearPendingTimer()
       lastSentSerialized = null
       emit('info', 'discord.force_transmit')
       await transmit(true)
     },
     async clear() {
-      if (pendingTimer) {
-        clearTimer(pendingTimer)
-        pendingTimer = null
-      }
+      clearPendingTimer()
       holdClear = true
       emit('info', 'discord.clear_hold')
       await clearPresence()
     },
     async reload() {
       holdClear = false
-      if (pendingTimer) {
-        clearTimer(pendingTimer)
-        pendingTimer = null
-      }
+      clearPendingTimer()
       lastSentSerialized = null
       stopped = false
       emit('info', 'discord.reload')
@@ -526,10 +526,7 @@ export function createPresenceController({
         return
       }
       stopped = true
-      if (pendingTimer) {
-        clearTimer(pendingTimer)
-        pendingTimer = null
-      }
+      clearPendingTimer()
       await clearPresence()
       await client.close()
     }
