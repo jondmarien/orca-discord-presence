@@ -52,6 +52,19 @@ jobs:
       - name: Committed build is up to date
         run: git diff --exit-code -- dist/main.js panel/index.html
 
+      - name: Extract changelog
+        run: |
+          set -euo pipefail
+          awk -v heading="## [${VERSION}]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > changelog.md
+          if ! grep -q '[^[:space:]]' changelog.md; then
+            echo "CHANGELOG.md has no entry for ${VERSION}; add one before tagging." >&2
+            exit 1
+          fi
+
       - name: Pack plugin zip
         run: |
           set -euo pipefail
@@ -73,6 +86,10 @@ jobs:
           ## Rich Presence for Discord ${VERSION}
 
           Plugin id: \`jondmarien.discord-presence\`
+
+          ## Changelog
+
+          $(cat changelog.md)
 
           ### Install
 

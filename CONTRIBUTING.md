@@ -72,7 +72,7 @@ This plugin sends data to Discord, so privacy rules are strict. [docs/privacy.md
 
 1. Bump the version in `package.json`, `orca-plugin.json`, `src/version.ts` and the README badge, then rebuild.
 2. Move the `Unreleased` changelog entries under the new version.
-3. Merge to `main`, then tag the merge commit `vX.Y.Z`. The `release.yml` workflow checks that the versions match and creates the GitHub Release. orca.dev picks up the new tag on its own.
+3. Merge to `main`, then tag the merge commit `vX.Y.Z`. The `release.yml` workflow checks that the versions match and that `CHANGELOG.md` has a non-empty `## [X.Y.Z]` section, then publishes the GitHub Release with that section as its changelog. orca.dev picks up the new tag on its own.
 
 ## License
 
