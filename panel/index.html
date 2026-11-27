@@ -2883,16 +2883,17 @@ function setOrder(nextList) {
   applyDomOrder(nextList)
   var settingVal = orderSettingValue(blockOrder)
   callHost('storage.set', { key: ORDER_KEY, value: settingVal ? blockOrder.slice() : [] })
-  var mirror = function () {
+  // Why: a drop or reset is a rare, discrete action, so the setting is mirrored
+  // at once (no debounce). Closing the panel right after a drag can then never
+  // leave the worker holding an older `panelOrder` than storage.
+  if (orderSettingsTimer) {
+    clearTimeout(orderSettingsTimer)
     orderSettingsTimer = null
-    awaitingOrderEcho = settingVal
-    callHost('settings.set', { key: ORDER_SETTING, value: settingVal }, function () {
-      if (awaitingOrderEcho === settingVal) awaitingOrderEcho = null
-    })
   }
-  if (typeof setTimeout !== 'function') return mirror()
-  if (orderSettingsTimer) clearTimeout(orderSettingsTimer)
-  orderSettingsTimer = setTimeout(mirror, SETTINGS_MIRROR_DELAY_MS)
+  awaitingOrderEcho = settingVal
+  callHost('settings.set', { key: ORDER_SETTING, value: settingVal }, function () {
+    if (awaitingOrderEcho === settingVal) awaitingOrderEcho = null
+  })
 }
 
 function loadOrder() {
