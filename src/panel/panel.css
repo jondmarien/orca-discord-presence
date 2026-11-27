@@ -961,19 +961,25 @@ pre.log {
   .mix {
     height: 10px;
   }
-  .lb-head,
+  /* Keep both metric sort buttons reachable at narrow widths; hide only the inactive data column. */
+  .lb-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+  }
+  .lb-col-ws {
+    flex: 1 0 100%;
+  }
   .lb-row-top {
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  .lb-head [data-lb-sort='messages'],
   .lb-row-top .lb-msg {
     display: none;
   }
-  #leaderboards-card[data-lb-metric='messages'] .lb-head [data-lb-sort='messages'],
   #leaderboards-card[data-lb-metric='messages'] .lb-row-top .lb-msg {
     display: block;
   }
-  #leaderboards-card[data-lb-metric='messages'] .lb-head [data-lb-sort='tokens'],
   #leaderboards-card[data-lb-metric='messages'] .lb-row-top .lb-tok {
     display: none;
   }

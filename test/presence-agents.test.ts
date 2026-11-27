@@ -424,4 +424,18 @@ test('Host API 1.7-1.9: workspaceListId, mainAgent, task.title, and sessionId fa
   expect(parseWorkspaceRemovedIds({ workspaceId: 'a', workspaceListId: 'ws-list-2' })).toEqual(['a', 'ws-list-2'])
   expect(table.removeWorkspace(['ws-list-2'])).toBe(true)
   expect(table.slots()).toHaveLength(0)
+
+  // Mismatched mainAgent.state vs pane state must not adopt mainAgent.stateStartedAt or outcome.
+  const mismatched = parseAgentStatusPayload(
+    {
+      workspaceId: 'w',
+      paneKey: 'p',
+      state: 'working',
+      receivedAt: 9000,
+      mainAgent: { state: 'done', outcome: 'failure', stateStartedAt: 4000 }
+    },
+    9000
+  )
+  expect(mismatched?.stateStartedAt).toBeUndefined()
+  expect(mismatched?.outcome).toBeUndefined()
 })

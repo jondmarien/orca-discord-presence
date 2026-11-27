@@ -138,9 +138,10 @@ export type PresenceStatus = {
 export type PresenceController = {
   /**
    * Merge a partial snapshot and schedule or skip a Discord write.
-   * Pass `{ resume: true }` to lift a {@link PresenceController.clear} hold.
+   * Pass `{ resume: true }` to lift a {@link PresenceController.clear} hold, or
+   * `{ silent: true }` to merge fields before an immediate {@link setSettings}.
    */
-  update: (nextSnapshot: PresenceSnapshot, options?: { resume?: boolean }) => Promise<void>
+  update: (nextSnapshot: PresenceSnapshot, options?: { resume?: boolean; silent?: boolean }) => Promise<void>
   /**
    * Replace settings. Disable / `off` clears immediately. Other changes
    * transmit at once (debounce bypass) so a command feels instant.
@@ -405,7 +406,7 @@ export function createPresenceController({
         holdClear = false
       }
       snapshot = { ...snapshot, ...nextSnapshot }
-      if (holdClear) {
+      if (options?.silent || holdClear) {
         return
       }
       if (!currentSettings.enabled || currentSettings.detailLevel === 'off') {

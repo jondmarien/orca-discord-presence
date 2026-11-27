@@ -702,11 +702,14 @@ function parseAgentStatusPayload(payload, nowMs) {
   }
   if (source.mainAgent && typeof source.mainAgent === "object") {
     const main = source.mainAgent;
-    if (typeof main.stateStartedAt === "number" && Number.isFinite(main.stateStartedAt)) {
-      event.stateStartedAt = main.stateStartedAt;
-    }
-    if (typeof main.outcome === "string" && main.outcome.trim().length > 0) {
-      event.outcome = main.outcome.trim();
+    const statesMatch = typeof main.state !== "string" || canonicalizeAgentState(main.state) === canonicalizeAgentState(source.state);
+    if (statesMatch) {
+      if (typeof main.stateStartedAt === "number" && Number.isFinite(main.stateStartedAt)) {
+        event.stateStartedAt = main.stateStartedAt;
+      }
+      if (typeof main.outcome === "string" && main.outcome.trim().length > 0) {
+        event.outcome = main.outcome.trim();
+      }
     }
   }
   return event;
@@ -1994,7 +1997,7 @@ function createPresenceController({
         holdClear = false;
       }
       snapshot = { ...snapshot, ...nextSnapshot };
-      if (holdClear) {
+      if (options?.silent || holdClear) {
         return;
       }
       if (!currentSettings.enabled || currentSettings.detailLevel === "off") {
@@ -2462,6 +2465,8 @@ var HEARTBEAT_MS = 90000;
 var DETECT_MIN_INTERVAL_MS = 60000;
 var WORKSPACE_LIST_MIN_INTERVAL_MS = 5000;
 var MAX_WORKSPACE_AGENT_FANOUT = 20;
+var WORKSPACE_AGENT_CONCURRENCY = 5;
+var STARTUP_SYNC_BUDGET_MS = 2500;
 var SESSIONS_MIN_INTERVAL_MS = 30000;
 var SESSIONS_LIST_LIMIT = 200;
 var PANEL_POST_DEBOUNCE_MS = 2000;
@@ -2551,6 +2556,8 @@ var sessionsCache = [];
 var focusedWorkspaceId;
 var focusedHostKind;
 var focusHandles = new Map;
+var terminalToFocusKey = new Map;
+var nextFocusHandleId = 1;
 function publicConfigureView(settings) {
   return {
     applicationId: settings.applicationId,
@@ -2566,18 +2573,20 @@ function currentPanelSnapshot() {
     return null;
   }
   const currentSettings = controller.settings();
-  const nextHandles = new Map;
-  let handleIndex = 0;
   const focusKeyOf = (slot) => {
     if (!slot.terminalId) {
       return;
     }
-    const key = `a${handleIndex++}`;
-    nextHandles.set(key, slot.terminalId);
+    let key = terminalToFocusKey.get(slot.terminalId);
+    if (!key) {
+      key = `a${nextFocusHandleId++}`;
+      terminalToFocusKey.set(slot.terminalId, key);
+      focusHandles.set(key, slot.terminalId);
+    }
     return key;
   };
   const leaderboardRows = currentSettings.showLeaderboards ? buildWorkspaceLeaderboard(sessionsCache, workspacesById) : [];
-  const snapshot = buildPresencePanelSnapshot({
+  return buildPresencePanelSnapshot({
     version: PLUGIN_VERSION,
     status: controller.status(),
     settings: currentSettings,
@@ -2588,8 +2597,6 @@ function currentPanelSnapshot() {
     focusKeyOf,
     leaderboardRows
   });
-  focusHandles = nextHandles;
-  return snapshot;
 }
 function publishPanelSnapshot(mode) {
   const flush = () => {
@@ -2629,6 +2636,8 @@ async function activate(orca, deps = {}) {
   focusedWorkspaceId = undefined;
   focusedHostKind = undefined;
   focusHandles = new Map;
+  terminalToFocusKey = new Map;
+  nextFocusHandleId = 1;
   let lastWorkspaceListAt = 0;
   let lastSessionsAt = 0;
   const stored = await orca.host.call("settings.get").catch(() => ({ settings: {} }));
@@ -2815,10 +2824,11 @@ async function activate(orca, deps = {}) {
         await refresh(undefined, { force: true });
       }
     } else {
-      await controller?.setSettings(nextSettings);
-      if (sessionStatsChanged && nextSettings.showSessionStats !== "off" && !deactivated) {
-        await refresh(undefined, { force: true, resume: true });
+      if (sessionStatsChanged && !deactivated) {
+        const activeStats = nextSettings.showSessionStats !== "off" ? resolveActiveSessionStats(agentTable?.slots() ?? [], sessionsCache, focusedWorkspaceId) : undefined;
+        await controller?.update({ sessionTokens: activeStats?.tokens, sessionMessages: activeStats?.messages }, { silent: true });
       }
+      await controller?.setSettings(nextSettings);
     }
     publishStatusBar();
     publishPanelSnapshot("immediate");
@@ -2886,7 +2896,7 @@ async function activate(orca, deps = {}) {
     const context = options.context !== undefined ? options.context : await orca.host.call("workspace.readContext").catch(() => null);
     const wsId = typeof context?.workspaceId === "string" && context.workspaceId.length > 0 ? context.workspaceId : undefined;
     focusedWorkspaceId = wsId;
-    if (wsId && !workspacesById.has(wsId)) {
+    if (wsId && !workspacesById.has(wsId) || options.force || settings.showLeaderboards) {
       await syncWorkspaces(false);
     }
     const wsInfo = wsId ? workspacesById.get(wsId) : undefined;
@@ -3144,21 +3154,30 @@ async function activate(orca, deps = {}) {
       const active = workspaces.filter((ws) => ws.statusState !== "inactive" || ws.terminalCount > 0).slice(0, MAX_WORKSPACE_AGENT_FANOUT);
       if (active.length > 0) {
         let queried = 0;
-        for (const ws of active) {
+        let rateLimited = false;
+        for (let i = 0;i < active.length && !rateLimited; i += WORKSPACE_AGENT_CONCURRENCY) {
           if (deactivated) {
             return;
           }
-          try {
-            const listed = await orca.host.call("agents.list", { workspaceId: ws.id });
-            recordListedAgents(listed, ws.id);
-            queried += 1;
-          } catch (error) {
-            const code = error?.code;
-            if (code === "rate_limited") {
-              diagnostics?.line("warn", "agents.list_rate_limited", { queried, total: active.length });
-              break;
+          const batch = active.slice(i, i + WORKSPACE_AGENT_CONCURRENCY);
+          await Promise.all(batch.map(async (ws) => {
+            if (deactivated || rateLimited) {
+              return;
             }
-          }
+            try {
+              const listed = await orca.host.call("agents.list", { workspaceId: ws.id });
+              recordListedAgents(listed, ws.id);
+              queried += 1;
+            } catch (error) {
+              const code = error?.code;
+              if (code === "rate_limited") {
+                rateLimited = true;
+              }
+            }
+          }));
+        }
+        if (rateLimited) {
+          diagnostics?.line("warn", "agents.list_rate_limited", { queried, total: active.length });
         }
         if (queried > 0) {
           return;
@@ -3199,8 +3218,21 @@ async function activate(orca, deps = {}) {
     await syncAgentsFromList(context?.workspaceId ? { workspaceId: context.workspaceId } : {});
     await refresh(undefined, { context });
   });
-  await syncAgentsFromList({ allWorkspaces: true });
-  await syncSessionsIfNeeded(true);
+  const startupSeed = Promise.all([
+    syncAgentsFromList({ allWorkspaces: true }),
+    syncSessionsIfNeeded(true)
+  ]).catch(() => {});
+  let startupTimer = null;
+  await Promise.race([
+    startupSeed,
+    new Promise((resolve) => {
+      startupTimer = setTimeout(resolve, STARTUP_SYNC_BUDGET_MS);
+      startupTimer.unref?.();
+    })
+  ]);
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+  }
   if (orca.settings?.onDidChange) {
     settingsSubscription = orca.settings.onDidChange(() => {
       if (settingsChangeTimer) {
@@ -3273,6 +3305,8 @@ async function deactivate() {
   focusedWorkspaceId = undefined;
   focusedHostKind = undefined;
   focusHandles.clear();
+  terminalToFocusKey.clear();
+  nextFocusHandleId = 1;
   await controller?.stop();
   controller = null;
   diagnostics = null;

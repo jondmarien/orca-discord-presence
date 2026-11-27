@@ -182,11 +182,18 @@ export function parseAgentStatusPayload(payload: unknown, nowMs: number): AgentS
   }
   if (source.mainAgent && typeof source.mainAgent === 'object') {
     const main = source.mainAgent as Record<string, unknown>
-    if (typeof main.stateStartedAt === 'number' && Number.isFinite(main.stateStartedAt)) {
-      event.stateStartedAt = main.stateStartedAt
-    }
-    if (typeof main.outcome === 'string' && main.outcome.trim().length > 0) {
-      event.outcome = main.outcome.trim()
+    // Why: Orca can keep a pane `working` after `mainAgent` finishes (`done`).
+    // Only pair `mainAgent.stateStartedAt` / `outcome` when both states agree.
+    const statesMatch =
+      typeof main.state !== 'string' ||
+      canonicalizeAgentState(main.state) === canonicalizeAgentState(source.state)
+    if (statesMatch) {
+      if (typeof main.stateStartedAt === 'number' && Number.isFinite(main.stateStartedAt)) {
+        event.stateStartedAt = main.stateStartedAt
+      }
+      if (typeof main.outcome === 'string' && main.outcome.trim().length > 0) {
+        event.outcome = main.outcome.trim()
+      }
     }
   }
   return event

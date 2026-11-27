@@ -91,6 +91,12 @@ const WORKSPACE_LIST_MIN_INTERVAL_MS = 5_000
  */
 const MAX_WORKSPACE_AGENT_FANOUT = 20
 
+/** Concurrency cap for cross-workspace `agents.list` fan-out. */
+const WORKSPACE_AGENT_CONCURRENCY = 5
+
+/** Time budget (ms) for startup workspace/session seeding so activate() stays well inside Orca's 10s limit. */
+const STARTUP_SYNC_BUDGET_MS = 2_500
+
 /**
  * Minimum gap between `agent.listSessions` history polls when session stats or
  * Leaderboards are enabled. Never called when both are off.
@@ -346,6 +352,8 @@ let sessionsCache: SessionMetrics[] = []
 let focusedWorkspaceId: string | undefined
 let focusedHostKind: WorkspaceHostKind | undefined
 let focusHandles = new Map<string, string>()
+let terminalToFocusKey = new Map<string, string>()
+let nextFocusHandleId = 1
 
 /**
  * Public configure view (no bridge token). Used by **Configure** help/result.
@@ -370,20 +378,24 @@ function currentPanelSnapshot() {
     return null
   }
   const currentSettings = controller.settings()
-  const nextHandles = new Map<string, string>()
-  let handleIndex = 0
+  // Why: monotonic per-terminalId handles ensure reordering or exits never
+  // redirect a click from an older snapshot to a different terminal.
   const focusKeyOf = (slot: AgentSlot): string | undefined => {
     if (!slot.terminalId) {
       return undefined
     }
-    const key = `a${handleIndex++}`
-    nextHandles.set(key, slot.terminalId)
+    let key = terminalToFocusKey.get(slot.terminalId)
+    if (!key) {
+      key = `a${nextFocusHandleId++}`
+      terminalToFocusKey.set(slot.terminalId, key)
+      focusHandles.set(key, slot.terminalId)
+    }
     return key
   }
   const leaderboardRows = currentSettings.showLeaderboards
     ? buildWorkspaceLeaderboard(sessionsCache, workspacesById)
     : []
-  const snapshot = buildPresencePanelSnapshot({
+  return buildPresencePanelSnapshot({
     version: PLUGIN_VERSION,
     status: controller.status(),
     settings: currentSettings,
@@ -394,8 +406,6 @@ function currentPanelSnapshot() {
     focusKeyOf,
     leaderboardRows
   })
-  focusHandles = nextHandles
-  return snapshot
 }
 
 /**
@@ -460,6 +470,8 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   focusedWorkspaceId = undefined
   focusedHostKind = undefined
   focusHandles = new Map()
+  terminalToFocusKey = new Map()
+  nextFocusHandleId = 1
   let lastWorkspaceListAt = 0
   let lastSessionsAt = 0
   const stored = (await orca.host.call('settings.get').catch(() => ({ settings: {} }))) as {
@@ -702,12 +714,19 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
         await refresh(undefined, { force: true })
       }
     } else {
-      await controller?.setSettings(nextSettings)
-      if (sessionStatsChanged && nextSettings.showSessionStats !== 'off' && !deactivated) {
-        // Why: forceTransmit bypasses the 15s debounce that setSettings just reset,
-        // so selecting Tokens / Messages / Both updates Discord and preview immediately.
-        await refresh(undefined, { force: true, resume: true })
+      if (sessionStatsChanged && !deactivated) {
+        const activeStats =
+          nextSettings.showSessionStats !== 'off'
+            ? resolveActiveSessionStats(agentTable?.slots() ?? [], sessionsCache, focusedWorkspaceId)
+            : undefined
+        // Why: merge fresh session stats silently before setSettings so Discord
+        // receives exactly one SET_ACTIVITY with the updated stats.
+        await controller?.update(
+          { sessionTokens: activeStats?.tokens, sessionMessages: activeStats?.messages },
+          { silent: true }
+        )
       }
+      await controller?.setSettings(nextSettings)
     }
     publishStatusBar()
     publishPanelSnapshot('immediate')
@@ -818,7 +837,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
         : ((await orca.host.call('workspace.readContext').catch(() => null)) as WorkspaceContext | null)
     const wsId = typeof context?.workspaceId === 'string' && context.workspaceId.length > 0 ? context.workspaceId : undefined
     focusedWorkspaceId = wsId
-    if (wsId && !workspacesById.has(wsId)) {
+    if ((wsId && !workspacesById.has(wsId)) || options.force || settings.showLeaderboards) {
       await syncWorkspaces(false)
     }
     const wsInfo = wsId ? workspacesById.get(wsId) : undefined
@@ -1141,21 +1160,32 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
         .slice(0, MAX_WORKSPACE_AGENT_FANOUT)
       if (active.length > 0) {
         let queried = 0
-        for (const ws of active) {
+        let rateLimited = false
+        for (let i = 0; i < active.length && !rateLimited; i += WORKSPACE_AGENT_CONCURRENCY) {
           if (deactivated) {
             return
           }
-          try {
-            const listed = await orca.host.call('agents.list', { workspaceId: ws.id })
-            recordListedAgents(listed, ws.id)
-            queried += 1
-          } catch (error) {
-            const code = (error as { code?: unknown } | null)?.code
-            if (code === 'rate_limited') {
-              diagnostics?.line('warn', 'agents.list_rate_limited', { queried, total: active.length })
-              break
-            }
-          }
+          const batch = active.slice(i, i + WORKSPACE_AGENT_CONCURRENCY)
+          await Promise.all(
+            batch.map(async (ws) => {
+              if (deactivated || rateLimited) {
+                return
+              }
+              try {
+                const listed = await orca.host.call('agents.list', { workspaceId: ws.id })
+                recordListedAgents(listed, ws.id)
+                queried += 1
+              } catch (error) {
+                const code = (error as { code?: unknown } | null)?.code
+                if (code === 'rate_limited') {
+                  rateLimited = true
+                }
+              }
+            })
+          )
+        }
+        if (rateLimited) {
+          diagnostics?.line('warn', 'agents.list_rate_limited', { queried, total: active.length })
         }
         if (queried > 0) {
           return
@@ -1201,9 +1231,23 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   })
 
   // Why: seed the table with agents already running across Orca when the worker
-  // starts, so presence is right before the next status event.
-  await syncAgentsFromList({ allWorkspaces: true })
-  await syncSessionsIfNeeded(true)
+  // starts, bounded by STARTUP_SYNC_BUDGET_MS so slow SSH hosts never push
+  // activate() past Orca's 10s ready timeout.
+  const startupSeed = Promise.all([
+    syncAgentsFromList({ allWorkspaces: true }),
+    syncSessionsIfNeeded(true)
+  ]).catch(() => {})
+  let startupTimer: ReturnType<typeof setTimeout> | null = null
+  await Promise.race([
+    startupSeed,
+    new Promise<void>((resolve) => {
+      startupTimer = setTimeout(resolve, STARTUP_SYNC_BUDGET_MS)
+      startupTimer.unref?.()
+    })
+  ])
+  if (startupTimer) {
+    clearTimeout(startupTimer)
+  }
 
   // Why: the person can edit settings in Orca's Settings page while the worker
   // runs. Re-read and apply without a reload. Debounced so a multi-key
@@ -1306,6 +1350,8 @@ export async function deactivate() {
   focusedWorkspaceId = undefined
   focusedHostKind = undefined
   focusHandles.clear()
+  terminalToFocusKey.clear()
+  nextFocusHandleId = 1
   await controller?.stop()
   controller = null
   diagnostics = null

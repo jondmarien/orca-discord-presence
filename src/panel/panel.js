@@ -984,7 +984,6 @@ function run(command, doneMessage) {
 // setting mirrors it for the Settings page and arrives in the snapshot as
 // `order`. Follows the same storage-wins + echo-guard contract as hiddenPanels.
 var blockOrder = DEFAULT_BLOCK_ORDER.slice()
-var orderFromStorage = false
 var settingsOrderSig = null
 var orderSettingsTimer = null
 var awaitingOrderEcho = null
@@ -1056,8 +1055,11 @@ function announceOrder(message) {
   setText('order-live', message)
 }
 
+var orderFromUser = false
+var orderFromSnapshot = false
+
 function setOrder(nextList) {
-  orderFromStorage = true
+  orderFromUser = true
   applyDomOrder(nextList)
   var settingVal = orderSettingValue(blockOrder)
   callHost('storage.set', { key: ORDER_KEY, value: settingVal ? blockOrder.slice() : [] })
@@ -1083,8 +1085,9 @@ function loadOrder() {
     .then(
       function (result) {
         var raw = Array.isArray(result) ? result : storedView(result)
-        if (!Array.isArray(raw) || orderFromStorage) return
-        orderFromStorage = true
+        // Why: storage is only a fast startup fallback before the user drags
+        // or the authoritative worker snapshot delivers `settings.panelOrder`.
+        if (!Array.isArray(raw) || orderFromUser || orderFromSnapshot) return
         applyDomOrder(raw)
       },
       function () {}
@@ -1103,15 +1106,12 @@ function syncOrderSetting(snapshot) {
     return
   }
   if (signature === settingsOrderSig) return
-  var first = settingsOrderSig === null
   settingsOrderSig = signature
-  if ((first && orderFromStorage) || signature === orderSettingValue(blockOrder)) return
+  orderFromSnapshot = true
+  if (signature === orderSettingValue(blockOrder)) return
   if (blockReorder && blockReorder.dragging()) return
   applyDomOrder(normalized)
-  if (!first) {
-    orderFromStorage = true
-    callHost('storage.set', { key: ORDER_KEY, value: signature ? blockOrder.slice() : [] })
-  }
+  callHost('storage.set', { key: ORDER_KEY, value: signature ? blockOrder.slice() : [] })
 }
 
 function wireReorder() {

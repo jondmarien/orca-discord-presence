@@ -468,3 +468,36 @@ test('keyboard Alt+ArrowUp/Down reorders, announces, keeps hidden slots and Mini
   expect(order.indexOf('actions')).toBe(1)
   expect(order.indexOf('detail')).toBeLessThan(order.indexOf('strip'))
 })
+
+test('closed-panel Settings edits (including clearing panelOrder) override stale storage on reopen', async () => {
+  const calls: Array<[string, Record<string, unknown>]> = []
+  const p = mountReorderPanel(async (name, input) => {
+    calls.push([name, input])
+    if (name === 'storage.get' && input.key === 'panelOrder') {
+      return ['logs', 'actions', 'preview', 'strip', 'tiles', 'sink', 'client', 'detail', 'agents', 'toggles', 'leaderboards']
+    }
+    return undefined
+  })
+  await settle()
+  // Fast startup paint from storage puts logs first.
+  expect(p.visibleOrder()[0]).toBe('logs')
+  // Authoritative worker snapshot arrives with panelOrder cleared in Settings (order: []).
+  p.hook.render({
+    version: '1.2.0',
+    generatedAt: '2026-11-26T00:00:00.000Z',
+    status: { enabled: true, connected: true, sink: 'local', detailLevel: 'generic', bridgeEnabled: false, debugLogging: false, lastActivity: null, logFile: null, client: null, clients: [], clientFallback: false },
+    fields: { enabled: true },
+    timeline: [],
+    agents: [],
+    activityCard: null,
+    logs: [],
+    logHint: '~/log',
+    hidden: [],
+    order: [],
+    leaderboards: { enabled: false, rows: [] }
+  })
+  await settle()
+  expect(p.visibleOrder()[0]).toBe('actions')
+  expect(p.byId.get('order-footer')?.className.includes('hidden')).toBe(true)
+  expect(calls.some(([n, i]) => n === 'storage.set' && i.key === 'panelOrder' && (i.value as string[]).length === 0)).toBe(true)
+})

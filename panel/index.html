@@ -976,19 +976,25 @@ pre.log {
   .mix {
     height: 10px;
   }
-  .lb-head,
+  /* Keep both metric sort buttons reachable at narrow widths; hide only the inactive data column. */
+  .lb-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+  }
+  .lb-col-ws {
+    flex: 1 0 100%;
+  }
   .lb-row-top {
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  .lb-head [data-lb-sort='messages'],
   .lb-row-top .lb-msg {
     display: none;
   }
-  #leaderboards-card[data-lb-metric='messages'] .lb-head [data-lb-sort='messages'],
   #leaderboards-card[data-lb-metric='messages'] .lb-row-top .lb-msg {
     display: block;
   }
-  #leaderboards-card[data-lb-metric='messages'] .lb-head [data-lb-sort='tokens'],
   #leaderboards-card[data-lb-metric='messages'] .lb-row-top .lb-tok {
     display: none;
   }
@@ -2798,7 +2804,6 @@ function run(command, doneMessage) {
 // setting mirrors it for the Settings page and arrives in the snapshot as
 // `order`. Follows the same storage-wins + echo-guard contract as hiddenPanels.
 var blockOrder = DEFAULT_BLOCK_ORDER.slice()
-var orderFromStorage = false
 var settingsOrderSig = null
 var orderSettingsTimer = null
 var awaitingOrderEcho = null
@@ -2870,8 +2875,11 @@ function announceOrder(message) {
   setText('order-live', message)
 }
 
+var orderFromUser = false
+var orderFromSnapshot = false
+
 function setOrder(nextList) {
-  orderFromStorage = true
+  orderFromUser = true
   applyDomOrder(nextList)
   var settingVal = orderSettingValue(blockOrder)
   callHost('storage.set', { key: ORDER_KEY, value: settingVal ? blockOrder.slice() : [] })
@@ -2897,8 +2905,9 @@ function loadOrder() {
     .then(
       function (result) {
         var raw = Array.isArray(result) ? result : storedView(result)
-        if (!Array.isArray(raw) || orderFromStorage) return
-        orderFromStorage = true
+        // Why: storage is only a fast startup fallback before the user drags
+        // or the authoritative worker snapshot delivers `settings.panelOrder`.
+        if (!Array.isArray(raw) || orderFromUser || orderFromSnapshot) return
         applyDomOrder(raw)
       },
       function () {}
@@ -2917,15 +2926,12 @@ function syncOrderSetting(snapshot) {
     return
   }
   if (signature === settingsOrderSig) return
-  var first = settingsOrderSig === null
   settingsOrderSig = signature
-  if ((first && orderFromStorage) || signature === orderSettingValue(blockOrder)) return
+  orderFromSnapshot = true
+  if (signature === orderSettingValue(blockOrder)) return
   if (blockReorder && blockReorder.dragging()) return
   applyDomOrder(normalized)
-  if (!first) {
-    orderFromStorage = true
-    callHost('storage.set', { key: ORDER_KEY, value: signature ? blockOrder.slice() : [] })
-  }
+  callHost('storage.set', { key: ORDER_KEY, value: signature ? blockOrder.slice() : [] })
 }
 
 function wireReorder() {
