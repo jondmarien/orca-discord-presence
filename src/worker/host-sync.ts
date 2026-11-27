@@ -1,0 +1,283 @@
+/**
+ * Cross-workspace host synchronization and throttled session-metrics cache.
+ *
+ * Owns `workspace.list({ includeStatus: true })`, bounded `agents.list({ workspaceId })`
+ * fan-out, evicting terminal kind-lookup tracking, and a unified TTL +
+ * in-flight-deduped `agent.listSessions` cache shared by Discord session stats
+ * and the panel Leaderboards card.
+ *
+ * @module worker/host-sync
+ * @author Jonathan Marien
+ * @date 2026-11-26
+ */
+
+import { parseAgentsList, type AgentTable } from '../presence/agents'
+import {
+  parseSessionsList,
+  parseWorkspaceList,
+  type SessionMetrics,
+  type WorkspaceHostKind,
+  type WorkspaceInfo
+} from '../presence/leaderboards'
+import type { DiagnosticSink } from '../presence/log'
+import type { PresenceSettings } from '../presence/settings'
+import type { Disposer, OrcaHost } from './host'
+
+/** Minimum gap between `workspace.list` metadata refreshes on routine events. */
+export const WORKSPACE_LIST_MIN_INTERVAL_MS = 5_000
+
+/** Cap per-workspace `agents.list({ workspaceId })` fan-out to avoid rate limits. */
+export const MAX_WORKSPACE_AGENT_FANOUT = 20
+
+/**
+ * Minimum gap between `agent.listSessions` history polls when session stats or
+ * Leaderboards are enabled. Never called when both are off.
+ */
+export const SESSIONS_MIN_INTERVAL_MS = 30_000
+
+/** Maximum sessions requested from `agent.listSessions`. */
+export const SESSIONS_LIST_LIMIT = 200
+
+/** Maximum retries to resolve an agent's CLI `kind` from `agents.list`. */
+export const KIND_LOOKUP_ATTEMPTS = 5
+
+export type HostSync = {
+  syncWorkspaces: (force?: boolean) => Promise<WorkspaceInfo[]>
+  syncSessionsIfNeeded: (settings: PresenceSettings, force?: boolean) => Promise<void>
+  syncAgentsFromList: (options?: { workspaceId?: string; allWorkspaces?: boolean }) => Promise<void>
+  /** Retry `agents.list` up to KIND_LOOKUP_ATTEMPTS times for terminals with unknown kind. */
+  ensureAgentKind: (terminalId: string | undefined, workspaceListId?: string) => Promise<void>
+  /** Evict terminal IDs from kind caches once they are no longer in `agentTable`. */
+  pruneKindCache: () => void
+  removeWorkspaces: (ids: readonly string[]) => void
+  resolveFocusedWorkspace: (wsId: string | undefined) => Promise<WorkspaceInfo | undefined>
+  setFocusedWorkspaceId: (wsId: string | undefined) => void
+  focusedHostKind: () => WorkspaceHostKind | undefined
+  workspaces: () => ReadonlyMap<string, WorkspaceInfo>
+  sessions: () => readonly SessionMetrics[]
+  clear: () => void
+}
+
+export function createHostSync({
+  host,
+  agentTable,
+  disposer,
+  diagnostics,
+  now = () => Date.now(),
+  workspaceListMinIntervalMs = WORKSPACE_LIST_MIN_INTERVAL_MS,
+  sessionsMinIntervalMs = SESSIONS_MIN_INTERVAL_MS
+}: {
+  host: OrcaHost['host']
+  agentTable: AgentTable
+  disposer: Disposer
+  diagnostics?: DiagnosticSink
+  now?: () => number
+  workspaceListMinIntervalMs?: number
+  sessionsMinIntervalMs?: number
+}): HostSync {
+  let workspacesById = new Map<string, WorkspaceInfo>()
+  let sessionsCache: SessionMetrics[] = []
+  let focusedWorkspaceId: string | undefined
+  let focusedHostKind: WorkspaceHostKind | undefined
+  let lastWorkspaceListAt = 0
+  let lastSessionsAt = 0
+  let inFlightSessions: Promise<void> | null = null
+
+  const kindAttempts = new Map<string, number>()
+  const kindKnown = new Set<string>()
+
+  function pruneKindCache() {
+    if (kindAttempts.size === 0 && kindKnown.size === 0) {
+      return
+    }
+    const activeTerminals = new Set<string>()
+    for (const slot of agentTable.slots()) {
+      if (slot.terminalId) {
+        activeTerminals.add(slot.terminalId)
+      }
+    }
+    for (const id of kindAttempts.keys()) {
+      if (!activeTerminals.has(id)) {
+        kindAttempts.delete(id)
+      }
+    }
+    for (const id of kindKnown) {
+      if (!activeTerminals.has(id)) {
+        kindKnown.delete(id)
+      }
+    }
+  }
+
+  function recordListedAgents(listed: unknown, workspaceListId?: string) {
+    for (const seeded of parseAgentsList(listed, now(), workspaceListId)) {
+      if (seeded.terminalId && seeded.kind) {
+        kindKnown.add(seeded.terminalId)
+        kindAttempts.delete(seeded.terminalId)
+      }
+      agentTable.upsert(seeded)
+    }
+    pruneKindCache()
+  }
+
+  async function syncWorkspaces(force = false): Promise<WorkspaceInfo[]> {
+    if (!host.has('workspace.list')) {
+      return [...workspacesById.values()]
+    }
+    const clock = now()
+    if (!force && lastWorkspaceListAt > 0 && clock - lastWorkspaceListAt < workspaceListMinIntervalMs) {
+      return [...workspacesById.values()]
+    }
+    lastWorkspaceListAt = clock
+    const listed = await host.call('workspace.list', { includeStatus: true }).catch(() => null)
+    if (disposer.isDisposed() || !listed) {
+      return [...workspacesById.values()]
+    }
+    const rows = parseWorkspaceList(listed)
+    const next = new Map<string, WorkspaceInfo>()
+    for (const row of rows) {
+      next.set(row.id, row)
+    }
+    workspacesById = next
+    return rows
+  }
+
+  async function syncSessionsIfNeeded(settings: PresenceSettings, force = false): Promise<void> {
+    if (settings.showSessionStats === 'off' && !settings.showLeaderboards) {
+      return
+    }
+    if (!host.has('agent.listSessions')) {
+      return
+    }
+    const clock = now()
+    if (!force && lastSessionsAt > 0 && clock - lastSessionsAt < sessionsMinIntervalMs) {
+      return
+    }
+    if (inFlightSessions) {
+      await inFlightSessions
+      return
+    }
+    lastSessionsAt = clock
+    const fetchPromise = (async () => {
+      const listed = await host
+        .call('agent.listSessions', { limit: SESSIONS_LIST_LIMIT })
+        .catch(() => null)
+      if (disposer.isDisposed() || !listed) {
+        return
+      }
+      // Why: parseSessionsList discards `session.title` immediately so titles never enter memory.
+      sessionsCache = parseSessionsList(listed)
+      let running = 0
+      let withTokens = 0
+      let withMessages = 0
+      for (const s of sessionsCache) {
+        if (s.running) running += 1
+        if (s.totalTokens > 0) withTokens += 1
+        if (s.messageCount > 0) withMessages += 1
+      }
+      diagnostics?.line('debug', 'sessions.sync', {
+        count: sessionsCache.length,
+        running,
+        withTokens,
+        withMessages
+      })
+    })().finally(() => {
+      if (inFlightSessions === fetchPromise) {
+        inFlightSessions = null
+      }
+    })
+    inFlightSessions = fetchPromise
+    await fetchPromise
+  }
+
+  async function syncAgentsFromList(options: { workspaceId?: string; allWorkspaces?: boolean } = {}) {
+    if (!host.has('agents.list')) {
+      return
+    }
+    if (options.workspaceId) {
+      const listed = await host
+        .call('agents.list', { workspaceId: options.workspaceId })
+        .catch(() => null)
+      recordListedAgents(listed, options.workspaceId)
+      return
+    }
+    if (options.allWorkspaces && host.has('workspace.list')) {
+      const workspaces = await syncWorkspaces(true)
+      const active = workspaces
+        .filter((ws) => ws.statusState !== 'inactive' || ws.terminalCount > 0)
+        .slice(0, MAX_WORKSPACE_AGENT_FANOUT)
+      if (active.length > 0) {
+        let queried = 0
+        for (const ws of active) {
+          if (disposer.isDisposed()) {
+            return
+          }
+          try {
+            const listed = await host.call('agents.list', { workspaceId: ws.id })
+            recordListedAgents(listed, ws.id)
+            queried += 1
+          } catch (error) {
+            const code = (error as { code?: unknown } | null)?.code
+            if (code === 'rate_limited') {
+              diagnostics?.line('warn', 'agents.list_rate_limited', { queried, total: active.length })
+              break
+            }
+          }
+        }
+        if (queried > 0) {
+          return
+        }
+      }
+    }
+    const listed = await host.call('agents.list').catch(() => null)
+    recordListedAgents(listed, focusedWorkspaceId)
+  }
+
+  return {
+    syncWorkspaces,
+    syncSessionsIfNeeded,
+    syncAgentsFromList,
+    async ensureAgentKind(terminalId, workspaceListId) {
+      if (!terminalId || kindKnown.has(terminalId)) {
+        return
+      }
+      const attempts = kindAttempts.get(terminalId) ?? 0
+      if (attempts < KIND_LOOKUP_ATTEMPTS) {
+        kindAttempts.set(terminalId, attempts + 1)
+        await syncAgentsFromList(workspaceListId ? { workspaceId: workspaceListId } : {})
+      }
+    },
+    pruneKindCache,
+    removeWorkspaces(ids) {
+      for (const id of ids) {
+        workspacesById.delete(id)
+      }
+      pruneKindCache()
+    },
+    async resolveFocusedWorkspace(wsId) {
+      focusedWorkspaceId = wsId
+      if (wsId && !workspacesById.has(wsId)) {
+        await syncWorkspaces(false)
+      }
+      const info = wsId ? workspacesById.get(wsId) : undefined
+      focusedHostKind = info?.hostKind
+      return info
+    },
+    setFocusedWorkspaceId(wsId) {
+      if (wsId) {
+        focusedWorkspaceId = wsId
+      }
+    },
+    focusedHostKind: () => focusedHostKind,
+    workspaces: () => workspacesById,
+    sessions: () => sessionsCache,
+    clear() {
+      workspacesById.clear()
+      sessionsCache = []
+      focusedWorkspaceId = undefined
+      focusedHostKind = undefined
+      kindAttempts.clear()
+      kindKnown.clear()
+      inFlightSessions = null
+    }
+  }
+}
