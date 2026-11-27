@@ -10,6 +10,9 @@
 import { REQUEST_TIMEOUT_MS, SETTINGS_MIRROR_DELAY_MS } from './sections'
 
 export type OrcaPanelApi = {
+  shell?: {
+    openExternal?: (url: string) => Promise<{ opened: boolean }>
+  }
   plugin?: {
     request?: (name: string, input?: unknown, opts?: { timeoutMs?: number }) => Promise<unknown>
     on?: (name: string, fn: (payload: unknown) => void) => void

@@ -8,6 +8,7 @@
  */
 
 import type { PresencePanelSnapshot } from '../presence/panel-snapshot'
+import { PLUGIN_VERSION } from '../version'
 import { renderControls, wireActionButtons, wireControls, wireLogs } from './controls'
 import { $, errorText, flash, setAttr, setText } from './dom'
 import { getOrca, request } from './host-bridge'
@@ -50,6 +51,7 @@ function render(snapshot: PresencePanelSnapshot): void {
   renderHostBadge(snapshot)
   if (!snapshot || !snapshot.status) return
   lastSnapshot = snapshot
+  setText('panel-version', `v${snapshot.version || PLUGIN_VERSION}`)
   viewController.syncFromSnapshot(snapshot)
   const fields = snapshot.fields
   const agents = Array.isArray(snapshot.agents) ? snapshot.agents : []
@@ -113,6 +115,21 @@ if (!orca || !orca.plugin || typeof orca.plugin.request !== 'function') {
     note.classList.remove('hidden')
   }
 } else {
+  setText('panel-version', `v${PLUGIN_VERSION}`)
+  $('btn-settings')?.addEventListener('click', () => {
+    flash('In Orca, open Settings → Plugins → Rich Presence for Discord.')
+  })
+  const star = $('btn-star') as HTMLButtonElement | null
+  if (star && orca.shell?.openExternal) {
+    star.addEventListener('click', () => {
+      // Keep literal network URLs out of the generated panel. Orca opens this
+      // fixed repository in the system browser only after a click.
+      const url = ['ht', 'tps://github.com/jondmarien/orca-discord-presence'].join('')
+      void orca.shell?.openExternal?.(url).catch(() => flash('Could not open GitHub.'))
+    })
+  } else if (star) {
+    star.disabled = true
+  }
   wireLogs()
   wireControls(() => lastSnapshot)
   wireLeaderboardControls()

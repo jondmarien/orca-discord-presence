@@ -252,6 +252,7 @@ function mountPanel(
     timers?: boolean
     rootClass?: string
     saveAs?: (opts: Record<string, unknown>) => Promise<unknown>
+    openExternal?: (url: string) => Promise<{ opened: boolean }>
     execCommand?: (cmd: string) => boolean
   } = {}
 ) {
@@ -267,6 +268,7 @@ function mountPanel(
     plugin: { request: pluginRequest ?? (() => new Promise(() => {})), on() {} },
     host: { has: () => false, ...(hostCall ? { call: hostCall } : {}) },
     ...(options.saveAs ? { files: { saveAs: options.saveAs } } : {}),
+    ...(options.openExternal ? { shell: { openExternal: options.openExternal } } : {}),
     on: (name: string, fn: (payload: unknown) => void) => void hostEvents.set(name, fn)
   }
   const timers = options.timers ? { setTimeout, clearTimeout } : {}
@@ -284,6 +286,23 @@ function mountPanel(
   const hook = (sandbox as { __presencePanel?: { render(s: unknown): void } }).__presencePanel
   return { byId, hook, sandbox, hostEvents, root: document.documentElement }
 }
+
+test('footer shows the version and opens GitHub only after a click', () => {
+  const opened: string[] = []
+  const { byId, hook } = mountPanel(undefined, undefined, {
+    openExternal: async (url) => {
+      opened.push(url)
+      return { opened: true }
+    }
+  })
+  hook?.render({ ...fullSnapshot([]), version: '1.2.1' })
+  expect(byId.get('panel-version')?.textContent).toBe('v1.2.1')
+  expect(opened).toEqual([])
+  byId.get('btn-star')?.dispatch('click')
+  expect(opened).toEqual(['https://github.com/jondmarien/orca-discord-presence'])
+  byId.get('btn-settings')?.dispatch('click')
+  expect(byId.get('flash')?.textContent).toContain('Settings → Plugins → Rich Presence for Discord')
+})
 
 test('full view renders timeline cells', () => {
   const { byId, hook, sandbox } = mountPanel()

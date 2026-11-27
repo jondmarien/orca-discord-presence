@@ -508,6 +508,35 @@
   padding-top: 2px;
 }
 
+.panel-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 4px 0;
+  color: var(--muted-fg);
+  font-size: 11px;
+}
+.panel-footer button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.panel-footer button:disabled {
+  color: inherit;
+  cursor: default;
+}
+.panel-footer #panel-version {
+  font-family: var(--orca-font-mono, monospace);
+  white-space: nowrap;
+}
+
 /* Leaderboards card */
 .lb-head {
   display: grid;
