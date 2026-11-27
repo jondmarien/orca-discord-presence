@@ -55,15 +55,56 @@ jobs:
       - name: Extract changelog
         run: |
           set -euo pipefail
-          awk -v heading="## [${VERSION}]" '
-            index($0, heading) == 1 { found = 1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md > changelog.md
-          if ! grep -q '[^[:space:]]' changelog.md; then
-            echo "CHANGELOG.md has no entry for ${VERSION}; add one before tagging." >&2
-            exit 1
-          fi
+          python3 - "${VERSION}" <<'PY'
+          import pathlib
+          import sys
+
+          version = sys.argv[1]
+          lines = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+          start = next((i for i, l in enumerate(lines) if l.startswith(f"## [{version}]")), None)
+          if start is None:
+              sys.exit(f"CHANGELOG.md has no entry for {version}; add one before tagging.")
+          end = start + 1
+          while end < len(lines) and not lines[end].startswith("## "):
+              end += 1
+
+          highlights, details, mode = [], [], "details"
+          for line in lines[start + 1:end]:
+              if line.startswith("### Highlights"):
+                  mode = "highlights"
+                  continue
+              if mode == "highlights" and line.startswith("### "):
+                  mode = "details"
+              (highlights if mode == "highlights" else details).append(line)
+
+          def clean(block):
+              block = list(block)
+              while block and not block[0].strip():
+                  block.pop(0)
+              while block and not block[-1].strip():
+                  block.pop()
+              return block
+
+          highlights, details = clean(highlights), clean(details)
+          if not details:
+              sys.exit(f"CHANGELOG.md entry for {version} is empty; add one before tagging.")
+
+          if not highlights:
+              for line in details:
+                  if not line.startswith("- "):
+                      continue
+                  summary = line[2:].split(". ")[0].rstrip(".")
+                  if len(summary) > 140:
+                      summary = summary[:137] + "..."
+                  highlights.append(f"- {summary}")
+                  if len(highlights) == 6:
+                      break
+          if not highlights:
+              sys.exit(f"CHANGELOG.md entry for {version} has no highlights and no bullets to summarize.")
+
+          pathlib.Path("highlights.md").write_text("\n".join(highlights) + "\n", encoding="utf-8")
+          pathlib.Path("changelog-section.md").write_text("\n".join(details) + "\n", encoding="utf-8")
+          PY
 
       - name: Pack plugin zip
         run: |
@@ -82,15 +123,16 @@ jobs:
 
       - name: Write release notes
         run: |
-          cat > release-notes.md <<EOF
-          ## Rich Presence for Discord ${VERSION}
-
-          Plugin id: \`jondmarien.discord-presence\`
-
-          ## Changelog
-
-          $(cat changelog.md)
-
+          set -euo pipefail
+          {
+            printf '## Rich Presence for Discord %s\n\n' "${VERSION}"
+            printf 'Plugin id: `jondmarien.discord-presence`\n\n'
+            printf "## What's new\n\n"
+            cat highlights.md
+            printf '\n<details>\n<summary><strong>All changes</strong></summary>\n\n'
+            cat changelog-section.md
+            printf '\n</details>\n\n'
+            cat <<EOF
           ### Install
 
           - **From Orca's plugin directory:** <https://orca.dev/plugins/jondmarien/orca-discord-presence>
@@ -101,6 +143,7 @@ jobs:
 
           Commit: ${GITHUB_SHA}
           EOF
+          } > release-notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

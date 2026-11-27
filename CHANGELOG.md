@@ -4,6 +4,15 @@ All notable changes to this plugin. The format follows [Keep a Changelog](https:
 
 ## [1.2.0] - 2026-11-26
 
+### Highlights
+
+- Full support for **Orca 1.4.278** (Host API 1.5–1.9), plus a custom monochrome panel icon.
+- **Drag to reorder** any panel block; your layout is remembered and **Reset layout** restores it.
+- **Agents** and **Sending to** are now independent full-width cards that reorder at any panel width.
+- Agents are discovered **across every workspace**, and clicking one jumps to its terminal.
+- New optional **Leaderboards** card and opt-in **session stats** (tokens and messages).
+- Fixes for live theme switching, one-click log copy in isolated frames, and workspace cleanup.
+
 ### Added
 
 - **Custom monochrome panel SVG icon:** Original Orca fin + presence broadcast mark on `contributes.panels[0]` (requires Orca `>=1.4.277`; `engines.orca` bumped to `>=1.4.278`).
