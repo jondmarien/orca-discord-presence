@@ -13,7 +13,6 @@
  */
 
 import os from 'node:os'
-import { inspectApplicationId } from './discord/app-id'
 import { createDiscordClient, type DiscordClient } from './discord/client'
 import {
   AUTO_CLIENT,
@@ -30,13 +29,7 @@ import {
   parseWorkspaceRemovedIds,
   type AgentSlot
 } from './presence/agents'
-import { applyBridgeEnvOverrides, createBridgeTransport } from './presence/bridge'
-import {
-  migrateSettingsToken,
-  saveBridgeToken,
-  SECRETS_UNAVAILABLE_WARNING,
-  type TokenStore
-} from './presence/bridge-token'
+import { createBridgeTransport } from './presence/bridge'
 import { applyConfigure } from './presence/configure'
 import { createPresenceController, type PresenceController } from './presence/controller'
 import {
@@ -50,21 +43,30 @@ import {
 } from './presence/leaderboards'
 import { createLogRing, type LogRing } from './presence/log-ring'
 import { createDiagnosticSink, resolveLogFilePath, type DiagnosticSink } from './presence/log'
-import { elapsedStartMs } from './presence/activity'
 import type { CanonicalAgentState } from './presence/agent-state'
-import { SESSION_GAP_MS } from './presence/expiry'
 import { buildPresencePanelSnapshot } from './presence/panel-snapshot'
-import { createSessionClock, type SessionClock } from './presence/session'
-import { renderStatusBar } from './presence/status-bar'
-import { createTimeline, timelineStateFor } from './presence/timeline'
+import { timelineStateFor } from './presence/timeline'
 import {
-  normalizeSettings,
   nextDetailLevel,
   SHIPPED_APPLICATION_ID,
   toggleField,
   type PresenceSettings
 } from './presence/settings'
 import { PLUGIN_VERSION } from './version'
+import {
+  createDisposer,
+  invalidParams,
+  toSettingsValue,
+  type ActivateDeps,
+  type AgentStatusPayload,
+  type Disposer,
+  type OrcaHost,
+  type WorkspaceContext
+} from './worker/host'
+import { createPersistence, type WorkerPersistence } from './worker/persistence'
+import { createSettingsRuntime } from './worker/settings-runtime'
+
+export { toSettingsValue, type ActivateDeps, type OrcaHost }
 
 /**
  * Interval for the `workspace.readContext` heartbeat.
@@ -110,12 +112,6 @@ const SESSIONS_LIST_LIMIT = 200
  * Coalesce `panels.post` pushes during a chatty agent event stream.
  */
 const PANEL_POST_DEBOUNCE_MS = 2_000
-
-/**
- * Quiet period before re-reading settings after `onDidChange`. Why: a multi-key
- * `persist` fires the feed once per key; this collapses them into one apply.
- */
-const SETTINGS_CHANGE_DEBOUNCE_MS = 250
 
 /**
  * Notification / log budget for the `transmitting=` JSON. Discord toasts
@@ -172,181 +168,19 @@ const PANEL_COMMANDS = [
  */
 export type PanelCommandId = (typeof PANEL_COMMANDS)[number]
 
-/**
- * Map a settings value to what `settings.set` accepts for a declared key.
- *
- * Why: `machineLabel` is declared `string` (default `""`) but held as `null`
- * in memory when unset; the host validates writes against the declaration and
- * would reject `null`.
- */
-export function toSettingsValue(value: unknown): unknown {
-  return value === null ? '' : value
-}
-
-/**
- * Error with a host-style `code`, thrown from panel handlers so the frame's
- * `plugin.request` rejects with `invalid_params` instead of a bare message.
- */
-function invalidParams(message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code: 'invalid_params' })
-}
-
-/**
- * Payload of the host `agent.status.changed` event used by this plugin.
- *
- * `state` is an Orca agent status (`working`, `blocked`, `waiting`, `done`,
- * or an unrecognized future value). `receivedAt` is the host timestamp in
- * milliseconds; the activity builder may convert it to a Discord start
- * timestamp when `showElapsed` is on.
- */
-type AgentStatusPayload = {
-  state: string
-  receivedAt: number
-  workspaceId?: string | null
-  workspaceListId?: string
-  terminalId?: string
-  sessionId?: string
-  paneKey?: string
-  title?: string
-  mainAgent?: {
-    state?: string
-    outcome?: string
-    stateStartedAt?: number
-  }
-}
-
-/**
- * Subset of `workspace.readContext` this plugin reads.
- *
- * `terminals` is only used for its length. Missing `displayName` / `branch`
- * are treated as absent by the activity builder. The `workspace.changed`
- * event carries the same shape as `{ context }`, where `context` is `null`
- * when no workspace is focused.
- */
-type WorkspaceContext = {
-  workspaceId?: string
-  displayName?: string
-  branch?: string
-  terminals: readonly unknown[]
-}
-
-/**
- * Host object Orca injects into `activate`. Aligned with Orca 1.4.278
- * `OrcaWorkerApi` (`orca/worker`) while staying standalone for CI typechecks.
- */
-export type OrcaHost = {
-  /** Host API version when supplied by Orca (`{ major: 1, minor: 10 }` on 1.4.278). */
-  readonly api?: { readonly major: number; readonly minor: number }
-  /** Write a line to the plugin log (also used by **Show Status**). */
-  log: (message: string) => void
-  commands: {
-    /**
-     * Register a command contributed in `orca-plugin.json`.
-     * Host `invokeCommand` may pass optional `args`.
-     */
-    register: (id: string, handler: (args?: Record<string, unknown>) => Promise<unknown>) => void
-  }
-  events: {
-    /**
-     * Subscribe to a host event. Manifest-declared events also wake a
-     * sleeping worker; dynamic-only subscriptions do not.
-     */
-    on: (event: string, handler: (payload?: unknown) => Promise<void> | void) => void
-  }
-  host: {
-    /**
-     * True when the connected Orca exposes `method`.
-     *
-     * Why: newer host methods are guarded by this so an older Orca degrades
-     * cleanly instead of throwing.
-     */
-    has: (method: string) => boolean
-    /**
-     * Invoke a host method (`settings.*`, `storage.*`, `secrets.*`,
-     * `workspace.readContext`, `workspace.list`, `agents.list`,
-     * `terminal.focus`, `agent.listSessions`, `statusBar.update`,
-     * `notifications.show`).
-     */
-    call: (method: string, args?: Record<string, unknown>) => Promise<unknown>
-  }
-  /** Native Settings page change feed. Absent on older hosts. */
-  settings?: {
-    onDidChange(handler: (e: { key: string }) => void): { dispose(): void }
-  }
-  /** Panel RPC channel. Absent on older hosts or browser clients. */
-  panels?: {
-    handle(name: string, fn: (input: unknown) => unknown): { dispose(): void }
-    post(name: string, payload: unknown): void
-  }
-}
-
 let controller: PresenceController | null = null
 let agentTable: ReturnType<typeof createAgentTable> | null = null
-let timeline: ReturnType<typeof createTimeline> | null = null
-let timelineSaveTimer: ReturnType<typeof setTimeout> | null = null
-let timelineHost: OrcaHost['host'] | null = null
-let session: SessionClock | null = null
-let lastStatusBar: string | null = null
+let persistence: WorkerPersistence | null = null
+let disposer: Disposer | null = null
 let latestSummary: { agentState: CanonicalAgentState | undefined; agentCount: number; stateStartedAtMs?: number } = {
   agentState: undefined,
   agentCount: 0
 }
-
-/** Plugin storage key for the persisted 30-minute strip. */
-const TIMELINE_STORAGE_KEY = 'timeline'
-
-/** Plugin storage key for the persisted session clock. */
-const SESSION_STORAGE_KEY = 'session'
-
-/**
- * Write the timeline and session clock to plugin storage. Failures are ignored.
- */
-function flushState(host: OrcaHost['host']) {
-  if (timeline) {
-    void host.call('storage.set', { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {})
-  }
-  const sessionState = session?.toJSON()
-  if (sessionState) {
-    void host.call('storage.set', { key: SESSION_STORAGE_KEY, value: sessionState }).catch(() => {})
-  }
-}
-
-/**
- * Save the timeline and session at most every 15 s. Why: refreshes arrive on
- * every agent event; one coalesced write keeps storage churn low.
- */
-function persistState() {
-  if (timelineSaveTimer || !timelineHost?.has('storage.set')) {
-    return
-  }
-  timelineSaveTimer = setTimeout(() => {
-    timelineSaveTimer = null
-    if (timelineHost) {
-      flushState(timelineHost)
-    }
-  }, 15_000)
-  timelineSaveTimer.unref?.()
-}
-/**
- * Touch the session clock from a panel request and schedule a save.
- *
- * @returns True when the touch started a new session (the start moved).
- */
-function touchSession(): boolean {
-  const before = session?.startMs()
-  session?.touch()
-  persistState()
-  return session?.startMs() !== before
-}
-
-let heartbeat: ReturnType<typeof setInterval> | null = null
 let diagnostics: DiagnosticSink | null = null
 let logRing: LogRing | null = null
 let panelPostTimer: ReturnType<typeof setTimeout> | null = null
 let panels: OrcaHost['panels'] | null = null
 let deactivated = false
-let settingsChangeTimer: ReturnType<typeof setTimeout> | null = null
-let settingsSubscription: { dispose(): void } | null = null
 let workspacesById = new Map<string, WorkspaceInfo>()
 let sessionsCache: SessionMetrics[] = []
 let focusedWorkspaceId: string | undefined
@@ -400,7 +234,7 @@ function currentPanelSnapshot() {
     status: controller.status(),
     settings: currentSettings,
     logs: logRing.lines(),
-    timeline: timeline?.slots() ?? [],
+    timeline: persistence?.timelineSlots() ?? [],
     agents: agentTable?.slots() ?? [],
     hostKind: focusedHostKind,
     focusKeyOf,
@@ -446,12 +280,6 @@ function publishPanelSnapshot(mode: 'immediate' | 'debounced') {
   panelPostTimer.unref?.()
 }
 
-/** Test seams for {@link activate}: Discord detection and client construction. */
-export type ActivateDeps = {
-  detect?: typeof detectDiscordClients
-  createClient?: typeof createDiscordClient
-}
-
 /**
  * Plugin entry. Loads persisted settings, constructs the Discord client and
  * presence controller, registers commands and events, and starts the
@@ -465,6 +293,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   const detectClients = deps.detect ?? detectDiscordClients
   const makeDiscordClient = deps.createClient ?? createDiscordClient
   deactivated = false
+  disposer = createDisposer()
   workspacesById = new Map()
   sessionsCache = []
   focusedWorkspaceId = undefined
@@ -474,24 +303,9 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   nextFocusHandleId = 1
   let lastWorkspaceListAt = 0
   let lastSessionsAt = 0
-  const stored = (await orca.host.call('settings.get').catch(() => ({ settings: {} }))) as {
-    settings?: unknown
-  }
-  const rawSettings =
-    stored?.settings && typeof stored.settings === 'object'
-      ? (stored.settings as Record<string, unknown>)
-      : {}
-  const appId = inspectApplicationId(rawSettings.applicationId, SHIPPED_APPLICATION_ID)
-  const storedSettings = normalizeSettings(stored?.settings)
-  // Why: the bridge token lives in secrets when the host has an OS keyring, so
-  // `settings.get` alone would miss it. Merge it in before the env overlay.
-  const loadedToken = await migrateSettingsToken(orca.host, storedSettings.bridgeToken)
-  let tokenStore: TokenStore = loadedToken.store
-  let tokenWarnings: string[] = loadedToken.warning ? [loadedToken.warning] : []
-  let settings = applyBridgeEnvOverrides(
-    { ...storedSettings, bridgeToken: loadedToken.token },
-    process.env
-  )
+
+  const settingsRuntime = await createSettingsRuntime({ orca, disposer })
+  const appId = settingsRuntime.appIdInspection
 
   const logFile = resolveLogFilePath(process.env, {
     homedir: os.homedir(),
@@ -503,16 +317,16 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   diagnostics = createDiagnosticSink({
     hostLog: (message) => orca.log(message),
     filePath: logFile,
-    debugEnabled: settings.debugLogging,
+    debugEnabled: settingsRuntime.current().debugLogging,
     onEmit: (line) => {
       logRing?.push(line)
     }
   })
   diagnostics.line('info', 'activate', {
     version: PLUGIN_VERSION,
-    debug: settings.debugLogging,
+    debug: settingsRuntime.current().debugLogging,
     file: logFile,
-    bridge: settings.bridgeEnabled
+    bridge: settingsRuntime.current().bridgeEnabled
   })
   if (appId.usedFallback) {
     diagnostics.line('error', 'discord.app_id_invalid', {
@@ -542,10 +356,11 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     // Why: a chosen client that starts after the fallback connected would never
     // get presence, since the live socket stays up. Rebuild through the same
     // path a `discordClient` change takes; the caller republishes afterwards.
-    const chosen = settings.discordClient === AUTO_CLIENT ? undefined : found.find((client) => client.id === settings.discordClient)
+    const current = settingsRuntime.current()
+    const chosen = current.discordClient === AUTO_CLIENT ? undefined : found.find((client) => client.id === current.discordClient)
     const connectedPath = activeDiscord?.connectedPath() ?? null
     if (chosen && connectedPath !== null && connectedPath !== chosen.path) {
-      await applySettings(settings, { rebind: true })
+      await applySettings(current, { rebind: true })
     }
   }
 
@@ -593,20 +408,8 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     }
   })
 
-  timelineHost = orca.host
-  // Why: restore the strip so worker restarts do not blank the last 30 minutes.
-  const storedTimeline = orca.host.has('storage.get')
-    ? ((await orca.host.call('storage.get', { key: TIMELINE_STORAGE_KEY }).catch(() => null)) as { value?: unknown } | null)
-    : null
-  timeline = createTimeline({ restore: storedTimeline?.value })
-  // Why: restoring keeps the session start across worker and Orca restarts inside the gap.
-  const storedSession = orca.host.has('storage.get')
-    ? ((await orca.host.call('storage.get', { key: SESSION_STORAGE_KEY }).catch(() => null)) as { value?: unknown } | null)
-    : null
-  session = createSessionClock({ gapMs: SESSION_GAP_MS })
-  session.restore(storedSession?.value)
-  lastStatusBar = null
-  controller = createController(settings)
+  persistence = await createPersistence({ host: orca.host, disposer })
+  controller = createController(settingsRuntime.current())
 
   /**
    * Push normalized settings into the controller. A changed Application ID
@@ -639,7 +442,8 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   }
 
   async function syncSessionsIfNeeded(force = false): Promise<void> {
-    if (settings.showSessionStats === 'off' && !settings.showLeaderboards) {
+    const current = settingsRuntime.current()
+    if (current.showSessionStats === 'off' && !current.showLeaderboards) {
       return
     }
     if (!orca.host.has('agent.listSessions')) {
@@ -675,15 +479,16 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   }
 
   async function applySettings(nextSettings: PresenceSettings, options: { rebind?: boolean } = {}) {
+    const prev = settingsRuntime.current()
     // Why: both are fixed when the Discord client is built (handshake client_id,
     // candidate list), so either change recreates it.
-    const applicationIdChanged = nextSettings.applicationId !== settings.applicationId
-    const clientChanged = nextSettings.discordClient !== settings.discordClient
-    const sessionStatsChanged = nextSettings.showSessionStats !== settings.showSessionStats
+    const applicationIdChanged = nextSettings.applicationId !== prev.applicationId
+    const clientChanged = nextSettings.discordClient !== prev.discordClient
+    const sessionStatsChanged = nextSettings.showSessionStats !== prev.showSessionStats
     const needsHistoryNow =
-      (nextSettings.showLeaderboards && !settings.showLeaderboards) ||
+      (nextSettings.showLeaderboards && !prev.showLeaderboards) ||
       (sessionStatsChanged && nextSettings.showSessionStats !== 'off')
-    settings = nextSettings
+    settingsRuntime.setCurrent(nextSettings)
     diagnostics?.setDebugEnabled(nextSettings.debugLogging)
     if (needsHistoryNow) {
       await syncWorkspaces(false)
@@ -732,78 +537,21 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     publishPanelSnapshot('immediate')
   }
 
-  /**
-   * Send the status bar item to the host when its rendered fields changed.
-   *
-   * Why: the item mirrors the same privacy-gated status as the Discord card,
-   * and skipping unchanged patches keeps host calls off the hot path.
-   */
   function publishStatusBar() {
-    if (!orca.host.has('statusBar.update') || !controller) {
+    if (!controller || !persistence) {
       return
     }
-    const currentSettings = controller.settings()
-    const patch = renderStatusBar({
+    persistence.publishStatusBar({
       status: controller.status(),
-      settings: currentSettings,
+      settings: controller.settings(),
       agentState: latestSummary.agentState,
       agentCount: latestSummary.agentCount,
-      elapsedStartMs: elapsedStartMs(
-        { sessionStartMs: session?.startMs(), stateStartedAtMs: latestSummary.stateStartedAtMs },
-        currentSettings
-      ),
-      nowMs: Date.now()
+      stateStartedAtMs: latestSummary.stateStartedAtMs
     })
-    const serialized = JSON.stringify(patch)
-    if (serialized !== lastStatusBar) {
-      lastStatusBar = serialized
-      // Why: forget a rejected patch so the next identical one retries.
-      void orca.host.call('statusBar.update', patch).catch(() => {
-        if (lastStatusBar === serialized) {
-          lastStatusBar = null
-        }
-      })
-    }
   }
 
-  /**
-   * Write changed settings fields through `settings.set`, then apply them.
-   *
-   * Why: unchanged keys are skipped so a toggle is one write, not sixteen, and
-   * `bridgeToken` is only written when it actually changed, and then through
-   * `saveBridgeToken` (secrets when available), never straight to `settings.set`.
-   * Writes echo back through `onDidChange`; the re-read then equals `settings`,
-   * so the echo applies nothing new.
-   */
   async function persist(nextSettings: PresenceSettings) {
-    const previous = settings
-    // Why: the token goes first. A keyring failure then leaves everything as
-    // it was; writing the other fields first would apply them behind an
-    // `ok:false` result, and an Application ID change would rebuild the
-    // controller for nothing.
-    if (nextSettings.bridgeToken !== previous.bridgeToken) {
-      try {
-        const store = await saveBridgeToken(orca.host, String(nextSettings.bridgeToken))
-        tokenStore = store
-        tokenWarnings = store === 'settings' ? [SECRETS_UNAVAILABLE_WARNING] : []
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        orca.log(`failed to persist bridgeToken: ${message}`)
-        // Why: a token the keyring refused must not look saved; the caller
-        // reports it and the old token stays in effect.
-        throw error instanceof Error ? error : new Error(message)
-      }
-    }
-    for (const [key, value] of Object.entries(nextSettings)) {
-      if (key === 'bridgeToken' || previous[key as keyof PresenceSettings] === value) {
-        continue
-      }
-      await orca.host.call('settings.set', { key, value: toSettingsValue(value) }).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error)
-        orca.log(`failed to persist ${key}: ${message}`)
-      })
-    }
-    await applySettings(nextSettings)
+    await settingsRuntime.persist(nextSettings, (next) => applySettings(next))
   }
 
   /**
@@ -842,11 +590,12 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     }
     const wsInfo = wsId ? workspacesById.get(wsId) : undefined
     focusedHostKind = wsInfo?.hostKind
-    if (settings.showSessionStats !== 'off' || settings.showLeaderboards) {
+    const currentSettings = settingsRuntime.current()
+    if (currentSettings.showSessionStats !== 'off' || currentSettings.showLeaderboards) {
       await syncSessionsIfNeeded(false)
     }
     const activeStats =
-      settings.showSessionStats !== 'off'
+      currentSettings.showSessionStats !== 'off'
         ? resolveActiveSessionStats(agentTable?.slots() ?? [], sessionsCache, wsId)
         : undefined
     if (!context) {
@@ -864,7 +613,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     // Why: only real activity extends a session; the bare heartbeat must not, or an
     // idle Orca would never end its session. Startup with an open workspace counts.
     if (agentEvent || options.context !== undefined || summary.agentCount > 0 || (options.startup && context)) {
-      session?.touch()
+      persistence?.touchSessionOnly()
     }
     const resume = Boolean(options.resume || agentEvent)
     await controller?.update(
@@ -882,7 +631,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
             { displayName: undefined, projectName: undefined, branch: undefined, terminalCount: undefined }),
         agentState: summary.agentState,
         stateStartedAtMs: summary.stateStartedAtMs,
-        sessionStartMs: session?.startMs(),
+        sessionStartMs: persistence?.sessionStartMs(),
         agentCount: summary.agentCount,
         sessionTokens: activeStats?.tokens,
         sessionMessages: activeStats?.messages
@@ -895,8 +644,8 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     // Why: every agent's state is recorded, so a minute with one working and
     // two completed agents shows both. `done` is recorded as `completed`; no
     // agents at all records `[]`, which is `idle`.
-    timeline?.record((agentTable?.slots() ?? []).map((slot) => timelineStateFor(slot.canonicalState)))
-    persistState()
+    persistence?.recordTimeline((agentTable?.slots() ?? []).map((slot) => timelineStateFor(slot.canonicalState)))
+    persistence?.scheduleSave()
     publishStatusBar()
     publishPanelSnapshot('debounced')
   }
@@ -912,16 +661,18 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   }
 
   registerPalette('presence.toggle', async () => {
-    await persist({ ...settings, enabled: !settings.enabled })
+    const current = settingsRuntime.current()
+    await persist({ ...current, enabled: !current.enabled })
     await refresh()
     publishStatusBar()
-    return { enabled: settings.enabled }
+    return { enabled: settingsRuntime.current().enabled }
   })
 
   registerPalette('presence.detail-level', async () => {
-    await persist({ ...settings, detailLevel: nextDetailLevel(settings.detailLevel) })
+    const current = settingsRuntime.current()
+    await persist({ ...current, detailLevel: nextDetailLevel(current.detailLevel) })
     await refresh()
-    return { detailLevel: settings.detailLevel }
+    return { detailLevel: settingsRuntime.current().detailLevel }
   })
 
   for (const [commandId, field] of Object.entries(TOGGLE_COMMANDS) as [
@@ -929,9 +680,9 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     (typeof TOGGLE_COMMANDS)[ToggleCommandId]
   ][]) {
     registerPalette(commandId, async () => {
-      await persist(toggleField(settings, field))
+      await persist(toggleField(settingsRuntime.current(), field))
       await refresh()
-      return { [field]: settings[field] }
+      return { [field]: settingsRuntime.current()[field] }
     })
   }
 
@@ -941,13 +692,16 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   registerPalette('presence.status', async () => {
     await refresh(undefined, { force: true, resume: true })
     const base = controller?.status()
+    const tokenStore = settingsRuntime.tokenStore()
+    const tokenWarnings = settingsRuntime.tokenWarnings()
+    const current = settingsRuntime.current()
     const status = base
       ? { ...base, bridgeTokenStore: tokenStore, ...(tokenWarnings.length > 0 ? { warnings: tokenWarnings } : {}) }
       : undefined
     const file = status?.logFile ?? diagnostics?.filePath ?? ''
     const transmitting = formatStatusTransmitting(status?.lastActivity ?? null)
     const warned = tokenWarnings.length > 0 ? ` warnings=${tokenWarnings.join('; ')}` : ''
-    const summary = `enabled=${status?.enabled} connected=${status?.connected} client=${status?.client?.id ?? 'none'} sink=${status?.sink} bridge=${status?.bridgeEnabled} tokenStore=${tokenStore} detail=${status?.detailLevel} debug=${settings.debugLogging}${warned}`
+    const summary = `enabled=${status?.enabled} connected=${status?.connected} client=${status?.client?.id ?? 'none'} sink=${status?.sink} bridge=${status?.bridgeEnabled} tokenStore=${tokenStore} detail=${status?.detailLevel} debug=${current.debugLogging}${warned}`
     diagnostics?.line('info', 'status', {
       enabled: status?.enabled,
       connected: status?.connected,
@@ -957,7 +711,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       tokenStore,
       warnings: tokenWarnings,
       detail: status?.detailLevel,
-      debug: settings.debugLogging,
+      debug: current.debugLogging,
       file,
       transmitting: JSON.stringify(status?.lastActivity)
     })
@@ -1010,7 +764,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   })
 
   orca.commands.register('presence.configure', async (args) => {
-    const result = applyConfigure(settings, args ?? {})
+    const result = applyConfigure(settingsRuntime.current(), args ?? {})
     if (!result.ok) {
       diagnostics?.line('error', 'presence.configure_failed', { reason: result.error })
       await orca.host.call('notifications.show', {
@@ -1020,7 +774,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       return result
     }
     if (result.changed.length === 0) {
-      const view = publicConfigureView(settings)
+      const view = publicConfigureView(settingsRuntime.current())
       const hint =
         'Pass invokeCommand args: { applicationId, openUrl, showOpenButton, openButtonLabel, showAgentCount, bridgeToken }. Empty applicationId restores the shipped id. HTTPS openUrl only; never put secrets in the URL.'
       const body = `applicationId=${view.shippedApplicationId ? 'shipped' : view.applicationId} openUrl=${view.openUrl || '(empty)'} showOpenButton=${view.showOpenButton} showAgentCount=${view.showAgentCount} label=${view.openButtonLabel}`
@@ -1042,7 +796,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       return { ok: false, error: message, message }
     }
     await refresh(undefined, { resume: true })
-    const view = publicConfigureView(settings)
+    const view = publicConfigureView(settingsRuntime.current())
     diagnostics?.line('info', 'presence.configure', { changed: result.changed })
     await orca.host.call('notifications.show', {
       title: 'Rich Presence for Discord',
@@ -1056,7 +810,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   // its static "needs Orca desktop" note there.
   panels?.handle('presence.snapshot', () => {
     // Why: opening the panel can start a new session; refresh so Discord and storage get it.
-    if (touchSession()) {
+    if (persistence?.touchSession()) {
       void refresh()
     }
     return currentPanelSnapshot()
@@ -1074,7 +828,7 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
       return currentPanelSnapshot()
     }
     lastPanelRefreshAt = clock
-    touchSession()
+    persistence?.touchSession()
     await syncAgentsFromList({ allWorkspaces: true })
     await syncSessionsIfNeeded(true)
     // Why: a stalled Discord holds SET_ACTIVITY (and a rebind's clear) for 5s,
@@ -1249,47 +1003,11 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
     clearTimeout(startupTimer)
   }
 
-  // Why: the person can edit settings in Orca's Settings page while the worker
-  // runs. Re-read and apply without a reload. Debounced so a multi-key
-  // `persist` (each `settings.set` fires the feed) applies at most once.
-  // Guarded: older hosts have no `orca.settings`.
-  if (orca.settings?.onDidChange) {
-    settingsSubscription = orca.settings.onDidChange(() => {
-      if (settingsChangeTimer) {
-        clearTimeout(settingsChangeTimer)
-      }
-      settingsChangeTimer = setTimeout(() => {
-        settingsChangeTimer = null
-        void (async () => {
-          const latest = (await orca.host.call('settings.get').catch(() => null)) as {
-            settings?: unknown
-          } | null
-          if (deactivated || !latest) {
-            return
-          }
-          // Why: a settings re-read carries no secrets-held token; merge it
-          // back so an unrelated edit never wipes it before the env overlay.
-          const reread = normalizeSettings(latest.settings)
-          const reloadedToken = await migrateSettingsToken(orca.host, reread.bridgeToken)
-          tokenStore = reloadedToken.store
-          tokenWarnings = reloadedToken.warning ? [reloadedToken.warning] : []
-          const next = applyBridgeEnvOverrides(
-            { ...reread, bridgeToken: reloadedToken.token },
-            process.env
-          )
-          if (JSON.stringify(next) !== JSON.stringify(settings)) {
-            await applySettings(next)
-          }
-        })()
-      }, SETTINGS_CHANGE_DEBOUNCE_MS)
-      settingsChangeTimer.unref?.()
-    })
-  }
+  settingsRuntime.watch((next) => applySettings(next))
 
-  heartbeat = setInterval(() => {
+  disposer.setInterval(() => {
     void redetect().then(() => refresh(undefined, { force: true }))
   }, HEARTBEAT_MS)
-  heartbeat.unref?.()
 
   // Why: fire-and-forget. `activate` must resolve inside
   // PLUGIN_WORKER_READY_TIMEOUT_MS (10s) or the host SIGKILLs the worker, and
@@ -1311,37 +1029,15 @@ export async function deactivate() {
     return
   }
   deactivated = true
-  if (heartbeat) {
-    clearInterval(heartbeat)
-    heartbeat = null
-  }
   if (panelPostTimer) {
     clearTimeout(panelPostTimer)
     panelPostTimer = null
   }
-  if (timelineSaveTimer) {
-    clearTimeout(timelineSaveTimer)
-    timelineSaveTimer = null
-  }
-  // Why: flush the strip and session on a clean stop so the next start restores them.
-  if (timelineHost?.has('storage.set')) {
-    const sessionState = session?.toJSON()
-    await Promise.all([
-      timeline
-        ? timelineHost.call('storage.set', { key: TIMELINE_STORAGE_KEY, value: timeline.toJSON() }).catch(() => {})
-        : undefined,
-      sessionState
-        ? timelineHost.call('storage.set', { key: SESSION_STORAGE_KEY, value: sessionState }).catch(() => {})
-        : undefined
-    ])
-  }
+  disposer?.disposeAll()
+  disposer = null
+  await persistence?.flush()
+  persistence = null
   panels = null
-  if (settingsChangeTimer) {
-    clearTimeout(settingsChangeTimer)
-    settingsChangeTimer = null
-  }
-  settingsSubscription?.dispose()
-  settingsSubscription = null
   diagnostics?.line('info', 'deactivate')
   agentTable?.clear()
   agentTable = null
