@@ -7,13 +7,13 @@
  * calls `SET_ACTIVITY` on another OS. This module is the client, URL/token
  * hygiene, and loopback checks — not a second privacy boundary.
  *
- * @module presence/bridge
+ * @module bridge/transport
  * @author Jonathan Marien
  * @date 2026-09-05
  */
 
-import type { DiscordActivity } from './activity'
-import type { PresenceSettings } from './settings'
+import type { DiscordActivity } from '../presence/activity'
+import type { PresenceSettings } from '../presence/settings'
 
 /**
  * Default companion listen port. Documented in the README; keep in sync

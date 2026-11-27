@@ -8,7 +8,7 @@
  * `secrets.set`, so the bridge must keep working from plugin settings there,
  * with a visible warning instead of a silent downgrade.
  *
- * @module presence/bridge-token
+ * @module bridge/token
  * @author Jonathan Marien
  * @date 2026-11-04
  */

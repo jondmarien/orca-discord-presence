@@ -6,8 +6,14 @@
  * @date 2026-11-26
  */
 
+import os from 'node:os'
+import type { ApplicationIdInspection } from '../discord/app-id'
 import type { createDiscordClient } from '../discord/client'
 import type { detectDiscordClients } from '../discord/detect'
+import { createDiagnosticSink, resolveLogFilePath } from '../presence/log'
+import { createLogRing } from '../presence/log-ring'
+import { SHIPPED_APPLICATION_ID, type PresenceSettings } from '../presence/settings'
+import { PLUGIN_VERSION } from '../version'
 
 /**
  * Payload of the host `agent.status.changed` event used by this plugin.
@@ -126,6 +132,44 @@ export function toSettingsValue(value: unknown): unknown {
  */
 export function invalidParams(message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code: 'invalid_params' })
+}
+
+/** Create the host log sink, panel ring, and Application ID fallback notice. */
+export function createHostDiagnostics(
+  orca: OrcaHost,
+  settings: PresenceSettings,
+  appId: ApplicationIdInspection
+) {
+  const logFile = resolveLogFilePath(process.env, {
+    homedir: os.homedir(),
+    tmpdir: os.tmpdir(),
+    platform: process.platform
+  })
+  const logRing = createLogRing()
+  const diagnostics = createDiagnosticSink({
+    hostLog: (message) => orca.log(message),
+    filePath: logFile,
+    debugEnabled: settings.debugLogging,
+    onEmit: (line) => logRing.push(line)
+  })
+  diagnostics.line('info', 'activate', {
+    version: PLUGIN_VERSION,
+    debug: settings.debugLogging,
+    file: logFile,
+    bridge: settings.bridgeEnabled
+  })
+  if (appId.usedFallback) {
+    diagnostics.line('error', 'discord.app_id_invalid', {
+      reason: appId.reason,
+      rejected: appId.rejectedRaw || '(empty)',
+      fallback: SHIPPED_APPLICATION_ID
+    })
+    void orca.host.call('notifications.show', {
+      title: 'Rich Presence for Discord',
+      body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ''}. Using shipped id. ${appId.reason ?? ''}`
+    })
+  }
+  return { diagnostics, logRing }
 }
 
 /**

@@ -4,7 +4,7 @@ import {
   migrateSettingsToken,
   saveBridgeToken,
   SECRETS_UNAVAILABLE_WARNING
-} from '../src/presence/bridge-token'
+} from '../src/bridge/token'
 
 type Call = { method: string; args?: object }
 

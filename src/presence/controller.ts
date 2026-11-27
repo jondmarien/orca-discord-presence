@@ -14,8 +14,8 @@
  */
 
 import { buildActivity, type DiscordActivity, type PresenceSnapshot } from './activity'
-import { resolveBridgeTarget, type PresenceBridge } from './bridge'
-import type { TokenStore } from './bridge-token'
+import { resolveBridgeTarget, type PresenceBridge } from '../bridge/transport'
+import type { TokenStore } from '../bridge/token'
 import type { ClientStatus } from '../discord/detect'
 import { formatLogLine, type DiagnosticSink } from './log'
 import { affectsPresence, type PresenceSettings } from './settings'

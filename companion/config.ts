@@ -10,7 +10,7 @@
  * @date 2026-09-05
  */
 
-import { BRIDGE_ENV, DEFAULT_BRIDGE_PORT, isLoopbackHost } from '../src/presence/bridge'
+import { BRIDGE_ENV, DEFAULT_BRIDGE_PORT, isLoopbackHost } from '../src/bridge/transport'
 import { SHIPPED_APPLICATION_ID } from '../src/presence/settings'
 
 /**

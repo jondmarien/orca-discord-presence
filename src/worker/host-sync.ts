@@ -13,7 +13,7 @@
 
 import os from 'node:os'
 import type { CanonicalAgentState } from '../presence/agent-state'
-import { parseAgentsList, parseAgentStatusPayload, type AgentTable } from '../presence/agents'
+import { parseAgentsList, parseAgentStatusPayload, parseWorkspaceRemovedIds, type AgentTable } from '../presence/agents'
 import {
   parseSessionsList,
   parseWorkspaceList,
@@ -289,6 +289,52 @@ export function createHostSync({
       inFlightSessions = null
     }
   }
+}
+
+/** Wire host events to the shared refresh path. */
+export function registerHostEvents(
+  orca: OrcaHost,
+  agentTable: AgentTable,
+  hostSync: HostSync,
+  refresh: RefreshFn
+): void {
+  orca.events.on('agent.status.changed', async (payload) => {
+    const parsed = parseAgentStatusPayload(payload, Date.now())
+    await hostSync.ensureAgentKind(parsed?.terminalId, parsed?.workspaceListId)
+    await refresh(parsed ?? undefined)
+  })
+  orca.events.on('workspace.removed', async (payload) => {
+    const removedIds = parseWorkspaceRemovedIds(payload)
+    if (removedIds.length > 0) {
+      agentTable.removeWorkspace(removedIds)
+      hostSync.removeWorkspaces(removedIds)
+    }
+    await refresh()
+  })
+  orca.events.on('workspace.changed', async (payload) => {
+    const raw = (payload as { context?: unknown } | null | undefined)?.context
+    const context = raw && typeof raw === 'object' ? (raw as WorkspaceContext) : null
+    hostSync.setFocusedWorkspaceId(context?.workspaceId)
+    await hostSync.syncAgentsFromList(context?.workspaceId ? { workspaceId: context.workspaceId } : {})
+    await refresh(undefined, { context })
+  })
+}
+
+/** Seed active workspaces without consuming the host's 10s activation window. */
+export async function seedHostState(hostSync: HostSync, settings: PresenceSettings): Promise<void> {
+  const seed = Promise.all([
+    hostSync.syncAgentsFromList({ allWorkspaces: true }),
+    hostSync.syncSessionsIfNeeded(settings, true)
+  ]).catch(() => {})
+  let timer: ReturnType<typeof setTimeout> | null = null
+  await Promise.race([
+    seed,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, 2_500)
+      timer.unref?.()
+    })
+  ])
+  if (timer) clearTimeout(timer)
 }
 
 export type LatestAgentSummary = {

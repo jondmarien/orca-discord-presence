@@ -2,6 +2,17 @@
 
 All notable changes to this plugin. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-11-26
+
+### Changed
+
+- Split the worker into host, settings, persistence, Discord binding, host synchronization, commands, and panel RPC modules while preserving the v1.2.0 behavior and PR #33 fixes.
+- Bundled the sidebar from modular TypeScript and ordered CSS sources into the same single-file panel. The bridge transport and token storage now live under `src/bridge/`.
+
+### Fixed
+
+- Removed duplicate hot-path work and stale caches, coalesced settings and status writes, and disposed panel listeners and timers on shutdown.
+
 ## [1.2.0] - 2026-11-26
 
 ### Added

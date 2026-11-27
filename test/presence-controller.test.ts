@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { DiscordActivity } from '../src/presence/activity'
-import type { PresenceBridge } from '../src/presence/bridge'
+import type { PresenceBridge } from '../src/bridge/transport'
 import {
   createPresenceController,
   MIN_UPDATE_INTERVAL_MS,

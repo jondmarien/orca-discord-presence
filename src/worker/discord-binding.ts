@@ -19,7 +19,7 @@ import {
   type DetectedClient
 } from '../discord/detect'
 import { defaultDiscordIpcCandidates } from '../discord/ipc'
-import { createBridgeTransport } from '../presence/bridge'
+import { createBridgeTransport } from '../bridge/transport'
 import { createPresenceController, type PresenceController } from '../presence/controller'
 import type { DiagnosticSink } from '../presence/log'
 import type { PresenceSettings } from '../presence/settings'

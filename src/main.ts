@@ -12,22 +12,18 @@
  * @date 2026-09-05
  */
 
-import os from 'node:os'
-import { createAgentTable, parseAgentStatusPayload, parseWorkspaceRemovedIds } from './presence/agents'
-import { createDiagnosticSink, resolveLogFilePath } from './presence/log'
-import { createLogRing } from './presence/log-ring'
-import { SHIPPED_APPLICATION_ID, type PresenceSettings } from './presence/settings'
-import { PLUGIN_VERSION } from './version'
+import { createAgentTable } from './presence/agents'
+import type { PresenceSettings } from './presence/settings'
 import { formatStatusTransmitting, registerCommands, type PanelCommandId } from './worker/commands'
 import { createDiscordBinding } from './worker/discord-binding'
 import {
   createDisposer,
+  createHostDiagnostics,
   toSettingsValue,
   type ActivateDeps,
-  type OrcaHost,
-  type WorkspaceContext
+  type OrcaHost
 } from './worker/host'
-import { createHostSync, createRefreshRunner, type LatestAgentSummary } from './worker/host-sync'
+import { createHostSync, createRefreshRunner, registerHostEvents, seedHostState, type LatestAgentSummary } from './worker/host-sync'
 import { createPanelRpc, type PanelRpc } from './worker/panel-rpc'
 import { createPersistence } from './worker/persistence'
 import { createSettingsRuntime } from './worker/settings-runtime'
@@ -46,36 +42,11 @@ let activeWorker: { stop(): Promise<void> } | null = null
 export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) {
   const disposer = createDisposer()
   const settingsRuntime = await createSettingsRuntime({ orca, disposer })
-  const logFile = resolveLogFilePath(process.env, {
-    homedir: os.homedir(),
-    tmpdir: os.tmpdir(),
-    platform: process.platform
-  })
-  const logRing = createLogRing()
-  const diagnostics = createDiagnosticSink({
-    hostLog: (message) => orca.log(message),
-    filePath: logFile,
-    debugEnabled: settingsRuntime.current().debugLogging,
-    onEmit: (line) => logRing.push(line)
-  })
-  diagnostics.line('info', 'activate', {
-    version: PLUGIN_VERSION,
-    debug: settingsRuntime.current().debugLogging,
-    file: logFile,
-    bridge: settingsRuntime.current().bridgeEnabled
-  })
-  const appId = settingsRuntime.appIdInspection
-  if (appId.usedFallback) {
-    diagnostics.line('error', 'discord.app_id_invalid', {
-      reason: appId.reason,
-      rejected: appId.rejectedRaw || '(empty)',
-      fallback: SHIPPED_APPLICATION_ID
-    })
-    void orca.host.call('notifications.show', {
-      title: 'Rich Presence for Discord',
-      body: `Invalid Discord Application ID${appId.rejectedRaw ? ` (${appId.rejectedRaw})` : ''}. Using shipped id. ${appId.reason ?? ''}`
-    })
-  }
+  const { diagnostics, logRing } = createHostDiagnostics(
+    orca,
+    settingsRuntime.current(),
+    settingsRuntime.appIdInspection
+  )
 
   let latestSummary: LatestAgentSummary = { agentState: undefined, agentCount: 0 }
   let pushAgentRefresh = () => {}
@@ -169,41 +140,8 @@ export default async function activate(orca: OrcaHost, deps: ActivateDeps = {}) 
   })
   panelRpc.register({ paletteHandlers, refresh })
 
-  orca.events.on('agent.status.changed', async (payload) => {
-    const parsed = parseAgentStatusPayload(payload, Date.now())
-    await hostSync.ensureAgentKind(parsed?.terminalId, parsed?.workspaceListId)
-    await refresh(parsed ?? undefined)
-  })
-  orca.events.on('workspace.removed', async (payload) => {
-    const removedIds = parseWorkspaceRemovedIds(payload)
-    if (removedIds.length > 0) {
-      agentTable.removeWorkspace(removedIds)
-      hostSync.removeWorkspaces(removedIds)
-    }
-    await refresh()
-  })
-  orca.events.on('workspace.changed', async (payload) => {
-    const raw = (payload as { context?: unknown } | null | undefined)?.context
-    const context = raw && typeof raw === 'object' ? (raw as WorkspaceContext) : null
-    hostSync.setFocusedWorkspaceId(context?.workspaceId)
-    await hostSync.syncAgentsFromList(context?.workspaceId ? { workspaceId: context.workspaceId } : {})
-    await refresh(undefined, { context })
-  })
-
-  // Bound startup seeding: slow remote hosts must not consume Orca's 10s ready window.
-  const startupSeed = Promise.all([
-    hostSync.syncAgentsFromList({ allWorkspaces: true }),
-    hostSync.syncSessionsIfNeeded(settingsRuntime.current(), true)
-  ]).catch(() => {})
-  let startupTimer: ReturnType<typeof setTimeout> | null = null
-  await Promise.race([
-    startupSeed,
-    new Promise<void>((resolve) => {
-      startupTimer = setTimeout(resolve, 2_500)
-      startupTimer.unref?.()
-    })
-  ])
-  if (startupTimer) clearTimeout(startupTimer)
+  registerHostEvents(orca, agentTable, hostSync, refresh)
+  await seedHostState(hostSync, settingsRuntime.current())
   settingsRuntime.watch((next) => binding.applySettings(next))
   disposer.setInterval(() => {
     void binding.redetect().then(() => refresh(undefined, { force: true }))

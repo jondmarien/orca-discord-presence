@@ -11,7 +11,7 @@
  */
 
 import { isPlausibleApplicationId } from '../discord/app-id'
-import { normalizeBridgeToken } from './bridge'
+import { normalizeBridgeToken } from '../bridge/transport'
 import {
   normalizeOpenButtonLabel,
   normalizeOpenUrl,

@@ -8,13 +8,13 @@
  */
 
 import { inspectApplicationId, type ApplicationIdInspection } from '../discord/app-id'
-import { applyBridgeEnvOverrides } from '../presence/bridge'
+import { applyBridgeEnvOverrides } from '../bridge/transport'
 import {
   migrateSettingsToken,
   saveBridgeToken,
   SECRETS_UNAVAILABLE_WARNING,
   type TokenStore
-} from '../presence/bridge-token'
+} from '../bridge/token'
 import {
   DEFAULT_SETTINGS,
   normalizeSettings,

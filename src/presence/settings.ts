@@ -13,7 +13,7 @@
  */
 
 import { inspectApplicationId } from '../discord/app-id'
-import { normalizeBridgeToken, normalizeBridgeUrl } from './bridge'
+import { normalizeBridgeToken, normalizeBridgeUrl } from '../bridge/transport'
 import {
   DETAIL_LEVELS,
   ELAPSED_MODES,
@@ -75,7 +75,7 @@ export type PresenceSettings = {
   /**
    * Opt-in HTTP bridge to a Discord-IPC companion on any OS. Default **off**.
    * When on, the controller may POST the privacy-gated activity if local
-   * Discord IPC is unavailable (`src/presence/bridge.ts`).
+   * Discord IPC is unavailable (`src/bridge/transport.ts`).
    */
   bridgeEnabled: boolean
   /**
