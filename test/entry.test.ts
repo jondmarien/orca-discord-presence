@@ -8,6 +8,7 @@ import { formatStatusTransmitting, toSettingsValue, type OrcaHost } from '../src
 import { LOG_DIR_NAME, LOG_PLUGIN_ID } from '../src/presence/log'
 import { snapshotLeaksSecrets, type PresencePanelSnapshot } from '../src/presence/panel-snapshot'
 import { PLUGIN_VERSION } from '../src/version'
+import { createTempLogEnv } from './helpers/fake-host'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -130,10 +131,7 @@ test('activate and deactivate exports are functions', async () => {
 })
 
 test('activate registers commands and events; deactivate is safe to call', async () => {
-  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-entry-'))
-  const logFile = join(dir, 'plugin.log')
-  const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  process.env.ORCA_PRESENCE_LOG_FILE = logFile
+  const { logFile, cleanup } = createTempLogEnv('orca-presence-entry-')
   const { default: activate, deactivate } = await import('../src/main')
   const commands: string[] = []
   const events: string[] = []
@@ -201,19 +199,11 @@ test('activate registers commands and events; deactivate is safe to call', async
   expect(notifications.some((body) => body.includes('reloaded'))).toBe(true)
   await deactivate()
   await deactivate()
-  if (previous === undefined) {
-    delete process.env.ORCA_PRESENCE_LOG_FILE
-  } else {
-    process.env.ORCA_PRESENCE_LOG_FILE = previous
-  }
-  rmSync(dir, { recursive: true, force: true })
+  cleanup()
 })
 
 test('an invalid persisted Application ID is logged and toasted', async () => {
-  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-appid-'))
-  const logFile = join(dir, 'plugin.log')
-  const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  process.env.ORCA_PRESENCE_LOG_FILE = logFile
+  const { logFile, cleanup } = createTempLogEnv('orca-presence-appid-')
   const { default: activate, deactivate } = await import('../src/main')
   const hostLines: string[] = []
   const notifications: string[] = []
@@ -245,18 +235,11 @@ test('an invalid persisted Application ID is logged and toasted', async () => {
   expect(onDisk.includes('discord.app_id_invalid')).toBe(true)
   expect(onDisk.includes('not-a-snowflake')).toBe(true)
   await deactivate()
-  if (previous === undefined) {
-    delete process.env.ORCA_PRESENCE_LOG_FILE
-  } else {
-    process.env.ORCA_PRESENCE_LOG_FILE = previous
-  }
-  rmSync(dir, { recursive: true, force: true })
+  cleanup()
 })
 
 test('configure fails fast on a junk Application ID and accepts two paneKeys', async () => {
-  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-configure-'))
-  const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const { cleanup } = createTempLogEnv('orca-presence-configure-')
   const { default: activate, deactivate } = await import('../src/main')
   const handlers = new Map<string, (args?: Record<string, unknown>) => Promise<unknown>>()
   const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
@@ -335,18 +318,11 @@ test('configure fails fast on a junk Application ID and accepts two paneKeys', a
   expect(clearResult.heldClear).toBe(true)
 
   await deactivate()
-  if (previous === undefined) {
-    delete process.env.ORCA_PRESENCE_LOG_FILE
-  } else {
-    process.env.ORCA_PRESENCE_LOG_FILE = previous
-  }
-  rmSync(dir, { recursive: true, force: true })
+  cleanup()
 })
 
 test('workspace.changed null context publishes minimal snapshot', async () => {
-  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-wschanged-'))
-  const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const { cleanup } = createTempLogEnv('orca-presence-wschanged-')
   const { default: activate, deactivate } = await import('../src/main')
   const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
   const handlers = new Map<string, () => Promise<unknown>>()
@@ -377,18 +353,11 @@ test('workspace.changed null context publishes minimal snapshot', async () => {
     context: { branch: 'main', displayName: 'orca', terminals: [{ id: 't1' }] }
   })
   await deactivate()
-  if (previous === undefined) {
-    delete process.env.ORCA_PRESENCE_LOG_FILE
-  } else {
-    process.env.ORCA_PRESENCE_LOG_FILE = previous
-  }
-  rmSync(dir, { recursive: true, force: true })
+  cleanup()
 })
 
 test('activate succeeds when host.has returns false for everything', async () => {
-  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-nohas-'))
-  const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const { cleanup } = createTempLogEnv('orca-presence-nohas-')
   const { default: activate, deactivate } = await import('../src/main')
   const calls: string[] = []
   const orca: OrcaHost = {
@@ -406,18 +375,11 @@ test('activate succeeds when host.has returns false for everything', async () =>
   await activate(orca)
   expect(calls.includes('agents.list')).toBe(false)
   await deactivate()
-  if (previous === undefined) {
-    delete process.env.ORCA_PRESENCE_LOG_FILE
-  } else {
-    process.env.ORCA_PRESENCE_LOG_FILE = previous
-  }
-  rmSync(dir, { recursive: true, force: true })
+  cleanup()
 })
 
 test('settings.onDidChange re-reads, applies once, and rebinds on a new Application ID', async () => {
-  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-ondidchange-'))
-  const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const { cleanup } = createTempLogEnv('orca-presence-ondidchange-')
   const { default: activate, deactivate } = await import('../src/main')
   const hostLines: string[] = []
   const sets: string[] = []
@@ -481,12 +443,7 @@ test('settings.onDidChange re-reads, applies once, and rebinds on a new Applicat
 
   await deactivate()
   expect(disposed).toBe(true)
-  if (previous === undefined) {
-    delete process.env.ORCA_PRESENCE_LOG_FILE
-  } else {
-    process.env.ORCA_PRESENCE_LOG_FILE = previous
-  }
-  rmSync(dir, { recursive: true, force: true })
+  cleanup()
 })
 
 /**
@@ -502,9 +459,7 @@ async function activateWithSecrets(options: {
 }) {
   const hostLines: string[] = []
   const panelHandlers = new Map<string, (input: unknown) => unknown>()
-  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-token-'))
-  const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const logEnv = createTempLogEnv('orca-presence-token-')
   const { default: activate, deactivate } = await import('../src/main')
   const handlers = new Map<string, (args?: Record<string, unknown>) => Promise<unknown>>()
   const notifications: string[] = []
@@ -580,12 +535,7 @@ async function activateWithSecrets(options: {
     feed: () => feed?.({ key: 'bridgeUrl' }),
     async finish() {
       await deactivate()
-      if (previous === undefined) {
-        delete process.env.ORCA_PRESENCE_LOG_FILE
-      } else {
-        process.env.ORCA_PRESENCE_LOG_FILE = previous
-      }
-      rmSync(dir, { recursive: true, force: true })
+      logEnv.cleanup()
     }
   }
 }
@@ -843,9 +793,7 @@ async function activateWithPanels(
   settings: Record<string, unknown> = {},
   deps?: Parameters<typeof import('../src/main').default>[1]
 ) {
-  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-panel-'))
-  const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const logEnv = createTempLogEnv('orca-presence-panel-')
   const { default: activate, deactivate } = await import('../src/main')
   const panelHandlers = new Map<string, (input: unknown) => unknown>()
   const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
@@ -896,12 +844,7 @@ async function activateWithPanels(
     run,
     async finish() {
       await deactivate()
-      if (previous === undefined) {
-        delete process.env.ORCA_PRESENCE_LOG_FILE
-      } else {
-        process.env.ORCA_PRESENCE_LOG_FILE = previous
-      }
-      rmSync(dir, { recursive: true, force: true })
+      logEnv.cleanup()
     }
   }
 }
@@ -1016,9 +959,7 @@ test('shipped dist entry is Node-compatible ESM with the same exports', async ()
 })
 
 test('an agent started after activation gets its kind from agents.list', async () => {
-  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-kind-'))
-  const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const { cleanup } = createTempLogEnv('orca-presence-kind-')
   const { default: activate, deactivate } = await import('../src/main')
   const panelHandlers = new Map<string, (input: unknown) => unknown>()
   const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
@@ -1059,12 +1000,7 @@ test('an agent started after activation gets its kind from agents.list', async (
   // Why: activate + one miss + one hit; once the kind is known, no more lookups.
   expect(listCalls).toBe(3)
   await deactivate()
-  if (previous === undefined) {
-    delete process.env.ORCA_PRESENCE_LOG_FILE
-  } else {
-    process.env.ORCA_PRESENCE_LOG_FILE = previous
-  }
-  rmSync(dir, { recursive: true, force: true })
+  cleanup()
 })
 
 test('a null workspace context clears the previous workspace from the published activity', async () => {
@@ -1206,9 +1142,7 @@ test('presence.refresh returns before a stalled Discord answers SET_ACTIVITY', a
 })
 
 test('cross-workspace startup discovery fans out active workspaces, skips inactive, handles focus-agent & gates listSessions', async () => {
-  const dir = mkdtempSync(join(os.tmpdir(), 'orca-presence-v120-'))
-  const previous = process.env.ORCA_PRESENCE_LOG_FILE
-  process.env.ORCA_PRESENCE_LOG_FILE = join(dir, 'plugin.log')
+  const { cleanup } = createTempLogEnv('orca-presence-v120-')
   const { default: activate, deactivate } = await import('../src/main')
   const panelHandlers = new Map<string, (input: unknown) => unknown>()
   const eventHandlers = new Map<string, (payload?: unknown) => Promise<void> | void>()
@@ -1401,11 +1335,6 @@ test('cross-workspace startup discovery fans out active workspaces, skips inacti
     await deactivate()
   } finally {
     await deactivate()
-    if (previous === undefined) {
-      delete process.env.ORCA_PRESENCE_LOG_FILE
-    } else {
-      process.env.ORCA_PRESENCE_LOG_FILE = previous
-    }
-    rmSync(dir, { recursive: true, force: true })
+    cleanup()
   }
 })

@@ -11,17 +11,26 @@
  * @date 2026-11-26
  */
 
-import { parseAgentsList, type AgentTable } from '../presence/agents'
+import os from 'node:os'
+import type { CanonicalAgentState } from '../presence/agent-state'
+import { parseAgentsList, parseAgentStatusPayload, type AgentTable } from '../presence/agents'
 import {
   parseSessionsList,
   parseWorkspaceList,
+  resolveActiveSessionStats,
   type SessionMetrics,
   type WorkspaceHostKind,
   type WorkspaceInfo
 } from '../presence/leaderboards'
 import type { DiagnosticSink } from '../presence/log'
 import type { PresenceSettings } from '../presence/settings'
-import type { Disposer, OrcaHost } from './host'
+import { timelineStateFor } from '../presence/timeline'
+import type { RefreshFn } from './commands'
+import type { DiscordBinding } from './discord-binding'
+import type { Disposer, OrcaHost, WorkspaceContext } from './host'
+import type { PanelRpc } from './panel-rpc'
+import type { WorkerPersistence } from './persistence'
+import type { SettingsRuntime } from './settings-runtime'
 
 /** Minimum gap between `workspace.list` metadata refreshes on routine events. */
 export const WORKSPACE_LIST_MIN_INTERVAL_MS = 5_000
@@ -279,5 +288,108 @@ export function createHostSync({
       kindKnown.clear()
       inFlightSessions = null
     }
+  }
+}
+
+export type LatestAgentSummary = {
+  agentState: CanonicalAgentState | undefined
+  agentCount: number
+  stateStartedAtMs?: number
+}
+
+/**
+ * Create the unified refresh runner that merges agent events, workspace context,
+ * and session stats into the presence controller, timeline, status bar, and panel.
+ */
+export function createRefreshRunner({
+  orca,
+  agentTable,
+  hostSync,
+  settingsRuntime,
+  persistence,
+  binding,
+  panelRpc,
+  diagnostics,
+  onSummary,
+  publishStatusBar
+}: {
+  orca: OrcaHost
+  agentTable: AgentTable
+  hostSync: HostSync
+  settingsRuntime: SettingsRuntime
+  persistence: WorkerPersistence
+  binding: DiscordBinding
+  panelRpc: PanelRpc
+  diagnostics: DiagnosticSink
+  onSummary: (summary: LatestAgentSummary) => void
+  publishStatusBar: () => void
+}): RefreshFn {
+  return async (agentEvent, options = {}) => {
+    if (agentEvent) {
+      const parsed = parseAgentStatusPayload(agentEvent, Date.now())
+      if (parsed) agentTable.upsert(parsed)
+    }
+    const summary = agentTable.summarize()
+    onSummary(summary)
+    // Why: `workspace.changed` already carries the context (possibly null for
+    // "nothing focused"), so use it instead of a second host round trip.
+    const context =
+      options.context !== undefined
+        ? options.context
+        : ((await orca.host.call('workspace.readContext').catch(() => null)) as WorkspaceContext | null)
+    const wsId =
+      typeof context?.workspaceId === 'string' && context.workspaceId.length > 0 ? context.workspaceId : undefined
+    const wsInfo = await hostSync.resolveFocusedWorkspace(wsId)
+    const currentSettings = settingsRuntime.current()
+    await hostSync.syncSessionsIfNeeded(currentSettings, false)
+    const slots = agentTable.slots()
+    const activeStats =
+      currentSettings.showSessionStats !== 'off'
+        ? resolveActiveSessionStats(slots, hostSync.sessions(), wsId)
+        : undefined
+    if (!context) {
+      diagnostics.line('debug', 'refresh.minimal', { reason: 'no workspace context', agents: summary.agentCount })
+    } else if (agentEvent) {
+      diagnostics.line('debug', 'refresh', {
+        source: 'agent.status.changed',
+        agentState: summary.agentState ?? 'idle',
+        agents: summary.agentCount
+      })
+    }
+    // Why: only real activity extends a session; the bare heartbeat must not, or an
+    // idle Orca would never end its session. Startup with an open workspace counts.
+    if (agentEvent || options.context !== undefined || summary.agentCount > 0 || (options.startup && context)) {
+      persistence.touchSessionOnly()
+    }
+    const resume = Boolean(options.resume || agentEvent)
+    await binding.controller().update(
+      {
+        machineName: os.hostname(),
+        ...(context
+          ? {
+              displayName: context.displayName,
+              projectName: wsInfo?.project,
+              branch: context.branch,
+              terminalCount: Array.isArray(context.terminals) ? context.terminals.length : undefined
+            }
+          : // Why: the controller merges snapshots, so omitted keys would keep the
+            // previous workspace on Discord after focus moves to nothing.
+            { displayName: undefined, projectName: undefined, branch: undefined, terminalCount: undefined }),
+        agentState: summary.agentState,
+        stateStartedAtMs: summary.stateStartedAtMs,
+        sessionStartMs: persistence.sessionStartMs(),
+        agentCount: summary.agentCount,
+        sessionTokens: activeStats?.tokens,
+        sessionMessages: activeStats?.messages
+      },
+      resume ? { resume: true } : undefined
+    )
+    if (options.force) {
+      await binding.controller().forceTransmit(resume)
+    }
+    persistence.recordTimeline(slots.map((slot) => timelineStateFor(slot.canonicalState)))
+    persistence.scheduleSave()
+    publishStatusBar()
+    panelRpc.publish('debounced')
   }
 }
