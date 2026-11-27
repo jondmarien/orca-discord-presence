@@ -19,6 +19,18 @@
 export type CanonicalAgentState = 'working' | 'blocked' | 'waiting' | 'done' | 'idle'
 
 /**
+ * Display and aggregation priority for canonical agent states (highest wins).
+ * Shared by the agent table, panel snapshot sorting, and 30-minute timeline.
+ */
+export const AGENT_STATE_PRIORITY: Record<CanonicalAgentState, number> = {
+  blocked: 4,
+  waiting: 3,
+  working: 2,
+  done: 1,
+  idle: 0
+}
+
+/**
  * Alias table after {@link normalizeStateKey}. Keys are lowercase with
  * hyphens and spaces folded to `_`.
  */

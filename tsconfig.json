@@ -12,5 +12,6 @@
     "noUnusedParameters": true,
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "companion/**/*.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "companion/**/*.ts"],
+  "exclude": ["src/panel/**"]
 }

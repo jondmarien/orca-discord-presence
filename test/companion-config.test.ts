@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { parseCompanionConfig } from '../companion/config'
-import { DEFAULT_BRIDGE_PORT } from '../src/presence/bridge'
+import { DEFAULT_BRIDGE_PORT } from '../src/bridge/transport'
 import { SHIPPED_APPLICATION_ID } from '../src/presence/settings'
 
 test('defaults to loopback, shipped application id, and no token', () => {

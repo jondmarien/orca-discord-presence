@@ -13,80 +13,30 @@
  */
 
 import { inspectApplicationId } from '../discord/app-id'
-import { normalizeBridgeToken, normalizeBridgeUrl } from './bridge'
+import { normalizeBridgeToken, normalizeBridgeUrl } from '../bridge/transport'
+import {
+  DETAIL_LEVELS,
+  ELAPSED_MODES,
+  HIDDEN_PANEL_IDS,
+  PANEL_ORDER_IDS,
+  SESSION_STATS_MODES,
+  type DetailLevel,
+  type ElapsedMode,
+  type PanelSectionId,
+  type SessionStatsMode
+} from './panel-constants'
 
-/**
- * Detail-level ladder, in the order **Cycle Detail Level** walks.
- *
- * | Level | What may be transmitted |
- * |---|---|
- * | `off` | Nothing — presence cleared |
- * | `generic` | Non-identifying copy + optional agent / terminals / elapsed |
- * | `workspace` | Workspace display name; still no branch |
- * | `full` | Workspace + optional branch, machine, etc. |
- */
-export const DETAIL_LEVELS = ['off', 'generic', 'workspace', 'full'] as const
-
-/**
- * One of {@link DETAIL_LEVELS}.
- */
-export type DetailLevel = (typeof DETAIL_LEVELS)[number]
-
-/**
- * What the Discord elapsed timer counts: time in Orca this `session`, or time
- * in the current agent `state`.
- */
-export const ELAPSED_MODES = ['session', 'state'] as const
-
-/**
- * One of {@link ELAPSED_MODES}.
- */
-export type ElapsedMode = (typeof ELAPSED_MODES)[number]
-
-/**
- * Optional local agent session stats included in Discord Rich Presence.
- */
-export const SESSION_STATS_MODES = ['off', 'tokens', 'messages', 'both'] as const
-
-/**
- * One of {@link SESSION_STATS_MODES}.
- */
-export type SessionStatsMode = (typeof SESSION_STATS_MODES)[number]
-
-/**
- * Panel sections the user may hide, in canonical order. Must match
- * `PANEL_SECTIONS` in `src/panel/panel.js` (a test pins both).
- */
-export const HIDDEN_PANEL_IDS = [
-  'preview',
-  'strip',
-  'tiles',
-  'sink',
-  'client',
-  'detail',
-  'agents',
-  'toggles',
-  'actions',
-  'leaderboards',
-  'logs'
-] as const
-
-/**
- * Default top-to-bottom order of reorderable panel blocks.
- */
-export const PANEL_ORDER_IDS = [
-  'actions',
-  'preview',
-  'strip',
-  'tiles',
-  'sink',
-  'client',
-  'detail',
-  'agents',
-  'toggles',
-  'leaderboards',
-  'logs'
-] as const
+export {
+  DETAIL_LEVELS,
+  ELAPSED_MODES,
+  HIDDEN_PANEL_IDS,
+  PANEL_ORDER_IDS,
+  SESSION_STATS_MODES,
+  type DetailLevel,
+  type ElapsedMode,
+  type PanelSectionId,
+  type SessionStatsMode
+}
 
 /**
  * Persisted plugin settings. Every identifying field is opt-in except the
@@ -125,7 +75,7 @@ export type PresenceSettings = {
   /**
    * Opt-in HTTP bridge to a Discord-IPC companion on any OS. Default **off**.
    * When on, the controller may POST the privacy-gated activity if local
-   * Discord IPC is unavailable (`src/presence/bridge.ts`).
+   * Discord IPC is unavailable (`src/bridge/transport.ts`).
    */
   bridgeEnabled: boolean
   /**

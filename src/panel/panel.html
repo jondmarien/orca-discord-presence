@@ -39,7 +39,7 @@
           </button>
         </div>
       </header>
-      <p class="flash" id="flash"></p>
+      <p class="flash" id="flash" role="status"></p>
       <div class="row g6 hidden" id="hidden-tray">
         <span class="muted small" id="hidden-tray-label">Hidden (0)</span>
         <button type="button" class="btn sm" id="tray-show-all">Show all</button>
@@ -202,6 +202,10 @@
       <div class="order-footer hidden" id="order-footer">
         <button type="button" class="btn sm ghost" id="btn-reset-order">Reset layout</button>
       </div>
+      <footer class="panel-footer">
+        <button type="button" id="btn-star">Star on GitHub</button>
+        <span id="panel-version"></span>
+      </footer>
     </div>
 
     <script>

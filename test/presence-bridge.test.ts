@@ -6,7 +6,7 @@ import {
   isLoopbackHost,
   normalizeBridgeUrl,
   resolveBridgeTarget
-} from '../src/presence/bridge'
+} from '../src/bridge/transport'
 import { DEFAULT_SETTINGS, type PresenceSettings } from '../src/presence/settings'
 
 function settingsWith(overrides: Partial<PresenceSettings>): PresenceSettings {

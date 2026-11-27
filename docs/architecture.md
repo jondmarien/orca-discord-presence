@@ -30,26 +30,26 @@ Paired Orca clients and `orca serve` run plugins on the host, not on the client.
 
 ```
 activate (src/main.ts)
-  ├─ normalizeSettings(settings.get) + bridge token from secrets (settings fallback) + applyBridgeEnvOverrides
-  ├─ agents.list → seed agent table (when the host has it)
-  ├─ settings.onDidChange → re-read settings → controller.setSettings (no reload)
-  ├─ createDiagnosticSink (orca.log + state-dir file)
-  ├─ createDiscordClient({ clientId: applicationId })
-  ├─ createBridgeTransport()
-  ├─ createPresenceController({ client, bridge, settings, diagnostics })
-  ├─ commands → persist (settings.set) → controller.setSettings → refresh
-  ├─ presence.configure → applyConfigure (fail-fast) → persist; App ID change recreates the IPC client
-  ├─ presence.clear → controller.clear (hold; heartbeat does not republish)
-  ├─ presence.reload → refresh → controller.reload (close + reconnect + SET_ACTIVITY)
-  ├─ agent.status.changed → agent table → aggregate → update
-  ├─ events / heartbeat → workspace.readContext (or minimal snapshot) → update + forceTransmit on heartbeat/status (heartbeat does not lift Clear)
-  ├─ panels.handle('presence.snapshot' / 'presence.run') + panels.post('presence.snapshot', redacted snapshot)
-  └─ deactivate → controller.stop → clear local + remote + close socket (idempotent)
+  ├─ worker/settings-runtime → settings.get, secrets, env overlay, atomic persist, change feed
+  ├─ worker/persistence → timeline/session restore and save, status bar diff gate
+  ├─ worker/discord-binding → client detection, fallback, controller, Clear-hold rebind
+  ├─ worker/host-sync → workspace and agent discovery, shared session metrics cache
+  ├─ worker/commands → palette commands and Configure flow
+  ├─ worker/panel-rpc → snapshot, refresh, run, focus, coalesced posts and disposal
+  ├─ events / heartbeat → workspace.readContext → agent table → controller update
+  └─ deactivate → flush, clear presence, close socket and dispose listeners
 ```
 
 | Path | Role |
 |---|---|
-| [`src/main.ts`](../src/main.ts) | Host wiring only. No Discord framing, no activity field policy. |
+| [`src/main.ts`](../src/main.ts) | Worker composition root: constructs modules, wires host events, and owns activation/deactivation. |
+| [`src/worker/host.ts`](../src/worker/host.ts) | Host types, error helpers, and shared disposer. |
+| [`src/worker/settings-runtime.ts`](../src/worker/settings-runtime.ts) | Settings load, keyring token migration, environment overlay, atomic persistence, and settings change watcher. |
+| [`src/worker/persistence.ts`](../src/worker/persistence.ts) | Timeline and session storage, coalesced save, and status bar publishing. |
+| [`src/worker/discord-binding.ts`](../src/worker/discord-binding.ts) | Discord client detection, fallback binding, controller lifecycle, and settings application. |
+| [`src/worker/host-sync.ts`](../src/worker/host-sync.ts) | Bounded cross-workspace discovery and shared, deduplicated `agent.listSessions` cache. |
+| [`src/worker/commands.ts`](../src/worker/commands.ts) | Palette commands and Configure flow. |
+| [`src/worker/panel-rpc.ts`](../src/worker/panel-rpc.ts) | Redacted panel RPC, push coalescing, and disposable handlers. |
 | [`src/discord/ipc.ts`](../src/discord/ipc.ts) | Pure path table + frame encode/decode. Shared with the companion. |
 | [`src/discord/client.ts`](../src/discord/client.ts) | The only module that opens a `node:net` Discord socket (plugin + companion). Handshake retry + clear-before-close. |
 | [`src/discord/retry.ts`](../src/discord/retry.ts) | Capped exponential backoff (3 tries, 3s→15s) and retryable vs fatal errors. |
@@ -62,12 +62,13 @@ activate (src/main.ts)
 | [`src/presence/agents.ts`](../src/presence/agents.ts) | Multi-agent table. Seeded across workspaces via `workspace.list` + `agents.list`, updated by `agent.status.changed`; keyed by terminal (`t:`), session (`s:`), or pane (`p:`). |
 | [`src/presence/leaderboards.ts`](../src/presence/leaderboards.ts) | Redacted `workspace.list` metadata cache, numeric-only `agent.listSessions` parser (discards `session.title` and `workspace.path`), active session stats, and panel Leaderboards aggregation. |
 | [`src/presence/configure.ts`](../src/presence/configure.ts) | Fail-fast `applyConfigure` for Application ID / `openUrl` / toggles / `bridgeToken`. |
-| [`src/presence/bridge-token.ts`](../src/presence/bridge-token.ts) | Bridge token in Orca secrets; plugin-settings fallback with a warning when no keyring is available. |
-| [`src/presence/bridge.ts`](../src/presence/bridge.ts) | Companion URL/token hygiene + `POST`/`DELETE /activity`. |
+| [`src/bridge/token.ts`](../src/bridge/token.ts) | Bridge token in Orca secrets; plugin-settings fallback with a warning when no keyring is available. |
+| [`src/bridge/transport.ts`](../src/bridge/transport.ts) | Companion URL/token hygiene + `POST`/`DELETE /activity`. |
 | [`src/presence/log.ts`](../src/presence/log.ts) | Structured `orca.log` + capped state-dir file. Optional `onEmit` feeds the panel ring. |
 | [`src/presence/log-ring.ts`](../src/presence/log-ring.ts) | Bounded in-memory tail for the sidebar snapshot. |
 | [`src/presence/panel-snapshot.ts`](../src/presence/panel-snapshot.ts) | Redacted panel JSON (no App ID, no token, no bridge URL, no raw terminal/workspace paths). |
-| [`src/panel/reorder.js`](../src/panel/reorder.js) | Zero-dependency Pointer Events + keyboard block reordering inlined into `panel/index.html`. |
+| [`src/panel/`](../src/panel/) | Browser TypeScript modules for rendering, controls, theme, host bridge, mirrored preferences, and pointer/keyboard reordering. Bundled with `Bun.build`. |
+| [`src/panel/styles/`](../src/panel/styles/) | CSS split into tokens, layout, components, and responsive rules in explicit build order. |
 | [`panel/index.html`](../panel/index.html) | Self-contained sidebar UI generated by `scripts/build-panel.ts`. Talks to the worker through `window.orca.plugin.request` (`presence.snapshot`, `presence.refresh`, `presence.run`, `presence.focus-agent`). |
 | [`companion/`](../companion/) | OS-agnostic HTTP listener → same Discord IPC client (Linux/macOS/Windows). |
 

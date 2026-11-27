@@ -16,6 +16,8 @@
  * @date 2026-11-04
  */
 
+import { AGENT_STATE_PRIORITY } from './agent-state'
+
 /**
  * States the timeline can hold. Orca's `done` is recorded as `completed`;
  * `idle` means nothing was running (no agents).
@@ -34,11 +36,11 @@ export const TIMELINE_MINUTES = 30
 const MINUTE_MS = 60_000
 
 const PRIORITY: Record<TimelineState, number> = {
-  blocked: 4,
-  waiting: 3,
-  working: 2,
-  completed: 1,
-  idle: 0
+  blocked: AGENT_STATE_PRIORITY.blocked,
+  waiting: AGENT_STATE_PRIORITY.waiting,
+  working: AGENT_STATE_PRIORITY.working,
+  completed: AGENT_STATE_PRIORITY.done,
+  idle: AGENT_STATE_PRIORITY.idle
 }
 
 /**

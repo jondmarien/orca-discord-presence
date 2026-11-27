@@ -12,7 +12,7 @@
  * @date 2026-09-05
  */
 
-import { canonicalizeAgentState, type CanonicalAgentState } from './agent-state'
+import { AGENT_STATE_PRIORITY, canonicalizeAgentState, type CanonicalAgentState } from './agent-state'
 import { AGENT_RETENTION_MS, isActivityFresh } from './expiry'
 
 /**
@@ -108,14 +108,6 @@ export type AgentTable = {
   summarize: () => AgentSummary
   slots: () => AgentSlot[]
   clear: () => void
-}
-
-const PRIORITY: Record<CanonicalAgentState, number> = {
-  blocked: 4,
-  waiting: 3,
-  working: 2,
-  done: 1,
-  idle: 0
 }
 
 /**
@@ -336,7 +328,7 @@ function summarizeSlots(slots: readonly AgentSlot[]): AgentSummary {
   let winner: CanonicalAgentState = 'idle'
   let winnerPriority = -1
   for (const slot of slots) {
-    const priority = PRIORITY[slot.canonicalState]
+    const priority = AGENT_STATE_PRIORITY[slot.canonicalState]
     if (priority > winnerPriority) {
       winner = slot.canonicalState
       winnerPriority = priority

@@ -1,0 +1,117 @@
+/* Narrow sidebars: shed text before colour. The frame is the query
+   container; hosts without container queries get the same steps from the
+   viewport, which is the frame plus the 8px body padding on each side. */
+@container (max-width: 259px) {
+  .dcard img {
+    width: 48px;
+    height: 48px;
+  }
+  .hero img {
+    width: 88px;
+    height: 88px;
+  }
+  .hero {
+    padding-bottom: 80px;
+  }
+  .hero .big {
+    font-size: 22px;
+    overflow-wrap: anywhere;
+  }
+  .hero .quote {
+    max-width: 100%;
+  }
+}
+@container (max-width: 239px) {
+  .leg span {
+    font-size: 0;
+  }
+}
+@container (max-width: 179px) {
+  .tile .v {
+    font-size: 15px;
+  }
+  .mix {
+    height: 10px;
+  }
+  /* Keep both sort buttons reachable; hide only the inactive data column. */
+  .lb-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+  }
+  .lb-col-ws {
+    flex: 1 0 100%;
+  }
+  .lb-row-top {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .lb-row-top .lb-msg {
+    display: none;
+  }
+  #leaderboards-card[data-lb-metric='messages'] .lb-row-top .lb-msg {
+    display: block;
+  }
+  #leaderboards-card[data-lb-metric='messages'] .lb-row-top .lb-tok {
+    display: none;
+  }
+}
+@supports not (container-type: inline-size) {
+  @media (max-width: 275px) {
+    .dcard img {
+      width: 48px;
+      height: 48px;
+    }
+    .hero img {
+      width: 88px;
+      height: 88px;
+    }
+    .hero {
+      padding-bottom: 80px;
+    }
+    .hero .big {
+      font-size: 22px;
+      overflow-wrap: anywhere;
+    }
+    .hero .quote {
+      max-width: 100%;
+    }
+  }
+  @media (max-width: 255px) {
+    .leg span {
+      font-size: 0;
+    }
+  }
+  @media (max-width: 195px) {
+    .tile .v {
+      font-size: 15px;
+    }
+    .mix {
+      height: 10px;
+    }
+  }
+}
+@supports not (color: color-mix(in srgb, red 50%, blue)) {
+  :root {
+    --c-none: #262626;
+    --track: #45464b;
+  }
+  :root[data-theme='light'],
+  :root.light {
+    --c-none: #e4e4e7;
+    --track: #c9c9ce;
+  }
+  .hero {
+    background:
+      radial-gradient(120% 90% at 85% 15%, rgba(var(--glow), 0.45), rgba(var(--glow), 0) 60%),
+      var(--card);
+  }
+  .hero .live,
+  .hero .tim {
+    color: rgb(var(--glow));
+  }
+  .chip {
+    background: var(--muted);
+    color: var(--fg);
+  }
+}

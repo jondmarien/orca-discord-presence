@@ -130,11 +130,17 @@ export function formatLogLine(
   return parts.join(' ')
 }
 
+const ensuredDirs = new Set<string>()
+
 /**
  * Append a line, rotating `file` → `file.1` when the cap would be exceeded.
  */
 export function appendCappedLog(filePath: string, line: string, maxBytes = MAX_LOG_BYTES): void {
-  mkdirSync(dirname(filePath), { recursive: true })
+  const dir = dirname(filePath)
+  if (!ensuredDirs.has(dir)) {
+    mkdirSync(dir, { recursive: true })
+    ensuredDirs.add(dir)
+  }
   let size = 0
   try {
     size = statSync(filePath).size
@@ -149,7 +155,16 @@ export function appendCappedLog(filePath: string, line: string, maxBytes = MAX_L
       // Rotation is best-effort; still append.
     }
   }
-  appendFileSync(filePath, payload, 'utf8')
+  try {
+    appendFileSync(filePath, payload, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+      mkdirSync(dir, { recursive: true })
+      appendFileSync(filePath, payload, 'utf8')
+    } else {
+      throw error
+    }
+  }
 }
 
 /**

@@ -193,7 +193,7 @@ export function createFrameDecoder(
   onFrame: (opcode: number, data: unknown) => void,
   onError: (error: unknown) => void = () => {}
 ) {
-  let buffered = Buffer.alloc(0)
+  let buffered: Buffer = Buffer.alloc(0)
   let broken = false
   return {
     /**
@@ -205,8 +205,13 @@ export function createFrameDecoder(
       if (broken) {
         return
       }
-      const next = typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk)
-      buffered = Buffer.concat([buffered, next])
+      const next =
+        typeof chunk === 'string'
+          ? Buffer.from(chunk)
+          : Buffer.isBuffer(chunk)
+            ? chunk
+            : Buffer.from(chunk)
+      buffered = buffered.length === 0 ? next : Buffer.concat([buffered, next])
       for (;;) {
         if (buffered.length < 8) {
           return

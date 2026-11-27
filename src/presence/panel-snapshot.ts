@@ -13,7 +13,7 @@
  */
 
 import { localAssetName, type DiscordActivity } from './activity'
-import type { CanonicalAgentState } from './agent-state'
+import { AGENT_STATE_PRIORITY, type CanonicalAgentState } from './agent-state'
 import type { AgentSlot } from './agents'
 import type { PresenceStatus } from './controller'
 import type { WorkspaceHostKind, WorkspaceLeaderboardRow } from './leaderboards'
@@ -180,14 +180,6 @@ export function summarizePanelActivity(
   }
 }
 
-const AGENT_ROW_PRIORITY: Record<CanonicalAgentState, number> = {
-  blocked: 4,
-  waiting: 3,
-  working: 2,
-  done: 1,
-  idle: 0
-}
-
 /** Longest chat title the panel snapshot carries, ellipsis included. */
 export const PANEL_TITLE_MAX = 80
 
@@ -217,7 +209,7 @@ export function summarizePanelAgents(
   return [...slots]
     .sort(
       (a, b) =>
-        AGENT_ROW_PRIORITY[b.canonicalState] - AGENT_ROW_PRIORITY[a.canonicalState] ||
+        AGENT_STATE_PRIORITY[b.canonicalState] - AGENT_STATE_PRIORITY[a.canonicalState] ||
         (a.stateStartedAt ?? a.receivedAt) - (b.stateStartedAt ?? b.receivedAt)
     )
     .map((slot) => {
