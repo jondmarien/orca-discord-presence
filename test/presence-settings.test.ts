@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PANEL_SECTIONS } from '../src/panel/sections'
 import {
   DEFAULT_OPEN_BUTTON_LABEL,
   DEFAULT_SETTINGS,
@@ -238,9 +239,11 @@ test('hiddenPanels keeps known section ids in panel order; junk is empty', () =>
 })
 
 test('hiddenPanels ids match the panel section map', () => {
-  const panel = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/panel/panel.js'), 'utf8')
-  const ids = [...panel.matchAll(/^\s*\['(\w+)', '[\w-]+', '[^']+'\]/gm)].map((m) => m[1])
+  const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../panel/index.html'), 'utf8')
+  const ids = PANEL_SECTIONS.map(([id]) => id)
   expect(ids).toEqual([...HIDDEN_PANEL_IDS])
+  const blocks = [...html.matchAll(/data-block="([\w-]+)"/g)].map((m) => m[1])
+  expect(blocks).toEqual([...PANEL_ORDER_IDS])
 })
 
 test('v1.2.0 settings defaults, normalization, and PANEL_ONLY_KEYS', () => {

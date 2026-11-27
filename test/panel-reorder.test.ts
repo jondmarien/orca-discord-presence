@@ -2,6 +2,8 @@ import { expect, test } from 'bun:test'
 import vm from 'node:vm'
 import { buildPanelHtml } from '../scripts/build-panel'
 
+const builtPanelHtml = await buildPanelHtml()
+
 type Listener = (event?: Record<string, unknown>) => void
 
 class ReorderFakeElement {
@@ -139,7 +141,7 @@ function mountReorderPanel(
   hostCall?: (name: string, input: Record<string, unknown>) => Promise<unknown>,
   options: { heights?: Record<string, number>; useRealTimers?: boolean } = {}
 ) {
-  const html = buildPanelHtml()
+  const html = builtPanelHtml
   const byId = new Map<string, ReorderFakeElement>()
   for (const match of html.matchAll(/\sid="([^"]+)"/g)) {
     const el = new ReorderFakeElement()
